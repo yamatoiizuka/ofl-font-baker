@@ -98,7 +98,7 @@ https://openfontlicense.org
 また、コアロジックを含む `python/` ディレクトリ内の Python ソースコードは MIT License で提供されており、PyPI から単体の Python パッケージとして利用できます。  
 [ofl-font-baker · PyPI ↗︎](https://pypi.org/project/ofl-font-baker/)
 
-リポジトリに含まれるテスト用フォントやその他の第三者資産は上記ソフトウェアライセンスの対象ではなく、それぞれのライセンス（OFL など）に従います。
+リポジトリに含まれるテスト用フォントやその他の第三者資産は、それぞれのライセンス（OFL など）に従います。
 
 ### 不具合の報告
 
