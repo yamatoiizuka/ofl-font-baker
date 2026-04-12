@@ -16,7 +16,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
 }
 
-const REPO = 'https://github.com/yamatoiizuka/font-baker';
+const REPO = 'https://github.com/yamatoiizuka/ofl-font-baker';
 
 /**
  * Compact About dialog: icon, name, version, GitHub link, copyright.

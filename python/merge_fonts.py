@@ -236,7 +236,7 @@ def build_settings_text(config: dict) -> str:
         lines.append("Merged with OFL Font Baker by Yamato Iizuka")
     else:
         lines.append("Baked with OFL Font Baker by Yamato Iizuka")
-    lines.append("https://github.com/yamatoiizuka/font-baker")
+    lines.append("https://github.com/yamatoiizuka/ofl-font-baker")
 
     return "\n".join(lines) + "\n"
 

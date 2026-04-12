@@ -1,18 +1,18 @@
 # Font Merge Engine
 
-<p><strong><a href="https://github.com/yamatoiizuka/font-baker/blob/main/python/README.md">English</a></strong> | 日本語</p>
+<p><strong><a href="https://github.com/yamatoiizuka/ofl-font-baker/blob/main/python/README.md">English</a></strong> | 日本語</p>
 
-[OFL Font Baker](https://github.com/yamatoiizuka/font-baker) のコア機能にあたる、Python ベースのフォントマージエンジンです。
+[OFL Font Baker](https://github.com/yamatoiizuka/ofl-font-baker) のコア機能にあたる、Python ベースのフォントマージエンジンです。
 このディレクトリ内のコードは MIT ライセンスとなっており、他のプロジェクトでも自由に活用いただけます。
 
 ベースフォント（CJK 書体を想定）とサブフォント（欧文・かな書体を想定）を cmap ベースのマッピングで統合し、グリフと OpenType フィーチャーを置換して単一のフォントファイルを生成します。
 
-機能の詳細や背景については [OFL Font Baker のリポジトリ](https://github.com/yamatoiizuka/font-baker) を参照してください。
+機能の詳細や背景については [OFL Font Baker のリポジトリ](https://github.com/yamatoiizuka/ofl-font-baker) を参照してください。
 
 ## インストール
 
 ```bash
-pip install font-baker
+pip install ofl-font-baker
 ```
 
 Python 3.9 以上が必要です。[fonttools](https://github.com/fonttools/fonttools) と [brotli](https://github.com/google/brotli) が自動的にインストールされます。
@@ -96,4 +96,4 @@ python3 -m pytest python/tests/test_merge.py -v
 
 `tests/fonts/` 配下のテスト用フォントおよびサードパーティの資産は、それぞれのライセンスに従います。
 
-親リポジトリ（[OFL Font Baker](https://github.com/yamatoiizuka/font-baker)）のその他の部分は AGPL-3.0-or-later でライセンスされており、明示されない限りこの MIT 表記の対象外です。
+親リポジトリ（[OFL Font Baker](https://github.com/yamatoiizuka/ofl-font-baker)）のその他の部分は AGPL-3.0-or-later でライセンスされており、明示されない限りこの MIT 表記の対象外です。

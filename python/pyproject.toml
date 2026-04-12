@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "font-baker"
+name = "ofl-font-baker"
 version = "0.1.1"
 description = "Font merge engine — combine two font files into one via cmap-based glyph replacement"
 readme = "README.md"
@@ -25,12 +25,12 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yamatoiizuka/font-baker"
-Repository = "https://github.com/yamatoiizuka/font-baker"
-Issues = "https://github.com/yamatoiizuka/font-baker/issues"
+Homepage = "https://github.com/yamatoiizuka/ofl-font-baker"
+Repository = "https://github.com/yamatoiizuka/ofl-font-baker"
+Issues = "https://github.com/yamatoiizuka/ofl-font-baker/issues"
 
 [tool.hatch.build]
 include = ["merge_fonts.py", "/LICENSE", "/README.md"]
 
 [project.scripts]
-font-baker = "merge_fonts:main"
+ofl-font-baker = "merge_fonts:main"
