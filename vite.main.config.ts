@@ -8,7 +8,7 @@ export default defineConfig({
   },
   build: {
     lib: {
-      entry: path.resolve(__dirname, 'src/main/index.ts'),
+      entry: path.resolve(__dirname, 'app/main/index.ts'),
       formats: ['cjs'],
       fileName: () => 'index.js',
     },
@@ -20,7 +20,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, 'src'),
+      '@': path.resolve(__dirname, 'app'),
     },
   },
 });

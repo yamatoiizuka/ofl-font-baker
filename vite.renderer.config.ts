@@ -9,7 +9,7 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
   plugins: [react(), tailwindcss()],
-  root: path.resolve(__dirname, 'src/renderer'),
+  root: path.resolve(__dirname, 'app/renderer'),
   base: './',
   build: {
     outDir: path.resolve(__dirname, 'dist/renderer'),
@@ -26,7 +26,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, 'src'),
+      '@': path.resolve(__dirname, 'app'),
     },
   },
   server: {
