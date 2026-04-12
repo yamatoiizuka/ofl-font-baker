@@ -1,0 +1,203 @@
+@import 'tailwindcss';
+
+@font-face {
+  font-family: 'Source Serif 4';
+  src: url('./assets/fonts/Source_Serif_4/SourceSerif4-VariableFont_opsz,wght.ttf') format('truetype');
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --color-background: oklch(1 0 0);
+  --color-foreground: oklch(0.145 0 0);
+  --color-card: oklch(0.98 0 0);
+  --color-card-foreground: oklch(0.145 0 0);
+  --color-primary: oklch(0.145 0 0);
+  --color-primary-foreground: oklch(0.985 0 0);
+  --color-secondary: oklch(0.92 0 0);
+  --color-secondary-foreground: oklch(0.205 0 0);
+  --color-muted: oklch(0.92 0 0);
+  --color-muted-foreground: oklch(0.45 0 0);
+  --color-accent: oklch(0.92 0 0);
+  --color-accent-foreground: oklch(0.205 0 0);
+  --color-destructive: oklch(0.577 0.245 27.325);
+  --color-border: oklch(0.8 0 0);
+  --color-input: oklch(0.8 0 0);
+  --color-ring: oklch(0.6 0 0);
+  --color-highlight: #ff9100;
+  --radius: 0.5rem;
+  --font-sans: -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, sans-serif;
+    /* font-feature-settings: "ss02" 1; */
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* Thin overlay scrollbar with inset */
+  ::-webkit-scrollbar {
+    width: 13px;
+    height: 13px;
+    background: transparent;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #b3b3b3;
+    border-radius: 10px;
+    border: 4px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #999;
+    border: 4px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* Hide scrollbars in screenshot mode for cleaner captures */
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  ::selection {
+    background: oklch(0.7 0 0 / 0.2);
+  }
+
+  input[type='range'] {
+    -webkit-appearance: none;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--color-secondary);
+    outline: none;
+  }
+
+  @keyframes blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0;
+    }
+  }
+
+  /* Dialog animations */
+  @keyframes dialog-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes dialog-fade-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes dialog-hide {
+    to {
+      visibility: hidden;
+    }
+  }
+  @keyframes dialog-slide-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .info-btn:hover {
+    opacity: 0.6;
+  }
+
+  .dot-1,
+  .dot-2,
+  .dot-3 {
+    animation: dot-blink 2.5s infinite;
+    opacity: 0;
+  }
+  .dot-1 {
+    animation-delay: 0s;
+  }
+  .dot-2 {
+    animation-delay: 0.5s;
+  }
+  .dot-3 {
+    animation-delay: 1s;
+  }
+
+  @keyframes dot-blink {
+    0%,
+    19% {
+      opacity: 0;
+    }
+    20%,
+    59% {
+      opacity: 1;
+    }
+    60%,
+    100% {
+      opacity: 0;
+    }
+  }
+
+  @keyframes dialog-slide-out {
+    from {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+
+  .dialog-overlay[data-state='open'] {
+    visibility: visible;
+    animation: dialog-fade-in 200ms ease-out forwards;
+  }
+  .dialog-overlay[data-state='closed'] {
+    animation:
+      dialog-fade-out 200ms ease-in forwards,
+      dialog-hide 0ms linear 200ms forwards;
+    pointer-events: none;
+  }
+  .dialog-content[data-state='open'] {
+    visibility: visible;
+    animation: dialog-slide-in 200ms ease-out forwards;
+  }
+  .dialog-content[data-state='closed'] {
+    animation:
+      dialog-slide-out 200ms ease-in forwards,
+      dialog-hide 0ms linear 200ms forwards;
+    pointer-events: none;
+  }
+
+  input[type='range']::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--color-foreground);
+    cursor: pointer;
+    border: 2px solid var(--color-background);
+    box-shadow: 0 0 0 1px var(--color-border);
+  }
+}

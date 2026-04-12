@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14">
+  <defs>
+    <style>
+      .st0 {
+        fill: none;
+        stroke: #333;
+        stroke-miterlimit: 10;
+        stroke-width: .8px;
+      }
+
+      .st1 {
+        fill: #333;
+      }
+    </style>
+  </defs>
+  <circle class="st0" cx="7" cy="6.9" r="6.2"/>
+  <g>
+    <path class="st1" d="M7.1,4.2c.3,0,.6-.2.6-.6s-.3-.6-.6-.6-.6.2-.6.6.3.6.6.6Z"/>
+    <polygon class="st1" points="8.4 9.7 7.5 9.5 7.5 5.3 7.4 5.3 5.9 5.9 5.9 6.3 6.7 6.3 6.7 9.5 5.7 9.7 5.7 10.1 8.4 10.1 8.4 9.7"/>
+  </g>
+</svg>

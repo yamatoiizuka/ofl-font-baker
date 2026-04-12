@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30">
+  <defs>
+    <style>
+      .st0 {
+        fill: none;
+        stroke: #333;
+        stroke-miterlimit: 10;
+        stroke-width: .968px;
+      }
+    </style>
+  </defs>
+  <line class="st0" x1="9" y1="9" x2="21" y2="21"/>
+  <line class="st0" x1="21" y1="9" x2="9" y2="21"/>
+</svg>

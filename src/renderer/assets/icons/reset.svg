@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 16">
+  <defs>
+    <style>
+      .st0 {
+        fill: none;
+        stroke: #aaa;
+        stroke-miterlimit: 10;
+        stroke-width: 1.2px;
+      }
+    </style>
+  </defs>
+  <path class="st0" d="M13,8.9c0,3.3-2.7,6-6,6S1,12.2,1,8.9,3.7,3,7,3h2"/>
+  <polyline class="st0" points="6.6 .6 9 3 6.6 5.3"/>
+</svg>

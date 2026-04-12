@@ -1,0 +1,9 @@
+node_modules
+dist
+release
+__pycache__
+*.pyc
+.DS_Store
+python/dist
+python/build
+python/*.spec
