@@ -1,7 +1,7 @@
 """
 Tests for the composite font merge engine.
 
-Uses subset test fonts in python/tests/fonts/ for fast execution.
+Uses subset test fonts in testdata/fonts/ for fast execution.
 Run: python3 -m pytest python/tests/test_merge.py -v
 """
 
@@ -26,11 +26,12 @@ mf.progress = lambda *a: None
 # Paths
 # ---------------------------------------------------------------------------
 
-ROOT = os.path.dirname(os.path.dirname(__file__))
-EN_VAR = os.path.join(ROOT, "tests", "fonts", "Inter-4.1", "Inter-subset.ttf")
-JP_VAR = os.path.join(ROOT, "tests", "fonts", "Noto_Sans_JP", "NotoSansJP-subset.ttf")
-PLAYWRITE = os.path.join(ROOT, "tests", "fonts", "Playwrite_IE", "PlaywriteIE-VariableFont_wght.ttf")
-KAISEI = os.path.join(ROOT, "tests", "fonts", "Kaisei_Decol", "KaiseiDecol-Regular.ttf")
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+FONTS = os.path.join(ROOT, "testdata", "fonts")
+EN_VAR = os.path.join(FONTS, "Inter-4.1", "Inter-subset.ttf")
+JP_VAR = os.path.join(FONTS, "Noto_Sans_JP", "NotoSansJP-subset.ttf")
+PLAYWRITE = os.path.join(FONTS, "Playwrite_IE", "PlaywriteIE-VariableFont_wght.ttf")
+KAISEI = os.path.join(FONTS, "Kaisei_Decol", "KaiseiDecol-Regular.ttf")
 
 
 def _merge(lat_scale=1.0, lat_baseline=0, jp_scale=1.0, jp_baseline=0,
@@ -750,7 +751,7 @@ class TestCompositeGlyphs:
 # TT-to-CFF conversion (JP font is OTF)
 # ---------------------------------------------------------------------------
 
-JP_OTF = os.path.join(ROOT, "tests", "fonts", "NotoSansCJKjp", "NotoSansCJKjp-Regular.otf")
+JP_OTF = os.path.join(FONTS, "NotoSansCJKjp", "NotoSansCJKjp-Regular.otf")
 
 def _merge_otf_jp(**kwargs):
     """Run merge with CFF-based JP font and return the merged TTFont."""
@@ -1091,7 +1092,7 @@ class TestHintingPreservation:
 # CFF hint preservation (Inter CFF -> Noto CJK CFF, output CFF)
 # ---------------------------------------------------------------------------
 
-EN_CFF = os.path.join(ROOT, "tests", "fonts", "Inter-4.1", "Inter-Regular.otf")
+EN_CFF = os.path.join(FONTS, "Inter-4.1", "Inter-Regular.otf")
 _JP_CID_HINT = JP_OTF
 
 
