@@ -16,7 +16,6 @@ interface UndoableState {
   baseFont: FontSource | null;
   selectedRole: 'latin' | 'base' | null;
   sampleText: string;
-  previewFontSize: number;
   outputFamilyName: string;
   outputWeight: number;
   outputItalic: boolean;
@@ -34,7 +33,6 @@ const INITIAL_UNDOABLE: UndoableState = {
   baseFont: null,
   selectedRole: null,
   sampleText: DEFAULT_TEXT,
-  previewFontSize: 27,
   outputFamilyName: 'Untitled Font',
   outputWeight: 400,
   outputItalic: false,
@@ -49,6 +47,8 @@ const INITIAL_UNDOABLE: UndoableState = {
 // ---------------------------------------------------------------------------
 
 interface MergeState extends UndoableState {
+  previewFontSize: number;
+  showBaseline: boolean;
   hoveredRole: 'latin' | 'base' | null;
   mergeProgress: MergeProgress | null;
   isMerging: boolean;
@@ -64,6 +64,7 @@ interface MergeState extends UndoableState {
   setSelectedRole: (role: 'latin' | 'base' | null) => void;
   setSampleText: (text: string) => void;
   setPreviewFontSize: (size: number) => void;
+  setShowBaseline: (show: boolean) => void;
   updateFontAdjustment: (
     role: 'latin' | 'base',
     update: Partial<Pick<FontSource, 'baselineOffset' | 'scale'>>,
@@ -97,7 +98,6 @@ function extractUndoable(state: MergeState): UndoableState {
     baseFont: state.baseFont,
     selectedRole: state.selectedRole,
     sampleText: state.sampleText,
-    previewFontSize: state.previewFontSize,
     outputFamilyName: state.outputFamilyName,
     outputWeight: state.outputWeight,
     outputItalic: state.outputItalic,
@@ -120,6 +120,8 @@ export const useMergeStore = create<MergeState>()(
   persist(
     (set, get) => ({
       ...INITIAL_UNDOABLE,
+      previewFontSize: 27,
+      showBaseline: true,
       hoveredRole: null,
       mergeProgress: null,
       isMerging: false,
@@ -157,6 +159,7 @@ export const useMergeStore = create<MergeState>()(
 
       setSampleText: (text) => set({ sampleText: text }),
       setPreviewFontSize: (size) => set({ previewFontSize: size }),
+      setShowBaseline: (show) => set({ showBaseline: show }),
 
       updateFontAdjustment: (role, update) =>
         set((state) => {

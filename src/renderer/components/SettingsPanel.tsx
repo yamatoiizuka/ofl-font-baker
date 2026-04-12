@@ -221,3 +221,4 @@ function SliderWithInput({
     </div>
   );
 }
+

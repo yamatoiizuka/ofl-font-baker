@@ -41,7 +41,7 @@ export const GlyphPreview: React.FC = () => {
   const sampleText = useMergeStore((s) => s.sampleText);
   const setSampleText = useMergeStore((s) => s.setSampleText);
   const pushHistory = useMergeStore((s) => s.pushHistory);
-  const [showBaseline] = useState(true);
+  const showBaseline = useMergeStore((s) => s.showBaseline);
   const previewFontSize = useMergeStore((s) => s.previewFontSize);
   const setPreviewFontSize = useMergeStore((s) => s.setPreviewFontSize);
   const [resetHover, setResetHover] = useState(false);
@@ -547,11 +547,10 @@ export const GlyphPreview: React.FC = () => {
               step={1}
               value={previewFontSize}
               onChange={(e) => setPreviewFontSize(Number(e.target.value))}
-              onMouseUp={() => pushHistory()}
-              onTouchEnd={() => pushHistory()}
               className="w-28"
               style={{ visibility: resetHover ? 'hidden' : 'visible' }}
             />
+            <BaselineToggle visible={!resetHover} />
           </div>
         </div>
       </div>
@@ -620,3 +619,29 @@ export const GlyphPreview: React.FC = () => {
     </div>
   );
 };
+
+function BaselineToggle({ visible }: { visible: boolean }) {
+  const showBaseline = useMergeStore((s) => s.showBaseline);
+  const setShowBaseline = useMergeStore((s) => s.setShowBaseline);
+
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={showBaseline}
+      aria-label="Show baseline"
+      onClick={() => setShowBaseline(!showBaseline)}
+      className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors ${
+        showBaseline ? 'bg-foreground' : 'bg-muted-foreground/30'
+      }`}
+      style={{ visibility: visible ? 'visible' : 'hidden' }}
+    >
+      <span
+        className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-background shadow-sm transition-transform ${
+          showBaseline ? 'translate-x-3.5' : 'translate-x-0.5'
+        }`}
+        style={{ marginTop: 2 }}
+      />
+    </button>
+  );
+}

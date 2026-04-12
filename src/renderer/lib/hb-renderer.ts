@@ -426,6 +426,23 @@ export function drawCached(
           });
           continue;
         }
+        // If the current glyph is a half-width space at the wrap point, skip it
+        if (ch === ' ') {
+          absIdx++;
+          edges.push({ x, y, lineIndex: visualLine, charIndex: lineCharOffset + (ci ?? gi) + 1 });
+          drawCursor();
+          y += lineHeightPx;
+          visualLine++;
+          x = paddingX;
+          drawBaseline();
+          edges.push({
+            x,
+            y,
+            lineIndex: visualLine,
+            charIndex: lineCharOffset + (charIndices?.[gi + 1] ?? srcText.length),
+          });
+          continue;
+        }
         // Kinsoku: check if previous char can't end a line
         if (gi > 0) {
           const prevCi = charIndices?.[gi - 1];
