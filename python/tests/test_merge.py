@@ -32,6 +32,7 @@ EN_VAR = os.path.join(FONTS, "Inter-4.1", "Inter-subset.ttf")
 JP_VAR = os.path.join(FONTS, "Noto_Sans_JP", "NotoSansJP-subset.ttf")
 PLAYWRITE = os.path.join(FONTS, "Playwrite_IE", "PlaywriteIE-VariableFont_wght.ttf")
 KAISEI = os.path.join(FONTS, "Kaisei_Decol", "KaiseiDecol-Regular.ttf")
+JP_FULL_VAR = os.path.join(FONTS, "Noto_Sans_JP", "NotoSansJP-VariableFont_wght.ttf")
 
 
 def _merge(lat_scale=1.0, lat_baseline=0, jp_scale=1.0, jp_baseline=0,
@@ -466,6 +467,69 @@ class TestFeaturePreservation:
                                     for slr in rule.SubstLookupRecord:
                                         assert slr.LookupListIndex < total, \
                                             f"Lookup {i}: nested chaining ref {slr.LookupListIndex} >= total {total}"
+
+    def test_base_kern_preserved_in_dflt_script(self):
+        """CJK kern (e.g. す。) from base font is accessible from DFLT script."""
+        if not os.path.exists(JP_FULL_VAR):
+            pytest.skip("NotoSansJP-VariableFont_wght.ttf not found")
+        out = tempfile.mktemp(suffix=".ttf")
+        config = {
+            "latin": {
+                "path": EN_CFF,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "base": {
+                "path": JP_FULL_VAR,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "outputFormat": "ttf",
+            "outputPath": out,
+            "outputFamilyName": "TestKern",
+        }
+        mf.merge_fonts(config)
+        font = TTFont(out)
+        os.remove(out)
+
+        gpos = font["GPOS"].table
+
+        # Find kern feature indices referenced by DFLT script
+        dflt_kern_feat_indices = set()
+        for sr in gpos.ScriptList.ScriptRecord:
+            if sr.ScriptTag == "DFLT" and sr.Script.DefaultLangSys:
+                for fi in sr.Script.DefaultLangSys.FeatureIndex:
+                    if gpos.FeatureList.FeatureRecord[fi].FeatureTag == "kern":
+                        dflt_kern_feat_indices.add(fi)
+        assert dflt_kern_feat_indices, "DFLT script should have kern features"
+
+        # Collect all kern lookup indices reachable from DFLT
+        dflt_kern_lookups = set()
+        for fi in dflt_kern_feat_indices:
+            dflt_kern_lookups.update(
+                gpos.FeatureList.FeatureRecord[fi].Feature.LookupListIndex)
+
+        # Verify す。pair (XAdvance=-100) is in one of these lookups
+        found = False
+        for li in dflt_kern_lookups:
+            lookup = gpos.LookupList.Lookup[li]
+            for subtable in lookup.SubTable:
+                st = subtable
+                if hasattr(st, "ExtSubTable"):
+                    st = st.ExtSubTable
+                if not hasattr(st, "Coverage") or not st.Coverage:
+                    continue
+                if "uni3059" not in st.Coverage.glyphs:
+                    continue
+                if st.Format == 1:
+                    idx = st.Coverage.glyphs.index("uni3059")
+                    for pvr in st.PairSet[idx].PairValueRecord:
+                        if pvr.SecondGlyph == "uni3002":
+                            assert pvr.Value1.XAdvance == -100
+                            found = True
+        assert found, "す。kern pair (XAdvance=-100) should be reachable from DFLT"
 
     def test_no_jp_subordinate_liga_in_latin_script(self):
         """JP subordinate Latin liga does not appear in the Latin script."""
