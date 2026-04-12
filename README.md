@@ -91,7 +91,14 @@ That said, since the app is built on Electron, support for Windows or Intel Macs
 
 ### License
 
-This software is released under the [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html).
+This software is released under the [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html) (AGPL).
+
+The AGPL license of this software does not typically apply directly to the output produced from input fonts. The distribution terms of such output are primarily governed by the licenses of the input fonts. Since this software only accepts OFL fonts, any derivative fonts are subject to the OFL license.
+
+The Python source code in the `python/` directory, which contains the core logic, is provided under the MIT License and is available as a standalone Python package on PyPI.
+[ofl-font-baker · PyPI](https://pypi.org/project/ofl-font-baker/)
+
+Test fonts and other third-party assets included in the repository are not covered by the above software licenses and are subject to their respective licenses (OFL, etc.).
 
 ### Bug Reports
 

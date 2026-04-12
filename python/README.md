@@ -88,12 +88,10 @@ Progress is emitted as JSON lines on stderr.
 python3 -m pytest python/tests/test_merge.py -v
 ```
 
-Test fonts are in `tests/fonts/`.
+Test fonts are in `testdata/fonts/` (repository root).
 
 ## License
 
-Unless otherwise noted, the source code in this directory is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+The source code in this directory is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
-Test fonts and other third-party assets under `tests/fonts/` are licensed separately under their respective licenses.
-
-Other parts of the parent repository ([OFL Font Baker](https://github.com/yamatoiizuka/ofl-font-baker)) are licensed under AGPL-3.0-or-later and are not covered by this MIT notice unless explicitly stated.
+Other parts of the parent repository ([OFL Font Baker](https://github.com/yamatoiizuka/ofl-font-baker)) are licensed under AGPL-3.0-or-later and are not covered by this MIT notice.

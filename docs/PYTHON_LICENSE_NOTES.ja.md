@@ -18,7 +18,7 @@
 This `python/` directory is independently licensed under MIT.
 ```
 
-この書き方だと、`python/tests/fonts/` 配下のフォントやそのライセンス文書まで MIT であるかのように読めてしまう。
+この書き方だと、`testdata/fonts/` 配下のフォントやそのライセンス文書まで MIT であるかのように読めてしまう。
 
 ## 推奨する考え方
 
@@ -39,7 +39,7 @@ MIT であると明示したい対象は、`python/` ディレクトリそのも
 
 Unless otherwise noted, the source code in this directory is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
-Test fonts and other third-party assets under `tests/fonts/` are licensed separately under their respective licenses.
+Test fonts and other third-party assets under `testdata/fonts/` are licensed separately under their respective licenses.
 
 Other parts of the parent repository are licensed under AGPL-3.0-or-later and are not covered by this MIT notice unless explicitly stated.
 ```
@@ -47,7 +47,7 @@ Other parts of the parent repository are licensed under AGPL-3.0-or-later and ar
 ## この文面で守りたいこと
 
 - `python/` 全体が MIT だと断定しない
-- `tests/fonts/` 配下を MIT の対象に含めない
+- `testdata/fonts/` 配下を MIT の対象に含めない
 - 親リポジトリ全体まで MIT だと誤認させない
 - `python/LICENSE` の適用範囲を「このディレクトリのコード」に限定して読めるようにする
 
@@ -55,11 +55,11 @@ Other parts of the parent repository are licensed under AGPL-3.0-or-later and ar
 
 第三者ライセンスが存在する実例:
 
-- `python/tests/fonts/Inter-4.1/LICENSE.txt`
-- `python/tests/fonts/Kaisei_Decol/OFL.txt`
-- `python/tests/fonts/NotoSansCJKjp/LICENSE`
-- `python/tests/fonts/Noto_Sans_JP/OFL.txt`
-- `python/tests/fonts/Playwrite_IE/OFL.txt`
+- `testdata/fonts/Inter-4.1/LICENSE.txt`
+- `testdata/fonts/Kaisei_Decol/OFL.txt`
+- `testdata/fonts/NotoSansCJKjp/LICENSE`
+- `testdata/fonts/Noto_Sans_JP/OFL.txt`
+- `testdata/fonts/Playwrite_IE/OFL.txt`
 
 MIT ライセンス本文:
 
@@ -86,7 +86,7 @@ README の一文だけに頼らず、Python ソースファイル側にもライ
 
 - `python/ directory is licensed under MIT` と断定しない
 - `Unless otherwise noted, the source code in this directory...` のように範囲を限定して書く
-- `tests/fonts/` 配下の別ライセンス資産を明示的に除外する
+- `testdata/fonts/` 配下の別ライセンス資産を明示的に除外する
 - 親リポジトリの AGPL ライセンスと混同しないように書く
 - 必要なら SPDX ヘッダ追加も提案する
 

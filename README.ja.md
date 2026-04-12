@@ -91,7 +91,14 @@ https://openfontlicense.org
 
 ### ライセンス
 
-このソフトウェアは [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html) のもとで公開されています。
+このソフトウェアは [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html)（AGPL）のもとで公開されています。
+
+本ソフトウェアの AGPL ライセンスは、通常、入力フォントから生成される成果物そのものには直接適用されません。成果物の配布条件は主として入力フォントのライセンスに従います。本ソフトウェアは OFL フォントのみを対象としているため、生成される派生フォントは OFL ライセンスに従います。
+
+また、コアロジックを含む `python/` ディレクトリ内の Python ソースコードは MIT License で提供されており、PyPI から単体の Python パッケージとして利用できます。  
+[ofl-font-baker · PyPI ↗︎](https://pypi.org/project/ofl-font-baker/)
+
+リポジトリに含まれるテスト用フォントやその他の第三者資産は上記ソフトウェアライセンスの対象ではなく、それぞれのライセンス（OFL など）に従います。
 
 ### 不具合の報告
 
