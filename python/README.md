@@ -1,30 +1,31 @@
 # Font Merge Engine
 
-<p>English | <strong><a href="README.ja.md">日本語</a></strong></p>
+<p>English | <strong><a href="https://github.com/yamatoiizuka/font-baker/blob/main/python/README.ja.md">日本語</a></strong></p>
 
-Python-based font merge engine that powers OFL Font Baker.
+The core font merge engine behind [OFL Font Baker](https://github.com/yamatoiizuka/font-baker).
+The code in this directory is MIT-licensed and can be freely used in other projects.
 
-Merges a Latin font with a Japanese (CJK) base font into a single font file, replacing glyphs and OpenType features via cmap-based mapping.
+Merges a base font (typically CJK) with a sub font (typically Latin or kana) into a single font file, replacing glyphs and OpenType features via cmap-based mapping.
 
-## Requirements
+For details on features and background, see the [OFL Font Baker repository](https://github.com/yamatoiizuka/font-baker).
 
-- Python 3.9+
-- [fonttools](https://github.com/fonttools/fonttools) >= 4.47.0
-- [brotli](https://github.com/google/brotli) >= 1.1.0
+## Installation
 
 ```bash
-pip install -r requirements.txt
+pip install font-baker
 ```
+
+Requires Python 3.9+. [fonttools](https://github.com/fonttools/fonttools) and [brotli](https://github.com/google/brotli) are installed automatically.
 
 ## Usage
 
-Provide a JSON config on stdin. The engine runs in **export mode** when `outputDir` is present, producing a full export directory with font files and metadata.
+Provide a JSON config on stdin. When `outputDir` is present, the engine produces a full export directory with font files and metadata.
 
 ```bash
 cat config.json | python3 merge_fonts.py
 ```
 
-### Export mode
+### Export Mode
 
 Input:
 
@@ -75,11 +76,11 @@ Progress is emitted as JSON lines on stderr.
 
 ### outputOptions
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `includeWoff2` | `true` | Generate a WOFF2 file alongside the main font. |
-| `writeConfigJson` | `false` | Write an `ExportConfig.json` that records the merge settings. |
-| `bundleInputFonts` | `false` | Copy the input fonts into a `source/` subdirectory and rewrite paths in `ExportConfig.json` to relative paths (e.g. `./source/Base.otf`). Automatically enables `writeConfigJson`. This makes the export directory self-contained and reproducible. |
+| Key                | Default | Description                                                                                                                                                                                                                             |
+| ------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `includeWoff2`     | `true`  | Generate a WOFF2 file alongside the main font.                                                                                                                                                                                         |
+| `writeConfigJson`  | `false` | Write an `ExportConfig.json` that records the merge settings.                                                                                                                                                                          |
+| `bundleInputFonts` | `false` | Copy the input fonts into a `source/` subdirectory and rewrite paths in `ExportConfig.json` to relative paths (e.g. `./source/Base.otf`). Automatically enables `writeConfigJson`. Makes the export directory self-contained and reproducible. |
 
 ## Tests
 
@@ -95,4 +96,4 @@ Unless otherwise noted, the source code in this directory is licensed under the 
 
 Test fonts and other third-party assets under `tests/fonts/` are licensed separately under their respective licenses.
 
-Other parts of the parent repository are licensed under AGPL-3.0-or-later and are not covered by this MIT notice unless explicitly stated.
+Other parts of the parent repository ([OFL Font Baker](https://github.com/yamatoiizuka/font-baker)) are licensed under AGPL-3.0-or-later and are not covered by this MIT notice unless explicitly stated.

@@ -1,24 +1,25 @@
 # Font Merge Engine
 
-<p><strong><a href="README.md">English</a></strong> | 日本語</p>
+<p><strong><a href="https://github.com/yamatoiizuka/font-baker/blob/main/python/README.md">English</a></strong> | 日本語</p>
 
-OFL Font Baker のコア機能のである、Python ベースのフォントマージエンジンです。
+[OFL Font Baker](https://github.com/yamatoiizuka/font-baker) のコア機能にあたる、Python ベースのフォントマージエンジンです。
+このディレクトリ内のコードは MIT ライセンスとなっており、他のプロジェクトでも自由に活用いただけます。
 
-ベースフォント（CJK 書体を想定）／サブフォント（欧文・かな書体を想定）を cmap ベースのマッピングで統合し、グリフと OpenType フィーチャーを置換して単一のフォントファイルを生成します。
+ベースフォント（CJK 書体を想定）とサブフォント（欧文・かな書体を想定）を cmap ベースのマッピングで統合し、グリフと OpenType フィーチャーを置換して単一のフォントファイルを生成します。
 
-## Requirements
+機能の詳細や背景については [OFL Font Baker のリポジトリ](https://github.com/yamatoiizuka/font-baker) を参照してください。
 
-- Python 3.9+
-- [fonttools](https://github.com/fonttools/fonttools) >= 4.47.0
-- [brotli](https://github.com/google/brotli) >= 1.1.0
+## インストール
 
 ```bash
-pip install -r requirements.txt
+pip install font-baker
 ```
+
+Python 3.9 以上が必要です。[fonttools](https://github.com/fonttools/fonttools) と [brotli](https://github.com/google/brotli) が自動的にインストールされます。
 
 ## Usage
 
-JSON 設定を stdin に渡します。`outputDir` が指定されている場合は**エクスポートモード**で動作し、フォントファイルとメタデータを含む出力ディレクトリを生成します。
+JSON 設定を stdin に渡します。`outputDir` が指定されている場合は、フォントファイルとメタデータを含む出力ディレクトリを生成します。
 
 ```bash
 cat config.json | python3 merge_fonts.py
@@ -75,10 +76,10 @@ cat config.json | python3 merge_fonts.py
 
 ### outputOptions
 
-| Key | Default | 説明 |
-|-----|---------|------|
-| `includeWoff2` | `true` | メインフォントに加えて WOFF2 ファイルを生成する。 |
-| `writeConfigJson` | `false` | マージ設定を記録した `ExportConfig.json` を出力する。 |
+| Key                | Default | 説明                                                                                                                                                                                                                                         |
+| ------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `includeWoff2`     | `true`  | メインフォントに加えて WOFF2 ファイルを生成する。                                                                                                                                                                                            |
+| `writeConfigJson`  | `false` | マージ設定を記録した `ExportConfig.json` を出力する。                                                                                                                                                                                        |
 | `bundleInputFonts` | `false` | 入力フォントを `source/` サブディレクトリにコピーし、`ExportConfig.json` 内のパスを相対パス（例: `./source/Base.otf`）に書き換える。`writeConfigJson` は自動的に有効になる。出力ディレクトリだけで再現可能な自己完結型のエクスポートになる。 |
 
 ## Tests
@@ -95,4 +96,4 @@ python3 -m pytest python/tests/test_merge.py -v
 
 `tests/fonts/` 配下のテスト用フォントおよびサードパーティの資産は、それぞれのライセンスに従います。
 
-親リポジトリのその他の部分は AGPL-3.0-or-later でライセンスされており、明示されない限りこの MIT 表記の対象外です。
+親リポジトリ（[OFL Font Baker](https://github.com/yamatoiizuka/font-baker)）のその他の部分は AGPL-3.0-or-later でライセンスされており、明示されない限りこの MIT 表記の対象外です。

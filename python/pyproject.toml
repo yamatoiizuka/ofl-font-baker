@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "font-baker"
-version = "0.1.0"
+version = "0.1.1"
 description = "Font merge engine — combine two font files into one via cmap-based glyph replacement"
 readme = "README.md"
 license = "MIT"
@@ -29,11 +29,8 @@ Homepage = "https://github.com/yamatoiizuka/font-baker"
 Repository = "https://github.com/yamatoiizuka/font-baker"
 Issues = "https://github.com/yamatoiizuka/font-baker/issues"
 
-[tool.hatch.build.targets.sdist]
-exclude = ["tests/"]
-
-[tool.hatch.build.targets.wheel]
-exclude = ["tests/"]
+[tool.hatch.build]
+include = ["merge_fonts.py", "/LICENSE", "/README.md"]
 
 [project.scripts]
 font-baker = "merge_fonts:main"
