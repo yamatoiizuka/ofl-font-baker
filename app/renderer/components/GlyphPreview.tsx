@@ -550,7 +550,6 @@ export const GlyphPreview: React.FC = () => {
               className="w-28"
               style={{ visibility: resetHover ? 'hidden' : 'visible' }}
             />
-            <BaselineToggle visible={!resetHover} />
           </div>
         </div>
       </div>
@@ -620,28 +619,3 @@ export const GlyphPreview: React.FC = () => {
   );
 };
 
-function BaselineToggle({ visible }: { visible: boolean }) {
-  const showBaseline = useMergeStore((s) => s.showBaseline);
-  const setShowBaseline = useMergeStore((s) => s.setShowBaseline);
-
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={showBaseline}
-      aria-label="Show baseline"
-      onClick={() => setShowBaseline(!showBaseline)}
-      className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full transition-colors ${
-        showBaseline ? 'bg-foreground' : 'bg-muted-foreground/30'
-      }`}
-      style={{ visibility: visible ? 'visible' : 'hidden' }}
-    >
-      <span
-        className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-background shadow-sm transition-transform ${
-          showBaseline ? 'translate-x-3.5' : 'translate-x-0.5'
-        }`}
-        style={{ marginTop: 2 }}
-      />
-    </button>
-  );
-}
