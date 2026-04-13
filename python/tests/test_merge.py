@@ -1604,6 +1604,83 @@ class TestLatinCmapVariantCollision:
 
 
 # ---------------------------------------------------------------------------
+# Shared-glyph collateral damage (U+2027 / U+30FB middle dot)
+# ---------------------------------------------------------------------------
+
+EN_FULL = os.path.join(FONTS, "Inter-4.1", "InterVariable.ttf")
+JP_STATIC = os.path.join(FONTS, "Noto_Sans_JP", "NotoSansJP-Regular.ttf")
+
+
+class TestSharedGlyphCollateral:
+    """
+    Regression: Noto Sans JP maps both U+2027 (HYPHENATION POINT) and
+    U+30FB (KATAKANA MIDDLE DOT) to the same glyph "uni2027".  When Inter
+    replaces U+2027, the shared glyph was overwritten in place — U+30FB
+    silently became a half-width Latin glyph instead of the original
+    full-width katakana middle dot.  The merge engine must duplicate the
+    original glyph and repoint collateral cmap entries.
+    """
+
+    @staticmethod
+    def _merge():
+        if not os.path.exists(EN_FULL) or not os.path.exists(JP_STATIC):
+            pytest.skip("Full Inter / Noto Sans JP fonts not found")
+        out = tempfile.mktemp(suffix=".ttf")
+        config = {
+            "latin": {"path": EN_FULL, "scale": 1.0, "baselineOffset": 0,
+                      "axes": [{"tag": "opsz", "currentValue": 14},
+                               {"tag": "wght", "currentValue": 400}]},
+            "base": {"path": JP_STATIC, "scale": 1.0, "baselineOffset": 0,
+                     "axes": []},
+            "outputFormat": "ttf", "outputPath": out,
+            "outputFamilyName": "TestMiddleDot",
+        }
+        mf.merge_fonts(config)
+        font = TTFont(out)
+        os.remove(out)
+        return font
+
+    def test_katakana_middle_dot_preserves_width(self):
+        """U+30FB must keep its full-width advance (1000) after merge."""
+        m = self._merge()
+        cmap = m.getBestCmap()
+        glyph_30fb = cmap.get(0x30FB)
+        assert glyph_30fb is not None, "U+30FB missing from cmap"
+        aw = m["hmtx"].metrics[glyph_30fb][0]
+        assert aw >= 900, (
+            f"U+30FB advance width {aw} is too narrow — "
+            "shared glyph was likely overwritten by Latin replacement"
+        )
+
+    def test_hyphenation_point_uses_latin_glyph(self):
+        """U+2027 should be replaced by the Inter glyph (half-width)."""
+        m = self._merge()
+        cmap = m.getBestCmap()
+        glyph_2027 = cmap.get(0x2027)
+        assert glyph_2027 is not None, "U+2027 missing from cmap"
+        aw = m["hmtx"].metrics[glyph_2027][0]
+        # Inter's U+2027 is narrow (~590 at 2048 UPM → ~288 at 1000 UPM)
+        assert aw < 600, (
+            f"U+2027 advance width {aw} — expected narrow Latin replacement"
+        )
+
+    def test_middle_dots_are_distinct_glyphs(self):
+        """U+30FB and U+2027 must point to different glyph names."""
+        m = self._merge()
+        cmap = m.getBestCmap()
+        assert cmap.get(0x30FB) != cmap.get(0x2027), (
+            "U+30FB and U+2027 should no longer share the same glyph"
+        )
+
+    def test_katakana_middle_dot_has_outline(self):
+        """U+30FB must still have a drawable outline."""
+        m = self._merge()
+        cmap = m.getBestCmap()
+        bounds = _get_bounds(m, cmap[0x30FB])
+        assert bounds is not None, "U+30FB has no outline"
+
+
+# ---------------------------------------------------------------------------
 # Export artifacts (OFL.txt, Settings.txt, export_fonts)
 # ---------------------------------------------------------------------------
 

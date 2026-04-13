@@ -2251,6 +2251,107 @@ def merge_fonts(config: dict, include_woff2: bool = True) -> str:
                         if latin_glyphs_to_copy[cp] == g:
                             del latin_glyphs_to_copy[cp]
 
+        # Step 4b: Preserve base-font glyphs shared across codepoints.
+        # When a merged glyph is the target of a Latin replacement (via
+        # lat_to_merged_name), other non-Latin codepoints that reference
+        # the same glyph would silently lose their original outline.
+        # Example: Noto Sans JP maps both U+2027 and U+30FB to glyph
+        # "uni2027".  Inter replaces U+2027, overwriting that glyph with
+        # a half-width Latin outline — U+30FB (katakana middle dot) then
+        # displays the wrong glyph.  Fix: duplicate the original glyph
+        # under a new name and repoint collateral cmap entries before
+        # the Latin copy overwrites anything.
+        merged_reverse_cmap: dict[str, set[int]] = {}
+        for cp, gname in merged_cmap.items():
+            merged_reverse_cmap.setdefault(gname, set()).add(cp)
+
+        lat_cmap_set = set(lat_cmap.keys())
+        overwritten_glyphs = set(lat_to_merged_name.values())
+        dup_budget = 65535 - len(existing_names)
+
+        for merged_gname in sorted(overwritten_glyphs):
+            referencing_cps = merged_reverse_cmap.get(merged_gname, set())
+            collateral_cps = referencing_cps - lat_cmap_set
+            if not collateral_cps:
+                continue
+
+            if dup_budget <= 0:
+                # No room to duplicate — cancel the Latin replacement for
+                # this glyph so the shared base glyph is preserved intact.
+                for lat_g, merged_g in list(lat_to_merged_name.items()):
+                    if merged_g == merged_gname:
+                        del lat_to_merged_name[lat_g]
+                        # Also remove from copy list so the glyph is skipped
+                        for cp_k in list(latin_glyphs_to_copy):
+                            if latin_glyphs_to_copy[cp_k] == lat_g:
+                                del latin_glyphs_to_copy[cp_k]
+                        all_lat_glyphs.discard(lat_g)
+                        break
+                continue
+
+            dup_name = f"{merged_gname}.orig"
+            i = 1
+            while dup_name in existing_names:
+                dup_name = f"{merged_gname}.orig{i}"
+                i += 1
+            existing_names.add(dup_name)
+            dup_budget -= 1
+
+            # Duplicate outline data
+            if merged_is_tt:
+                src_glyf = merged["glyf"]
+                if merged_gname in src_glyf:
+                    src_glyf[dup_name] = copy.deepcopy(
+                        src_glyf[merged_gname]
+                    )
+            else:
+                cff_td = merged["CFF "].cff.topDictIndex[0]
+                cs_table = cff_td.CharStrings
+                if merged_gname in cs_table.charStrings:
+                    if cs_table.charStringsAreIndexed:
+                        gid = cs_table.charStrings[merged_gname]
+                        orig_cs = copy.deepcopy(
+                            cs_table.charStringsIndex[gid]
+                        )
+                        next_idx = len(cs_table.charStringsIndex)
+                        cs_table.charStringsIndex.append(orig_cs)
+                        cs_table.charStrings[dup_name] = next_idx
+                    else:
+                        cs_table.charStrings[dup_name] = copy.deepcopy(
+                            cs_table.charStrings[merged_gname]
+                        )
+                # CID FDSelect: assign same FD as the source glyph
+                _cid_td = cff_td
+                if hasattr(_cid_td, 'FDSelect') and _cid_td.FDSelect:
+                    order = merged.getGlyphOrder()
+                    if merged_gname in order:
+                        src_gid = order.index(merged_gname)
+                        fd_idx = _cid_td.FDSelect[src_gid]
+                        # FDSelect will be extended after glyph order is
+                        # synced; stash the fd index so we can patch it.
+                        if not hasattr(_cid_td, '_pending_fd'):
+                            _cid_td._pending_fd = {}
+                        _cid_td._pending_fd[dup_name] = fd_idx
+
+            # Duplicate metrics
+            if merged_gname in merged["hmtx"].metrics:
+                merged["hmtx"].metrics[dup_name] = (
+                    merged["hmtx"].metrics[merged_gname]
+                )
+
+            # Repoint collateral cmap entries to the duplicate
+            for table in merged["cmap"].tables:
+                if not hasattr(table, 'cmap') or not table.cmap:
+                    continue
+                for cp in collateral_cps:
+                    if cp in table.cmap and table.cmap[cp] == merged_gname:
+                        table.cmap[cp] = dup_name
+
+            # Keep merged_cmap consistent for later steps
+            for cp in collateral_cps:
+                if merged_cmap.get(cp) == merged_gname:
+                    merged_cmap[cp] = dup_name
+
         # Step 5: Determine outline formats
         lat_is_cff = "CFF " in lat_font or "CFF2" in lat_font
 
@@ -2392,6 +2493,15 @@ def merge_fonts(config: dict, include_woff2: bool = True) -> str:
             merged.setGlyphOrder(final_order)
             cff_td = merged["CFF "].cff.topDictIndex[0]
             cff_td.charset = final_order[:]
+            # Patch FDSelect for duplicated collateral glyphs
+            if hasattr(cff_td, '_pending_fd'):
+                for gname, fd_idx in cff_td._pending_fd.items():
+                    if gname in final_order:
+                        gid = final_order.index(gname)
+                        while len(cff_td.FDSelect) <= gid:
+                            cff_td.FDSelect.append(0)
+                        cff_td.FDSelect[gid] = fd_idx
+                del cff_td._pending_fd
         progress("merging-glyphs", 5, f"3/{S} \u00b7 Merging features...")
 
         # Step 8: Update cmap tables (use mapped names)
