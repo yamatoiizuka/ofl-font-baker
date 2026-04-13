@@ -69,21 +69,21 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
   const {
     latinFont,
     baseFont,
-    outputFamilyName,
-    outputWeight,
-    outputItalic,
-    outputWidth,
-    outputDesigner,
-    outputCopyright,
-    outputUpm,
+    familyName,
+    fontWeight,
+    fontItalic,
+    fontWidth,
+    designer,
+    copyright,
+    upm,
     isMerging,
-    setOutputFamilyName,
-    setOutputWeight,
-    setOutputItalic,
-    setOutputWidth,
-    setOutputDesigner,
-    setOutputCopyright,
-    setOutputUpm,
+    setFamilyName,
+    setFontWeight,
+    setFontItalic,
+    setFontWidth,
+    setDesigner,
+    setCopyright,
+    setUpm,
   } = useMergeStore();
 
   // Use cached metadata from FontSource (no re-parsing needed)
@@ -96,8 +96,9 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
   const loading = false;
 
   // Title uses current family name
-  const familyTitle = outputFamilyName || 'Export Metadata';
-  const styleName = computeStyleName(outputWeight, outputItalic, outputWidth);
+  const familyTitle = familyName || 'Export Metadata';
+  const styleName = computeStyleName(fontWeight, fontItalic, fontWidth);
+
 
   // Source copyrights (read-only)
   const sourceCopyrights: string[] = [];
@@ -140,9 +141,9 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
             <FieldRow label="Family">
               <input
                 type="text"
-                defaultValue={outputFamilyName}
+                defaultValue={familyName}
                 onBlur={(e) => {
-                  setOutputFamilyName(e.target.value);
+                  setFamilyName(e.target.value);
                   useMergeStore.getState().pushHistory();
                 }}
                 disabled={isMerging}
@@ -152,8 +153,8 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
 
             <FieldRow label="Weight">
               <select
-                value={outputWeight}
-                onChange={(e) => setOutputWeight(Number(e.target.value))}
+                value={fontWeight}
+                onChange={(e) => setFontWeight(Number(e.target.value))}
                 disabled={isMerging}
                 className={cn(selectClassName, isMerging && 'opacity-50 cursor-not-allowed')}
                 style={selectArrowStyle}
@@ -168,8 +169,8 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
 
             <FieldRow label="Width">
               <select
-                value={outputWidth}
-                onChange={(e) => setOutputWidth(Number(e.target.value))}
+                value={fontWidth}
+                onChange={(e) => setFontWidth(Number(e.target.value))}
                 disabled={isMerging}
                 className={cn(selectClassName, isMerging && 'opacity-50 cursor-not-allowed')}
                 style={selectArrowStyle}
@@ -188,10 +189,10 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
                 min={16}
                 max={16384}
                 step={1}
-                value={outputUpm}
+                value={upm}
                 onChange={(e) => {
                   const n = Number(e.target.value);
-                  if (Number.isFinite(n) && n > 0) setOutputUpm(Math.round(n));
+                  if (Number.isFinite(n) && n > 0) setUpm(Math.round(n));
                 }}
                 onBlur={() => useMergeStore.getState().pushHistory()}
                 disabled={isMerging}
@@ -202,18 +203,18 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
             <div className="flex gap-[18px] py-[5px] text-[14px] pl-2 items-center">
               <span className="text-muted-foreground/70 shrink-0 w-[90px] text-right leading-5">Italic</span>
               <button
-                onClick={() => !isMerging && setOutputItalic(!outputItalic)}
+                onClick={() => !isMerging && setFontItalic(!fontItalic)}
                 disabled={isMerging}
                 className={cn(
                   'relative w-9 h-5 rounded-full transition-colors',
-                  outputItalic ? 'bg-foreground' : 'bg-secondary',
+                  fontItalic ? 'bg-foreground' : 'bg-secondary',
                   isMerging && 'opacity-50 cursor-not-allowed',
                 )}
               >
                 <span
                   className={cn(
                     'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-background transition-transform',
-                    outputItalic && 'translate-x-4',
+                    fontItalic && 'translate-x-4',
                   )}
                 />
               </button>
@@ -225,8 +226,8 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
             <FieldRow label="Designer">
               <input
                 type="text"
-                value={outputDesigner}
-                onChange={(e) => setOutputDesigner(e.target.value)}
+                value={designer}
+                onChange={(e) => setDesigner(e.target.value)}
                 onBlur={() => useMergeStore.getState().pushHistory()}
                 disabled={isMerging}
                 placeholder="Your name (optional)"
@@ -257,8 +258,8 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
             <FieldRow label="">
               <input
                 type="text"
-                value={outputCopyright}
-                onChange={(e) => setOutputCopyright(e.target.value)}
+                value={copyright}
+                onChange={(e) => setCopyright(e.target.value)}
                 onBlur={() => useMergeStore.getState().pushHistory()}
                 disabled={isMerging}
                 placeholder="Additional copyright (optional)"

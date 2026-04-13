@@ -38,9 +38,9 @@ export function useMerge() {
    */
   async function startMerge() {
     const {
-      latinFont, baseFont, outputFamilyName,
-      outputWeight, outputItalic, outputWidth,
-      outputDesigner, outputCopyright, outputUpm,
+      latinFont, baseFont, familyName,
+      fontWeight, fontItalic, fontWidth,
+      designer, copyright, upm,
     } = useMergeStore.getState();
 
     if (!baseFont) {
@@ -48,14 +48,10 @@ export function useMerge() {
       return;
     }
 
-    const fileStyle = computeFileStyleName(outputWeight, outputItalic, outputWidth);
-    const defaultFolderName = `${outputFamilyName.replace(/\s+/g, '')}-${fileStyle}`;
+    const fileStyle = computeFileStyleName(fontWeight, fontItalic, fontWidth);
+    const defaultFolderName = `${familyName.replace(/\s+/g, '')}-${fileStyle}`;
     const chosenPath = await window.electronAPI.pickOutput(defaultFolderName);
     if (!chosenPath) return;
-    // Save dialog returns the full target path; split into parent dir + folder name.
-    const sep = chosenPath.lastIndexOf('/');
-    const outputDir = sep >= 0 ? chosenPath.slice(0, sep) : chosenPath;
-    const folderName = sep >= 0 ? chosenPath.slice(sep + 1) : chosenPath;
 
     // Show the spinner immediately. The first "real" progress event only
     // arrives after the PyInstaller binary cold-starts and fontTools imports,
@@ -64,18 +60,23 @@ export function useMerge() {
     setMergeProgress({ stage: 'loading', percent: 0, message: 'Starting...' });
 
     const config: MergeConfig = {
-      latin: latinFont,
-      base: baseFont!,
-      outputDir,
-      outputFolderName: folderName,
-      overwrite: false,
-      outputFamilyName,
-      outputWeight,
-      outputItalic,
-      outputWidth,
-      outputDesigner,
-      outputCopyright,
-      outputUpm,
+      subFont: latinFont,
+      baseFont: baseFont!,
+      output: {
+        familyName,
+        weight: fontWeight,
+        italic: fontItalic,
+        width: fontWidth,
+        designer,
+        copyright,
+        upm,
+      },
+      export: {
+        package: {
+          dir: chosenPath,
+          overwrite: false,
+        },
+      },
     };
 
     const result = await window.electronAPI.startMerge(config);

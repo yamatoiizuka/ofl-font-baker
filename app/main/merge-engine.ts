@@ -70,7 +70,7 @@ export function runMerge(
   return new Promise((resolve, reject) => {
     const { command, args } = resolveMergeEngine();
 
-    const fontSource = (src: MergeConfig['base']) => ({
+    const fontSource = (src: MergeConfig['baseFont']) => ({
       path: src.path,
       familyName: src.familyName,
       styleName: src.styleName,
@@ -82,19 +82,10 @@ export function runMerge(
     });
 
     const pythonInput: Record<string, unknown> = {
-      ...(config.latin ? { latin: fontSource(config.latin) } : {}),
-      base: fontSource(config.base),
-      outputDir: config.outputDir,
-      outputFolderName: config.outputFolderName,
-      overwrite: config.overwrite,
-      outputFamilyName: config.outputFamilyName,
-      outputWeight: config.outputWeight ?? 400,
-      outputItalic: config.outputItalic ?? false,
-      outputWidth: config.outputWidth ?? 5,
-      outputDesigner: config.outputDesigner ?? '',
-      outputCopyright: config.outputCopyright ?? '',
-      outputUpm: config.outputUpm,
-      ...(config.outputOptions ? { outputOptions: config.outputOptions } : {}),
+      ...(config.subFont ? { subFont: fontSource(config.subFont) } : {}),
+      baseFont: fontSource(config.baseFont),
+      output: config.output,
+      export: config.export,
     };
 
     const proc = spawn(command, args, {

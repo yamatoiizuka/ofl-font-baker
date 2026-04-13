@@ -18,10 +18,10 @@ export const ExportPanel: React.FC = () => {
   const {
     latinFont,
     baseFont,
-    outputFamilyName,
-    outputWeight,
-    setOutputFamilyName,
-    setOutputWeight,
+    familyName,
+    fontWeight,
+    setFamilyName,
+    setFontWeight,
     mergeProgress,
     setMergeProgress,
     setIsMerging,
@@ -30,7 +30,7 @@ export const ExportPanel: React.FC = () => {
   const [isHoveringStop, setIsHoveringStop] = useState(false);
   const [metadataOpen, setMetadataOpen] = useState(false);
 
-  const hasValidName = outputFamilyName.trim().length > 0;
+  const hasValidName = familyName.trim().length > 0;
   const canMerge = baseFont && !isMerging && hasValidName;
   const isDone = mergeProgress?.stage === 'done';
   const isError = mergeProgress?.stage === 'error';
@@ -122,8 +122,8 @@ export const ExportPanel: React.FC = () => {
           </label>
           <input
             type="text"
-            value={outputFamilyName}
-            onChange={(e) => setOutputFamilyName(e.target.value)}
+            value={familyName}
+            onChange={(e) => setFamilyName(e.target.value)}
             onBlur={() => useMergeStore.getState().pushHistory()}
             disabled={isMerging}
             className="w-full px-3 py-2 rounded-md border border-input bg-background text-foreground text-sm focus:outline-none focus:ring-1 focus:ring-ring placeholder:text-foreground/40 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -131,7 +131,7 @@ export const ExportPanel: React.FC = () => {
         </div>
 
         {/* Weight */}
-        <WeightSelect value={outputWeight} onChange={setOutputWeight} disabled={isMerging} />
+        <WeightSelect value={fontWeight} onChange={setFontWeight} disabled={isMerging} />
 
         {/* Metadata... */}
         <Button

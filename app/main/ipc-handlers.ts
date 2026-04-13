@@ -68,15 +68,15 @@ export function registerIpcHandlers() {
     const win = BrowserWindow.fromWebContents(event.sender);
     setExporting(true);
     try {
-      if (!config.outputFamilyName?.trim()) {
+      if (!config.output.familyName?.trim()) {
         return { success: false, error: 'Font Family is Required' };
       }
-      const folderName = config.outputFolderName || 'FontBaker-Regular';
-      const folderPath = path.join(config.outputDir, folderName);
+      const dirPath = config.export.package.dir;
+      const folderName = path.basename(dirPath);
 
       // Check if folder already exists and confirm overwrite
       let overwrite = false;
-      if (existsSync(folderPath)) {
+      if (existsSync(dirPath)) {
         const confirm = await dialog.showMessageBox({
           type: 'warning',
           message: `\u201C${folderName}\u201D already exists. Replace?`,
@@ -90,7 +90,12 @@ export function registerIpcHandlers() {
         overwrite = true;
       }
 
-      const mergeConfig = { ...config, overwrite };
+      const mergeConfig: MergeConfig = {
+        ...config,
+        export: {
+          package: { ...config.export.package, overwrite },
+        },
+      };
       const manifest = await runMerge(mergeConfig, (progress) => {
         win?.webContents.send(IPC.MERGE_PROGRESS, progress);
       });

@@ -34,36 +34,39 @@ export interface FontSource {
   description?: string;
 }
 
-export interface OutputOptions {
-  bundleMode: 'directory';
-  fontFormat: 'auto';
-  includeWoff2: boolean;
-  writeConfigJson: boolean;
-  bundleInputFonts: boolean;
+export interface MergeOutput {
+  familyName: string;
+  weight: number;
+  italic: boolean;
+  width: number;
+  designer: string;
+  copyright: string;
+  upm: number;
+}
+
+export interface MergePackage {
+  dir: string;
+  overwrite: boolean;
+  bundleInputFonts?: boolean;
+}
+
+export interface MergeExport {
+  package: MergePackage;
 }
 
 export interface MergeConfig {
-  latin: FontSource | null;
-  base: FontSource;
-  outputDir: string;
-  outputFolderName: string;
-  outputFamilyName: string;
-  outputWeight: number;
-  outputItalic: boolean;
-  outputWidth: number;
-  outputDesigner: string;
-  outputCopyright: string;
-  outputUpm: number;
-  overwrite: boolean;
-  outputOptions?: OutputOptions;
+  subFont: FontSource | null;
+  baseFont: FontSource;
+  output: MergeOutput;
+  export: MergeExport;
 }
 
 export interface ExportManifest {
   outputDir: string;
   fontPath: string;
   woff2Path: string | null;
-  oflPath: string;
-  settingsPath: string;
+  oflPath: string | null;
+  settingsPath: string | null;
   configPath: string | null;
   files: string[];
 }

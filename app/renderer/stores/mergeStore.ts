@@ -16,13 +16,13 @@ interface UndoableState {
   baseFont: FontSource | null;
   selectedRole: 'latin' | 'base' | null;
   sampleText: string;
-  outputFamilyName: string;
-  outputWeight: number;
-  outputItalic: boolean;
-  outputWidth: number;
-  outputDesigner: string;
-  outputCopyright: string;
-  outputUpm: number;
+  familyName: string;
+  fontWeight: number;
+  fontItalic: boolean;
+  fontWidth: number;
+  designer: string;
+  copyright: string;
+  upm: number;
 }
 
 export const DEFAULT_TEXT =
@@ -33,13 +33,13 @@ const INITIAL_UNDOABLE: UndoableState = {
   baseFont: null,
   selectedRole: null,
   sampleText: DEFAULT_TEXT,
-  outputFamilyName: 'Untitled Font',
-  outputWeight: 400,
-  outputItalic: false,
-  outputWidth: 5,
-  outputDesigner: '',
-  outputCopyright: '',
-  outputUpm: 1000,
+  familyName: 'Untitled Font',
+  fontWeight: 400,
+  fontItalic: false,
+  fontWidth: 5,
+  designer: '',
+  copyright: '',
+  upm: 1000,
 };
 
 // ---------------------------------------------------------------------------
@@ -70,13 +70,13 @@ interface MergeState extends UndoableState {
     update: Partial<Pick<FontSource, 'baselineOffset' | 'scale'>>,
   ) => void;
   updateFontAxis: (role: 'latin' | 'base', tag: string, value: number) => void;
-  setOutputFamilyName: (name: string) => void;
-  setOutputWeight: (weight: number) => void;
-  setOutputItalic: (italic: boolean) => void;
-  setOutputWidth: (width: number) => void;
-  setOutputDesigner: (designer: string) => void;
-  setOutputCopyright: (copyright: string) => void;
-  setOutputUpm: (upm: number) => void;
+  setFamilyName: (name: string) => void;
+  setFontWeight: (weight: number) => void;
+  setFontItalic: (italic: boolean) => void;
+  setFontWidth: (width: number) => void;
+  setDesigner: (designer: string) => void;
+  setCopyright: (copyright: string) => void;
+  setUpm: (upm: number) => void;
   setMergeProgress: (progress: MergeProgress | null) => void;
   setIsMerging: (merging: boolean) => void;
   /** Push current state to history (call after slider release, text blur, etc.) */
@@ -98,13 +98,13 @@ function extractUndoable(state: MergeState): UndoableState {
     baseFont: state.baseFont,
     selectedRole: state.selectedRole,
     sampleText: state.sampleText,
-    outputFamilyName: state.outputFamilyName,
-    outputWeight: state.outputWeight,
-    outputItalic: state.outputItalic,
-    outputWidth: state.outputWidth,
-    outputDesigner: state.outputDesigner,
-    outputCopyright: state.outputCopyright,
-    outputUpm: state.outputUpm,
+    familyName: state.familyName,
+    fontWeight: state.fontWeight,
+    fontItalic: state.fontItalic,
+    fontWidth: state.fontWidth,
+    designer: state.designer,
+    copyright: state.copyright,
+    upm: state.upm,
   };
 }
 
@@ -135,10 +135,10 @@ export const useMergeStore = create<MergeState>()(
         set((state) => ({
           latinFont: font,
           selectedRole: font ? 'latin' : state.baseFont ? 'base' : null,
-          outputWeight: INITIAL_UNDOABLE.outputWeight,
-          outputWidth: INITIAL_UNDOABLE.outputWidth,
-          outputUpm: INITIAL_UNDOABLE.outputUpm,
-          outputItalic: INITIAL_UNDOABLE.outputItalic,
+          fontWeight: INITIAL_UNDOABLE.fontWeight,
+          fontWidth: INITIAL_UNDOABLE.fontWidth,
+          upm: INITIAL_UNDOABLE.upm,
+          fontItalic: INITIAL_UNDOABLE.fontItalic,
         }));
         get().pushHistory();
       },
@@ -147,10 +147,10 @@ export const useMergeStore = create<MergeState>()(
         set((state) => ({
           baseFont: font,
           selectedRole: font ? 'base' : state.latinFont ? 'latin' : null,
-          outputWeight: INITIAL_UNDOABLE.outputWeight,
-          outputWidth: INITIAL_UNDOABLE.outputWidth,
-          outputUpm: INITIAL_UNDOABLE.outputUpm,
-          outputItalic: INITIAL_UNDOABLE.outputItalic,
+          fontWeight: INITIAL_UNDOABLE.fontWeight,
+          fontWidth: INITIAL_UNDOABLE.fontWidth,
+          upm: INITIAL_UNDOABLE.upm,
+          fontItalic: INITIAL_UNDOABLE.fontItalic,
         }));
         get().pushHistory();
       },
@@ -184,22 +184,22 @@ export const useMergeStore = create<MergeState>()(
 
       // Text setters don't push history per keystroke — components call
       // pushHistory() on blur to record one snapshot per edit session.
-      setOutputFamilyName: (name) => set({ outputFamilyName: name }),
-      setOutputWeight: (weight) => {
-        set({ outputWeight: weight });
+      setFamilyName: (name) => set({ familyName: name }),
+      setFontWeight: (weight) => {
+        set({ fontWeight: weight });
         get().pushHistory();
       },
-      setOutputItalic: (italic) => {
-        set({ outputItalic: italic });
+      setFontItalic: (italic) => {
+        set({ fontItalic: italic });
         get().pushHistory();
       },
-      setOutputWidth: (width) => {
-        set({ outputWidth: width });
+      setFontWidth: (width) => {
+        set({ fontWidth: width });
         get().pushHistory();
       },
-      setOutputDesigner: (designer) => set({ outputDesigner: designer }),
-      setOutputCopyright: (copyright) => set({ outputCopyright: copyright }),
-      setOutputUpm: (upm) => set({ outputUpm: upm }),
+      setDesigner: (designer) => set({ designer: designer }),
+      setCopyright: (copyright) => set({ copyright: copyright }),
+      setUpm: (upm) => set({ upm: upm }),
       setMergeProgress: (progress) => set({ mergeProgress: progress }),
       setIsMerging: (merging) => set({ isMerging: merging }),
 
@@ -250,19 +250,19 @@ export const useMergeStore = create<MergeState>()(
     }),
     {
       name: 'ofl-font-baker-store',
-      version: 5,
+      version: 6,
       partialize: (state) => ({
         latinFont: state.latinFont,
         baseFont: state.baseFont,
         sampleText: state.sampleText,
         previewFontSize: state.previewFontSize,
-        outputFamilyName: state.outputFamilyName,
-        outputWeight: state.outputWeight,
-        outputItalic: state.outputItalic,
-        outputWidth: state.outputWidth,
-        outputDesigner: state.outputDesigner,
-        outputCopyright: state.outputCopyright,
-        outputUpm: state.outputUpm,
+        familyName: state.familyName,
+        fontWeight: state.fontWeight,
+        fontItalic: state.fontItalic,
+        fontWidth: state.fontWidth,
+        designer: state.designer,
+        copyright: state.copyright,
+        upm: state.upm,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
