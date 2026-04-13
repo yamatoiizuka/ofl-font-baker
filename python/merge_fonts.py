@@ -278,6 +278,10 @@ _OUTPUT_OPTIONS_DEFAULTS = {
     "includeWoff2": True,
     "writeConfigJson": False,
     "bundleInputFonts": False,
+    "fontDir": None,
+    "woff2Dir": None,
+    "writeOfl": True,
+    "writeSettings": True,
 }
 
 
@@ -1961,6 +1965,11 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     merged_upm = merged["head"].unitsPerEm
     upm_ratio = merged_upm / lat_upm if lat_upm != merged_upm else 1.0
 
+    # metricsSource: "base" (default) keeps base-font metrics and only
+    # expands them when the Latin font is larger; "latin" overwrites
+    # vertical metrics with the Latin font's values unconditionally.
+    metrics_source = config.get("metricsSource", "base")
+
     lat_os2 = lat_font.get("OS/2")
     jp_os2 = merged.get("OS/2")
     if lat_os2 and jp_os2:
@@ -1969,10 +1978,16 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
         en_win_asc = int(round(lat_os2.usWinAscent * upm_ratio))
         en_win_desc = int(round(lat_os2.usWinDescent * upm_ratio))
 
-        jp_os2.sTypoAscender = max(en_typo_asc, jp_os2.sTypoAscender)
-        jp_os2.sTypoDescender = min(en_typo_desc, jp_os2.sTypoDescender)
-        jp_os2.usWinAscent = max(en_win_asc, jp_os2.usWinAscent)
-        jp_os2.usWinDescent = max(en_win_desc, jp_os2.usWinDescent)
+        if metrics_source == "latin":
+            jp_os2.sTypoAscender = en_typo_asc
+            jp_os2.sTypoDescender = en_typo_desc
+            jp_os2.usWinAscent = en_win_asc
+            jp_os2.usWinDescent = en_win_desc
+        else:
+            jp_os2.sTypoAscender = max(en_typo_asc, jp_os2.sTypoAscender)
+            jp_os2.sTypoDescender = min(en_typo_desc, jp_os2.sTypoDescender)
+            jp_os2.usWinAscent = max(en_win_asc, jp_os2.usWinAscent)
+            jp_os2.usWinDescent = max(en_win_desc, jp_os2.usWinDescent)
         for attr in ('ulUnicodeRange1', 'ulUnicodeRange2',
                      'ulUnicodeRange3', 'ulUnicodeRange4'):
             setattr(jp_os2, attr,
@@ -1988,8 +2003,12 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     if lat_hhea and jp_hhea:
         lat_hhea_asc = int(round(lat_hhea.ascent * upm_ratio))
         lat_hhea_desc = int(round(lat_hhea.descent * upm_ratio))
-        jp_hhea.ascent = max(lat_hhea_asc, jp_hhea.ascent)
-        jp_hhea.descent = min(lat_hhea_desc, jp_hhea.descent)
+        if metrics_source == "latin":
+            jp_hhea.ascent = lat_hhea_asc
+            jp_hhea.descent = lat_hhea_desc
+        else:
+            jp_hhea.ascent = max(lat_hhea_asc, jp_hhea.ascent)
+            jp_hhea.descent = min(lat_hhea_desc, jp_hhea.descent)
 
     # --- Remove DSIG (will be invalid) ---
     if "DSIG" in merged:
@@ -2758,7 +2777,15 @@ def export_fonts(config: dict) -> dict:
 
     base_ext = detect_sfnt_ext(config["base"]["path"])
     font_file_name = f"{folder_name}.{base_ext}"
-    font_path = os.path.join(folder_path, font_file_name)
+
+    # When fontDir is specified, write the font file directly into that
+    # directory (flat, no subfolder) instead of the default export folder.
+    font_dir = opts["fontDir"]
+    if font_dir:
+        os.makedirs(font_dir, exist_ok=True)
+        font_path = os.path.join(font_dir, font_file_name)
+    else:
+        font_path = os.path.join(folder_path, font_file_name)
 
     include_woff2 = opts["includeWoff2"]
     merge_config = dict(config, outputPath=font_path)
@@ -2766,21 +2793,33 @@ def export_fonts(config: dict) -> dict:
 
     files = [font_path]
 
-    woff2_path = os.path.join(folder_path, f"{folder_name}.woff2")
+    woff2_path = None
     if include_woff2:
+        # When woff2Dir is specified, move the WOFF2 to that directory.
+        woff2_dir = opts["woff2Dir"]
+        default_woff2 = os.path.splitext(font_path)[0] + ".woff2"
+        if woff2_dir:
+            os.makedirs(woff2_dir, exist_ok=True)
+            woff2_path = os.path.join(woff2_dir, f"{folder_name}.woff2")
+            if os.path.exists(default_woff2) and default_woff2 != woff2_path:
+                shutil.move(default_woff2, woff2_path)
+        else:
+            woff2_path = default_woff2
         files.append(woff2_path)
-    else:
-        woff2_path = None
 
-    ofl_path = os.path.join(folder_path, "OFL.txt")
-    with open(ofl_path, "w", encoding="utf-8") as f:
-        f.write(build_ofl_text(config))
-    files.append(ofl_path)
+    ofl_path = None
+    if opts["writeOfl"]:
+        ofl_path = os.path.join(folder_path, "OFL.txt")
+        with open(ofl_path, "w", encoding="utf-8") as f:
+            f.write(build_ofl_text(config))
+        files.append(ofl_path)
 
-    settings_path = os.path.join(folder_path, "Settings.txt")
-    with open(settings_path, "w", encoding="utf-8") as f:
-        f.write(build_settings_text(config))
-    files.append(settings_path)
+    settings_path = None
+    if opts["writeSettings"]:
+        settings_path = os.path.join(folder_path, "Settings.txt")
+        with open(settings_path, "w", encoding="utf-8") as f:
+            f.write(build_settings_text(config))
+        files.append(settings_path)
 
     config_path = None
     if opts["bundleInputFonts"]:

@@ -81,6 +81,16 @@ Progress is emitted as JSON lines on stderr.
 | `includeWoff2`     | `true`  | Generate a WOFF2 file alongside the main font.                                                                                                                                                                                         |
 | `writeConfigJson`  | `false` | Write an `ExportConfig.json` that records the merge settings.                                                                                                                                                                          |
 | `bundleInputFonts` | `false` | Copy the input fonts into a `source/` subdirectory and rewrite paths in `ExportConfig.json` to relative paths (e.g. `./source/Base.otf`). Automatically enables `writeConfigJson`. Makes the export directory self-contained and reproducible. |
+| `fontDir`          | `null`  | Write the font file (OTF/TTF) directly into this directory instead of the default export subfolder. The directory is created if it doesn't exist. |
+| `woff2Dir`         | `null`  | Write the WOFF2 file into this directory instead of alongside the font file. The directory is created if it doesn't exist. |
+| `writeOfl`         | `true`  | Write `OFL.txt` into the export directory. Set to `false` if you manage the license file yourself. |
+| `writeSettings`    | `true`  | Write `Settings.txt` into the export directory. |
+
+### Top-level options
+
+| Key              | Default  | Description                                                                                                                                           |
+| ---------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `metricsSource`  | `"base"` | Which font's vertical metrics (OS/2, hhea) to use. `"base"` keeps the base font metrics and expands only when the Latin font is larger. `"latin"` overwrites with the Latin font's metrics. |
 
 ## Tests
 
