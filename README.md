@@ -118,7 +118,7 @@ This software is provided "AS IS", without warranty of any kind, express or impl
 
 This application was designed and developed through dialogue with [Claude Opus 4.6](https://www.anthropic.com/claude).
 
-The core font merging engine uses [fontTools](https://github.com/fonttools/fonttools), and real-time preview is powered by [HarfBuzz](https://github.com/nicolo-ribaudo/harfbuzzjs).
+The core font merging engine uses [fontTools](https://github.com/fonttools/fonttools), and real-time preview is powered by [HarfBuzz](https://github.com/harfbuzz/harfbuzzjs).
 We are grateful to the authors of these and other wonderful open-source software projects.
 
 Above all, we extend our deepest respect to the type designers and type foundries who publish outstanding typefaces under the SIL Open Font License.

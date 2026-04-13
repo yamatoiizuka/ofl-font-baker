@@ -118,7 +118,7 @@ https://openfontlicense.org
 
 このアプリケーションは、[Claude Opus 4.6](https://www.anthropic.com/claude) との対話を通じて設計・開発されました。
 
-フォントマージの中核には [fontTools](https://github.com/fonttools/fonttools)、リアルタイムプレビューには [HarfBuzz](https://github.com/nicolo-ribaudo/harfbuzzjs) を使用しています。
+フォントマージの中核には [fontTools](https://github.com/fonttools/fonttools)、リアルタイムプレビューには [HarfBuzz](https://github.com/harfbuzz/harfbuzzjs) を使用しています。
 これらをはじめとする素晴らしいオープンソースソフトウェアの作者の皆さまに感謝します。
 
 そしてなにより、SIL Open Font License のもとで素晴らしい書体を公開してくださっているタイプデザイナー・タイプファウンドリーの皆さまに、深く敬意を表します。
