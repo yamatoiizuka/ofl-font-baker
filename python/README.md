@@ -19,41 +19,58 @@ Requires Python 3.9+. [fonttools](https://github.com/fonttools/fonttools) and [b
 
 ## Usage
 
-Provide a JSON config on stdin. When `outputDir` is present, the engine produces a full export directory with font files and metadata.
+Provide a JSON config on stdin. The engine supports two modes:
 
 ```bash
 cat config.json | python3 merge_fonts.py
 ```
 
-### Export Mode
+### Path Mode
 
-Input:
+Specify output file paths explicitly via `export.path`. Only the files whose paths are provided are written.
 
 ```json
 {
-  "base": {
+  "baseFont": {
     "path": "/path/to/base.otf",
     "scale": 1.0,
     "baselineOffset": 0,
     "axes": []
   },
-  "latin": {
-    "path": "/path/to/latin.ttf",
+  "subFont": {
+    "path": "/path/to/sub.ttf",
     "scale": 1.0,
     "baselineOffset": 0,
     "axes": []
   },
-  "outputDir": "/exports",
-  "outputFolderName": "MyFont-Regular",
-  "overwrite": false,
-  "outputFamilyName": "My Font",
-  "outputWeight": 400,
-  "outputItalic": false,
-  "outputWidth": 5,
-  "outputOptions": {
-    "includeWoff2": true,
-    "writeConfigJson": false,
-    "bundleInputFonts": false
+  "output": {
+    "familyName": "My Font",
+    "weight": 400,
+    "italic": false,
+    "width": 5
+  },
+  "export": {
+    "path": {
+      "font": "/out/MyFont-Regular.otf",
+      "woff2": "/web/MyFont-Regular.woff2"
+    }
+  }
+}
+```
+
+### Package Mode
+
+Specify `export.package` to create a complete output directory with font files and metadata.
+
+```json
+{
+  "baseFont": { "path": "/path/to/base.otf", "scale": 1.0, "baselineOffset": 0, "axes": [] },
+  "subFont": { "path": "/path/to/sub.ttf", "scale": 1.0, "baselineOffset": 0, "axes": [] },
+  "output": { "familyName": "My Font" },
+  "export": {
+    "package": {
+      "dir": "/exports/MyFont-Regular"
+    }
   }
 }
 ```
@@ -74,23 +91,40 @@ Output (JSON manifest on stdout):
 
 Progress is emitted as JSON lines on stderr.
 
-### outputOptions
+### `output`
 
-| Key                | Default | Description                                                                                                                                                                                                                             |
-| ------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `includeWoff2`     | `true`  | Generate a WOFF2 file alongside the main font.                                                                                                                                                                                         |
-| `writeConfigJson`  | `false` | Write an `ExportConfig.json` that records the merge settings.                                                                                                                                                                          |
-| `bundleInputFonts` | `false` | Copy the input fonts into a `source/` subdirectory and rewrite paths in `ExportConfig.json` to relative paths (e.g. `./source/Base.otf`). Automatically enables `writeConfigJson`. Makes the export directory self-contained and reproducible. |
-| `fontDir`          | `null`  | Write the font file (OTF/TTF) directly into this directory instead of the default export subfolder. The directory is created if it doesn't exist. |
-| `woff2Dir`         | `null`  | Write the WOFF2 file into this directory instead of alongside the font file. The directory is created if it doesn't exist. |
-| `writeOfl`         | `true`  | Write `OFL.txt` into the export directory. Set to `false` if you manage the license file yourself. |
-| `writeSettings`    | `true`  | Write `Settings.txt` into the export directory. |
+| Key             | Default      | Description                                                                                                                                                         |
+| --------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `familyName`    | `"Font"`     | Output font family name.                                                                                                                                            |
+| `weight`        | `400`        | Font weight (100–900).                                                                                                                                              |
+| `italic`        | `false`      | Whether the output is italic.                                                                                                                                       |
+| `width`         | `5`          | Font width class (1–9).                                                                                                                                             |
+| `upm`           | (from base)  | Target units-per-em. When different from the base font, all metrics and outlines are scaled.                                                                         |
+| `copyright`     | `""`         | Additional copyright string appended to source copyrights.                                                                                                          |
+| `designer`      | `""`         | Designer name for nameID 9.                                                                                                                                         |
+| `metricsSource` | `"base"`     | Which font's vertical metrics (OS/2, hhea) to use. `"base"` keeps the base font metrics and expands only when the sub font is larger. `"sub"` overwrites with the sub font's metrics. |
 
-### Top-level options
+### `export.path`
 
-| Key              | Default  | Description                                                                                                                                           |
-| ---------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `metricsSource`  | `"base"` | Which font's vertical metrics (OS/2, hhea) to use. `"base"` keeps the base font metrics and expands only when the Latin font is larger. `"latin"` overwrites with the Latin font's metrics. |
+All keys are optional. Only files whose paths are specified are written. `woff2` requires `font`.
+
+| Key        | Description                  |
+| ---------- | ---------------------------- |
+| `font`     | Font file (OTF/TTF) path.   |
+| `woff2`    | WOFF2 file path.             |
+| `ofl`      | OFL.txt path.                |
+| `settings` | Settings.txt path.           |
+| `config`   | ExportConfig.json path.      |
+
+### `export.package`
+
+Creates a complete output directory. Always generates font, WOFF2, OFL.txt, and Settings.txt.
+
+| Key                | Default | Description                                                                                                                                         |
+| ------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dir`              |         | Output directory path (required).                                                                                                                   |
+| `overwrite`        | `false` | Allow overwriting an existing directory.                                                                                                            |
+| `bundleInputFonts` | `false` | Copy input fonts into a `source/` subdirectory and write `ExportConfig.json` with relative paths. Makes the package self-contained and reproducible. |
 
 ## Tests
 

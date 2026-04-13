@@ -9,7 +9,7 @@
 
 機能の詳細や背景については [OFL Font Baker のリポジトリ](https://github.com/yamatoiizuka/ofl-font-baker) を参照してください。
 
-## インストール
+## Installation
 
 ```bash
 pip install ofl-font-baker
@@ -19,41 +19,58 @@ Python 3.9 以上が必要です。[fonttools](https://github.com/fonttools/font
 
 ## Usage
 
-JSON 設定を stdin に渡します。`outputDir` が指定されている場合は、フォントファイルとメタデータを含む出力ディレクトリを生成します。
+JSON 設定を stdin に渡します。エンジンは 2 つのモードをサポートしています。
 
 ```bash
 cat config.json | python3 merge_fonts.py
 ```
 
-### Export Mode
+### Path Mode
 
-入力:
+`export.path` で出力ファイルパスを明示的に指定します。パスが指定されたファイルのみ書き出されます。
 
 ```json
 {
-  "base": {
+  "baseFont": {
     "path": "/path/to/base.otf",
     "scale": 1.0,
     "baselineOffset": 0,
     "axes": []
   },
-  "latin": {
-    "path": "/path/to/latin.ttf",
+  "subFont": {
+    "path": "/path/to/sub.ttf",
     "scale": 1.0,
     "baselineOffset": 0,
     "axes": []
   },
-  "outputDir": "/exports",
-  "outputFolderName": "MyFont-Regular",
-  "overwrite": false,
-  "outputFamilyName": "My Font",
-  "outputWeight": 400,
-  "outputItalic": false,
-  "outputWidth": 5,
-  "outputOptions": {
-    "includeWoff2": true,
-    "writeConfigJson": false,
-    "bundleInputFonts": false
+  "output": {
+    "familyName": "My Font",
+    "weight": 400,
+    "italic": false,
+    "width": 5
+  },
+  "export": {
+    "path": {
+      "font": "/out/MyFont-Regular.otf",
+      "woff2": "/web/MyFont-Regular.woff2"
+    }
+  }
+}
+```
+
+### Package Mode
+
+`export.package` を指定すると、フォントファイルとメタデータを含む出力ディレクトリを生成します。
+
+```json
+{
+  "baseFont": { "path": "/path/to/base.otf", "scale": 1.0, "baselineOffset": 0, "axes": [] },
+  "subFont": { "path": "/path/to/sub.ttf", "scale": 1.0, "baselineOffset": 0, "axes": [] },
+  "output": { "familyName": "My Font" },
+  "export": {
+    "package": {
+      "dir": "/exports/MyFont-Regular"
+    }
   }
 }
 ```
@@ -74,23 +91,40 @@ cat config.json | python3 merge_fonts.py
 
 進捗は stderr に JSON Lines で出力されます。
 
-### outputOptions
+### `output`
 
-| Key                | Default | 説明                                                                                                                                                                                                                                         |
-| ------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `includeWoff2`     | `true`  | メインフォントに加えて WOFF2 ファイルを生成する。                                                                                                                                                                                            |
-| `writeConfigJson`  | `false` | マージ設定を記録した `ExportConfig.json` を出力する。                                                                                                                                                                                        |
-| `bundleInputFonts` | `false` | 入力フォントを `source/` サブディレクトリにコピーし、`ExportConfig.json` 内のパスを相対パス（例: `./source/Base.otf`）に書き換える。`writeConfigJson` は自動的に有効になる。出力ディレクトリだけで再現可能な自己完結型のエクスポートになる。 |
-| `fontDir`          | `null`  | フォントファイル（OTF/TTF）をデフォルトのエクスポートフォルダではなく、このディレクトリに直接書き出す。ディレクトリが存在しない場合は自動作成される。 |
-| `woff2Dir`         | `null`  | WOFF2 ファイルをフォントファイルと同じ場所ではなく、このディレクトリに書き出す。ディレクトリが存在しない場合は自動作成される。 |
-| `writeOfl`         | `true`  | `OFL.txt` をエクスポートディレクトリに書き出す。ライセンスファイルを自前管理する場合は `false` に設定する。 |
-| `writeSettings`    | `true`  | `Settings.txt` をエクスポートディレクトリに書き出す。 |
+| Key             | デフォルト   | 説明                                                                                                                                                                              |
+| --------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `familyName`    | `"Font"`     | 出力フォントのファミリー名。                                                                                                                                                      |
+| `weight`        | `400`        | フォントウェイト（100–900）。                                                                                                                                                     |
+| `italic`        | `false`      | 出力がイタリックかどうか。                                                                                                                                                        |
+| `width`         | `5`          | フォント幅クラス（1–9）。                                                                                                                                                         |
+| `upm`           | (ベースから) | ターゲット units-per-em。ベースフォントと異なる場合、すべてのメトリクスとアウトラインがスケーリングされる。                                                                       |
+| `copyright`     | `""`         | ソースのコピーライトに追加されるコピーライト文字列。                                                                                                                              |
+| `designer`      | `""`         | nameID 9 のデザイナー名。                                                                                                                                                         |
+| `metricsSource` | `"base"`     | 垂直メトリクス（OS/2, hhea）の参照元。`"base"` はベースフォントのメトリクスを維持し、サブフォントの方が大きい場合のみ拡張する。`"sub"` はサブフォントのメトリクスで上書きする。 |
 
-### トップレベルオプション
+### `export.path`
 
-| Key              | デフォルト | 説明                                                                                                                                                  |
-| ---------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `metricsSource`  | `"base"`   | 垂直メトリクス（OS/2, hhea）の参照元。`"base"` はベースフォントのメトリクスを維持し、Latin フォントの方が大きい場合のみ拡張する。`"latin"` は Latin フォントのメトリクスで上書きする。 |
+全キーがオプション。パスが指定されたファイルのみ書き出される。`woff2` は `font` が必要。
+
+| Key        | 説明                          |
+| ---------- | ----------------------------- |
+| `font`     | フォントファイル（OTF/TTF）のパス。 |
+| `woff2`    | WOFF2 ファイルのパス。         |
+| `ofl`      | OFL.txt のパス。               |
+| `settings` | Settings.txt のパス。          |
+| `config`   | ExportConfig.json のパス。     |
+
+### `export.package`
+
+出力ディレクトリを作成し、全アーティファクト（font, WOFF2, OFL.txt, Settings.txt）を生成する。
+
+| Key                | デフォルト | 説明                                                                                                                           |
+| ------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `dir`              |            | 出力ディレクトリのパス（必須）。                                                                                                |
+| `overwrite`        | `false`    | 既存ディレクトリの上書きを許可する。                                                                                            |
+| `bundleInputFonts` | `false`    | 入力フォントを `source/` サブディレクトリにコピーし、`ExportConfig.json` を相対パスで出力する。パッケージを自己完結・再現可能にする。 |
 
 ## Tests
 
