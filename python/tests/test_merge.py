@@ -40,8 +40,13 @@ def _merge(lat_scale=1.0, lat_baseline=0, jp_scale=1.0, jp_baseline=0,
            output_upm=None):
     """Run merge and return the merged TTFont."""
     out = tempfile.mktemp(suffix=".ttf")
+    output = {"familyName": "Test"}
+    if output_weight is not None:
+        output["weight"] = output_weight
+    if output_upm is not None:
+        output["upm"] = output_upm
     config = {
-        "latin": {
+        "subFont": {
             "path": EN_VAR,
             "scale": lat_scale,
             "baselineOffset": lat_baseline,
@@ -50,20 +55,15 @@ def _merge(lat_scale=1.0, lat_baseline=0, jp_scale=1.0, jp_baseline=0,
                 {"tag": "wght", "currentValue": lat_wght},
             ],
         },
-        "base": {
+        "baseFont": {
             "path": JP_VAR,
             "scale": jp_scale,
             "baselineOffset": jp_baseline,
             "axes": [{"tag": "wght", "currentValue": jp_wght}],
         },
-        "outputFormat": "ttf",
-        "outputPath": out,
-        "outputFamilyName": "Test",
+        "output": output,
+        "export": {"path": {"font": out}},
     }
-    if output_weight is not None:
-        config["outputWeight"] = output_weight
-    if output_upm is not None:
-        config["outputUpm"] = output_upm
     mf.merge_fonts(config)
     font = TTFont(out)
     os.remove(out)
@@ -120,9 +120,9 @@ class TestVariableInstantiation:
         """Fonts with fvar are instantiated even when no axes are specified."""
         out = tempfile.mktemp(suffix=".ttf")
         config = {
-            "latin": {"path": EN_VAR, "scale": 1.0, "baselineOffset": 0, "axes": []},
-            "base": {"path": JP_VAR, "scale": 1.0, "baselineOffset": 0, "axes": []},
-            "outputFormat": "ttf", "outputPath": out, "outputFamilyName": "Test",
+            "subFont": {"path": EN_VAR, "scale": 1.0, "baselineOffset": 0, "axes": []},
+            "baseFont": {"path": JP_VAR, "scale": 1.0, "baselineOffset": 0, "axes": []},
+            "output": {"familyName": "Test"}, "export": {"path": {"font": out}},
         }
         mf.merge_fonts(config)
         font = TTFont(out)
@@ -474,21 +474,20 @@ class TestFeaturePreservation:
             pytest.skip("NotoSansJP-VariableFont_wght.ttf not found")
         out = tempfile.mktemp(suffix=".ttf")
         config = {
-            "latin": {
+            "subFont": {
                 "path": EN_CFF,
                 "scale": 1.0,
                 "baselineOffset": 0,
                 "axes": [],
             },
-            "base": {
+            "baseFont": {
                 "path": JP_FULL_VAR,
                 "scale": 1.0,
                 "baselineOffset": 0,
                 "axes": [{"tag": "wght", "currentValue": 400}],
             },
-            "outputFormat": "ttf",
-            "outputPath": out,
-            "outputFamilyName": "TestKern",
+            "output": {"familyName": "TestKern"},
+            "export": {"path": {"font": out}},
         }
         mf.merge_fonts(config)
         font = TTFont(out)
@@ -598,7 +597,7 @@ def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyri
     """Run merge with metadata options and return TTFont + cleanup paths."""
     out = tempfile.mktemp(suffix=".ttf")
     config = {
-        "latin": {
+        "subFont": {
             "path": EN_VAR,
             "scale": 1.0,
             "baselineOffset": 0,
@@ -607,17 +606,18 @@ def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyri
                 {"tag": "wght", "currentValue": 400},
             ],
         },
-        "base": {
+        "baseFont": {
             "path": JP_VAR,
             "scale": 1.0,
             "baselineOffset": 0,
             "axes": [{"tag": "wght", "currentValue": 400}],
         },
-        "outputFormat": "ttf",
-        "outputPath": out,
-        "outputFamilyName": output_family,
-        "outputDesigner": output_designer,
-        "outputCopyright": output_copyright,
+        "output": {
+            "familyName": output_family,
+            "designer": output_designer,
+            "copyright": output_copyright,
+        },
+        "export": {"path": {"font": out}},
     }
     mf.merge_fonts(config)
     font = TTFont(out)
@@ -709,17 +709,18 @@ class TestMetadataBaseOnly:
     def _merge_base_only_meta(self, output_designer="", output_copyright=""):
         out = tempfile.mktemp(suffix=".ttf")
         config = {
-            "base": {
+            "baseFont": {
                 "path": JP_VAR,
                 "scale": 1.0,
                 "baselineOffset": 0,
                 "axes": [{"tag": "wght", "currentValue": 400}],
             },
-            "outputFormat": "ttf",
-            "outputPath": out,
-            "outputFamilyName": "BaseOnlyMeta",
-            "outputDesigner": output_designer,
-            "outputCopyright": output_copyright,
+            "output": {
+                "familyName": "BaseOnlyMeta",
+                "designer": output_designer,
+                "copyright": output_copyright,
+            },
+            "export": {"path": {"font": out}},
         }
         mf.merge_fonts(config)
         font = TTFont(out)
@@ -823,7 +824,7 @@ def _merge_otf_jp(**kwargs):
         pytest.skip("NotoSansCJKjp-Regular.otf not found")
     out = tempfile.mktemp(suffix=".otf")
     config = {
-        "latin": {
+        "subFont": {
             "path": EN_VAR,
             "scale": kwargs.get("lat_scale", 1.0),
             "baselineOffset": kwargs.get("lat_baseline", 0),
@@ -832,15 +833,14 @@ def _merge_otf_jp(**kwargs):
                 {"tag": "wght", "currentValue": 400},
             ],
         },
-        "base": {
+        "baseFont": {
             "path": JP_OTF,
             "scale": kwargs.get("jp_scale", 1.0),
             "baselineOffset": kwargs.get("jp_baseline", 0),
             "axes": [],
         },
-        "outputFormat": "otf",
-        "outputPath": out,
-        "outputFamilyName": "TestOTF",
+        "output": {"familyName": "TestOTF"},
+        "export": {"path": {"font": out}},
     }
     mf.merge_fonts(config)
     font = TTFont(out)
@@ -1017,16 +1017,15 @@ class TestOutputUpm:
     def test_base_only_respects_upm(self):
         out = tempfile.mktemp(suffix=".ttf")
         config = {
-            "latin": None,
-            "base": {
+            "subFont": None,
+            "baseFont": {
                 "path": JP_VAR,
                 "scale": 1.0,
                 "baselineOffset": 0,
                 "axes": [{"tag": "wght", "currentValue": 400}],
             },
-            "outputPath": out,
-            "outputFamilyName": "Test",
-            "outputUpm": 1500,
+            "output": {"familyName": "Test", "upm": 1500},
+            "export": {"path": {"font": out}},
         }
         mf.merge_fonts(config)
         m = TTFont(out)
@@ -1175,20 +1174,20 @@ def _merge_cff_to_cff(lat_scale=1.0, lat_baseline=0):
         return _MERGE_CFF_CACHE[key]
     out = tempfile.mktemp(suffix=".otf")
     config = {
-        "latin": {
+        "subFont": {
             "path": EN_CFF,
             "scale": lat_scale,
             "baselineOffset": lat_baseline,
             "axes": [],
         },
-        "base": {
+        "baseFont": {
             "path": _JP_CID_HINT,
             "scale": 1.0,
             "baselineOffset": 0,
             "axes": [],
         },
-        "outputPath": out,
-        "outputFamilyName": "TestHint",
+        "output": {"familyName": "TestHint"},
+        "export": {"path": {"font": out}},
     }
     mf.merge_fonts(config)
     # Load into memory, then drop the on-disk artefacts.
@@ -1366,15 +1365,14 @@ class TestBaseOnly:
     def _merge_base_only(self):
         out = tempfile.mktemp(suffix=".ttf")
         config = {
-            "base": {
+            "baseFont": {
                 "path": JP_VAR,
                 "scale": 1.0,
                 "baselineOffset": 0,
                 "axes": [{"tag": "wght", "currentValue": 400}],
             },
-            "outputFormat": "ttf",
-            "outputPath": out,
-            "outputFamilyName": "BaseOnly",
+            "output": {"familyName": "BaseOnly"},
+            "export": {"path": {"font": out}},
         }
         mf.merge_fonts(config)
         return out
@@ -1415,7 +1413,7 @@ class TestWOFF2Output:
         out = tempfile.mktemp(suffix=".ttf")
         woff2_path = out.replace(".ttf", ".woff2")
         config = {
-            "latin": {
+            "subFont": {
                 "path": EN_VAR,
                 "scale": 1.0,
                 "baselineOffset": 0,
@@ -1424,15 +1422,14 @@ class TestWOFF2Output:
                     {"tag": "wght", "currentValue": 400},
                 ],
             },
-            "base": {
+            "baseFont": {
                 "path": JP_VAR,
                 "scale": 1.0,
                 "baselineOffset": 0,
                 "axes": [{"tag": "wght", "currentValue": 400}],
             },
-            "outputFormat": "ttf",
-            "outputPath": out,
-            "outputFamilyName": "TestWoff2",
+            "output": {"familyName": "TestWoff2"},
+            "export": {"path": {"font": out, "woff2": woff2_path}},
         }
         mf.merge_fonts(config)
         try:
@@ -1450,15 +1447,14 @@ class TestWOFF2Output:
         out = tempfile.mktemp(suffix=".otf")
         woff2_path = out.replace(".otf", ".woff2")
         config = {
-            "base": {
+            "baseFont": {
                 "path": JP_VAR,
                 "scale": 1.0,
                 "baselineOffset": 0,
                 "axes": [{"tag": "wght", "currentValue": 400}],
             },
-            "outputFormat": "otf",
-            "outputPath": out,
-            "outputFamilyName": "BaseOnlyWoff2",
+            "output": {"familyName": "BaseOnlyWoff2"},
+            "export": {"path": {"font": out, "woff2": woff2_path}},
         }
         mf.merge_fonts(config)
         try:
@@ -1486,21 +1482,20 @@ class TestLargeCIDFont:
     def _merge_large(self):
         out = tempfile.mktemp(suffix=".otf")
         config = {
-            "latin": {
+            "subFont": {
                 "path": EN_VAR,
                 "scale": 1.0,
                 "baselineOffset": 0,
                 "axes": [],
             },
-            "base": {
+            "baseFont": {
                 "path": JP_CID,
                 "scale": 1.0,
                 "baselineOffset": 0,
                 "axes": [],
             },
-            "outputFormat": "otf",
-            "outputPath": out,
-            "outputFamilyName": "LargeCIDTest",
+            "output": {"familyName": "LargeCIDTest"},
+            "export": {"path": {"font": out}},
         }
         mf.merge_fonts(config)
         return out
@@ -1572,10 +1567,10 @@ class TestLatinCmapVariantCollision:
     def _merge_playwrite_kaisei():
         out = tempfile.mktemp(suffix=".ttf")
         config = {
-            "latin": {"path": PLAYWRITE, "scale": 1.0, "baselineOffset": 0,
-                      "axes": [{"tag": "wght", "currentValue": 400}]},
-            "base": {"path": KAISEI, "scale": 1.0, "baselineOffset": 0, "axes": []},
-            "outputFormat": "ttf", "outputPath": out, "outputFamilyName": "Test",
+            "subFont": {"path": PLAYWRITE, "scale": 1.0, "baselineOffset": 0,
+                       "axes": [{"tag": "wght", "currentValue": 400}]},
+            "baseFont": {"path": KAISEI, "scale": 1.0, "baselineOffset": 0, "axes": []},
+            "output": {"familyName": "Test"}, "export": {"path": {"font": out}},
         }
         mf.merge_fonts(config)
         font = TTFont(out)
@@ -1627,13 +1622,13 @@ class TestSharedGlyphCollateral:
             pytest.skip("Full Inter / Noto Sans JP fonts not found")
         out = tempfile.mktemp(suffix=".ttf")
         config = {
-            "latin": {"path": EN_FULL, "scale": 1.0, "baselineOffset": 0,
-                      "axes": [{"tag": "opsz", "currentValue": 14},
-                               {"tag": "wght", "currentValue": 400}]},
-            "base": {"path": JP_STATIC, "scale": 1.0, "baselineOffset": 0,
-                     "axes": []},
-            "outputFormat": "ttf", "outputPath": out,
-            "outputFamilyName": "TestMiddleDot",
+            "subFont": {"path": EN_FULL, "scale": 1.0, "baselineOffset": 0,
+                       "axes": [{"tag": "opsz", "currentValue": 14},
+                                {"tag": "wght", "currentValue": 400}]},
+            "baseFont": {"path": JP_STATIC, "scale": 1.0, "baselineOffset": 0,
+                         "axes": []},
+            "output": {"familyName": "TestMiddleDot"},
+            "export": {"path": {"font": out}},
         }
         mf.merge_fonts(config)
         font = TTFont(out)
@@ -1688,9 +1683,9 @@ class TestBuildOflText:
 
     def test_collects_source_copyrights(self):
         config = {
-            "base": {"copyright": "Copyright Base"},
-            "latin": {"copyright": "Copyright Latin"},
-            "outputFamilyName": "Test",
+            "baseFont": {"copyright": "Copyright Base"},
+            "subFont": {"copyright": "Copyright Latin"},
+            "output": {"familyName": "Test"},
         }
         text = mf.build_ofl_text(config)
         assert "Copyright Base" in text
@@ -1699,26 +1694,25 @@ class TestBuildOflText:
 
     def test_user_copyright_appended(self):
         config = {
-            "base": {"copyright": "Copyright Base"},
-            "outputCopyright": "Copyright User",
-            "outputFamilyName": "Test",
+            "baseFont": {"copyright": "Copyright Base"},
+            "output": {"copyright": "Copyright User", "familyName": "Test"},
         }
         text = mf.build_ofl_text(config)
         assert "Copyright User" in text
 
     def test_fallback_copyright(self):
         config = {
-            "base": {},
-            "outputFamilyName": "MyFont",
+            "baseFont": {},
+            "output": {"familyName": "MyFont"},
         }
         text = mf.build_ofl_text(config)
         assert "MyFont Authors" in text
 
     def test_dedup_copyrights(self):
         config = {
-            "base": {"copyright": "Same"},
-            "latin": {"copyright": "Same"},
-            "outputFamilyName": "Test",
+            "baseFont": {"copyright": "Same"},
+            "subFont": {"copyright": "Same"},
+            "output": {"familyName": "Test"},
         }
         text = mf.build_ofl_text(config)
         assert text.count("Same") == 1
@@ -1728,38 +1722,34 @@ class TestBuildSettingsText:
 
     def test_header_includes_family_and_style(self):
         config = {
-            "base": {"familyName": "Noto", "styleName": "Regular",
-                     "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
-            "outputFamilyName": "MyFont",
-            "outputWeight": 700,
-            "outputItalic": True,
-            "outputWidth": 5,
+            "baseFont": {"familyName": "Noto", "styleName": "Regular",
+                         "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
+            "output": {"familyName": "MyFont", "weight": 700,
+                       "italic": True, "width": 5},
         }
         text = mf.build_settings_text(config)
         assert "MyFont Bold Italic" in text
 
     def test_base_only_shows_baked(self):
         config = {
-            "base": {"familyName": "Noto", "styleName": "Regular",
-                     "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
-            "outputFamilyName": "MyFont",
-            "outputWeight": 400,
+            "baseFont": {"familyName": "Noto", "styleName": "Regular",
+                         "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
+            "output": {"familyName": "MyFont", "weight": 400},
         }
         text = mf.build_settings_text(config)
         assert "Baked with" in text
 
     def test_with_latin_shows_merged(self):
         config = {
-            "base": {"familyName": "Noto", "styleName": "Regular",
-                     "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
-            "latin": {"familyName": "Inter", "styleName": "Regular",
-                      "scale": 0.95, "baselineOffset": 5, "path": "/fonts/inter.ttf"},
-            "outputFamilyName": "MyFont",
-            "outputWeight": 400,
+            "baseFont": {"familyName": "Noto", "styleName": "Regular",
+                         "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
+            "subFont": {"familyName": "Inter", "styleName": "Regular",
+                        "scale": 0.95, "baselineOffset": 5, "path": "/fonts/inter.ttf"},
+            "output": {"familyName": "MyFont", "weight": 400},
         }
         text = mf.build_settings_text(config)
         assert "Merged with" in text
-        assert "[Latin/Kana Font]" in text
+        assert "[Sub Font]" in text
 
 
 class TestDetectSfntExt:
@@ -1809,12 +1799,12 @@ class TestPrepareOutputDir:
             assert not os.path.exists(marker)
 
 
-class TestExportFonts:
+class TestPackageFonts:
 
     def _export(self, overwrite=False):
         d = tempfile.mkdtemp()
         config = {
-            "latin": {
+            "subFont": {
                 "path": EN_VAR,
                 "familyName": "Inter",
                 "styleName": "Regular",
@@ -1825,7 +1815,7 @@ class TestExportFonts:
                     {"tag": "wght", "currentValue": 400},
                 ],
             },
-            "base": {
+            "baseFont": {
                 "path": JP_VAR,
                 "familyName": "Noto Sans JP",
                 "styleName": "Regular",
@@ -1833,15 +1823,20 @@ class TestExportFonts:
                 "baselineOffset": 0,
                 "axes": [{"tag": "wght", "currentValue": 400}],
             },
-            "outputDir": d,
-            "outputFolderName": "TestFont-Regular",
-            "overwrite": overwrite,
-            "outputFamilyName": "TestFont",
-            "outputWeight": 400,
-            "outputItalic": False,
-            "outputWidth": 5,
+            "output": {
+                "familyName": "TestFont",
+                "weight": 400,
+                "italic": False,
+                "width": 5,
+            },
+            "export": {
+                "package": {
+                    "dir": os.path.join(d, "TestFont-Regular"),
+                    "overwrite": overwrite,
+                },
+            },
         }
-        manifest = mf.export_fonts(config)
+        manifest = mf.package_fonts(config)
         return d, manifest
 
     def test_manifest_keys(self):
@@ -1889,20 +1884,23 @@ class TestExportFonts:
         d, _ = self._export()
         with pytest.raises(FileExistsError):
             config = {
-                "latin": {
+                "subFont": {
                     "path": EN_VAR, "scale": 1.0, "baselineOffset": 0,
                     "axes": [{"tag": "opsz", "currentValue": 14}, {"tag": "wght", "currentValue": 400}],
                 },
-                "base": {
+                "baseFont": {
                     "path": JP_VAR, "scale": 1.0, "baselineOffset": 0,
                     "axes": [{"tag": "wght", "currentValue": 400}],
                 },
-                "outputDir": d,
-                "outputFolderName": "TestFont-Regular",
-                "overwrite": False,
-                "outputFamilyName": "TestFont",
+                "output": {"familyName": "TestFont"},
+                "export": {
+                    "package": {
+                        "dir": os.path.join(d, "TestFont-Regular"),
+                        "overwrite": False,
+                    },
+                },
             }
-            mf.export_fonts(config)
+            mf.package_fonts(config)
         import shutil
         shutil.rmtree(d)
 
@@ -1929,11 +1927,11 @@ class TestExportFonts:
         shutil.rmtree(d)
 
 
-class TestOutputOptions:
+class TestPackageOptions:
 
     def _base_config(self, tmpdir):
         return {
-            "latin": {
+            "subFont": {
                 "path": EN_VAR,
                 "familyName": "Inter",
                 "styleName": "Regular",
@@ -1944,7 +1942,7 @@ class TestOutputOptions:
                     {"tag": "wght", "currentValue": 400},
                 ],
             },
-            "base": {
+            "baseFont": {
                 "path": JP_VAR,
                 "familyName": "Noto Sans JP",
                 "styleName": "Regular",
@@ -1952,89 +1950,41 @@ class TestOutputOptions:
                 "baselineOffset": 0,
                 "axes": [{"tag": "wght", "currentValue": 400}],
             },
-            "outputDir": tmpdir,
-            "outputFolderName": "TestFont-Regular",
-            "overwrite": False,
-            "outputFamilyName": "TestFont",
-            "outputWeight": 400,
-            "outputItalic": False,
-            "outputWidth": 5,
+            "output": {
+                "familyName": "TestFont",
+                "weight": 400,
+                "italic": False,
+                "width": 5,
+            },
+            "export": {
+                "package": {
+                    "dir": os.path.join(tmpdir, "TestFont-Regular"),
+                    "overwrite": False,
+                },
+            },
         }
-
-    def test_include_woff2_false(self):
-        import shutil
-        d = tempfile.mkdtemp()
-        config = self._base_config(d)
-        config["outputOptions"] = {"includeWoff2": False}
-        manifest = mf.export_fonts(config)
-        assert manifest["woff2Path"] is None
-        assert not os.path.exists(os.path.join(d, "TestFont-Regular", "TestFont-Regular.woff2"))
-        shutil.rmtree(d)
-
-    def test_write_config_json(self):
-        import shutil
-        d = tempfile.mkdtemp()
-        config = self._base_config(d)
-        config["outputOptions"] = {"writeConfigJson": True}
-        manifest = mf.export_fonts(config)
-        assert manifest["configPath"] is not None
-        assert os.path.isfile(manifest["configPath"])
-        with open(manifest["configPath"]) as f:
-            export_cfg = json.load(f)
-        assert export_cfg["outputFamilyName"] == "TestFont"
-        assert export_cfg["base"]["path"] == JP_VAR
-        shutil.rmtree(d)
 
     def test_bundle_input_fonts(self):
         import shutil
         d = tempfile.mkdtemp()
         config = self._base_config(d)
-        config["outputOptions"] = {"writeConfigJson": True, "bundleInputFonts": True}
-        manifest = mf.export_fonts(config)
-        source_dir = os.path.join(d, "TestFont-Regular", "source")
+        config["export"]["package"]["bundleInputFonts"] = True
+        manifest = mf.package_fonts(config)
+        pkg_dir = os.path.join(d, "TestFont-Regular")
+        source_dir = os.path.join(pkg_dir, "source")
         assert os.path.isdir(source_dir)
         assert os.path.isfile(os.path.join(source_dir, os.path.basename(EN_VAR)))
         assert os.path.isfile(os.path.join(source_dir, os.path.basename(JP_VAR)))
         with open(manifest["configPath"]) as f:
             export_cfg = json.load(f)
-        assert export_cfg["base"]["path"].startswith("./source/")
-        assert export_cfg["latin"]["path"].startswith("./source/")
-        shutil.rmtree(d)
-
-    def test_unsupported_font_format_raises(self):
-        d = tempfile.mkdtemp()
-        config = self._base_config(d)
-        config["outputOptions"] = {"fontFormat": "otf"}
-        with pytest.raises(ValueError, match="Unsupported fontFormat"):
-            mf.export_fonts(config)
-        import shutil
-        shutil.rmtree(d)
-
-    def test_unsupported_bundle_mode_raises(self):
-        d = tempfile.mkdtemp()
-        config = self._base_config(d)
-        config["outputOptions"] = {"bundleMode": "flat"}
-        with pytest.raises(ValueError, match="Unsupported bundleMode"):
-            mf.export_fonts(config)
-        import shutil
-        shutil.rmtree(d)
-
-    def test_unknown_option_raises(self):
-        d = tempfile.mkdtemp()
-        config = self._base_config(d)
-        config["outputOptions"] = {"unknownKey": True}
-        with pytest.raises(ValueError, match="Unknown outputOptions"):
-            mf.export_fonts(config)
-        import shutil
+        assert export_cfg["baseFont"]["path"].startswith("./source/")
+        assert export_cfg["subFont"]["path"].startswith("./source/")
         shutil.rmtree(d)
 
     def test_default_options(self):
-        opts = mf.resolve_output_options({})
+        opts = mf.resolve_package_options({})
         assert opts == {
-            "bundleMode": "directory",
-            "fontFormat": "auto",
-            "includeWoff2": True,
-            "writeConfigJson": False,
+            "overwrite": False,
             "bundleInputFonts": False,
         }
 
@@ -2042,7 +1992,6 @@ class TestOutputOptions:
         import shutil
         d = tempfile.mkdtemp()
         config = self._base_config(d)
-        config["outputOptions"] = {"fontFormat": "auto"}
-        manifest = mf.export_fonts(config)
+        manifest = mf.package_fonts(config)
         assert manifest["fontPath"].endswith(".ttf")
         shutil.rmtree(d)

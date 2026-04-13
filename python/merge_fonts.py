@@ -3,18 +3,18 @@
 """
 Composite font merge engine.
 
-Merges a Latin font (priority) with a Japanese font (fallback) into
-a single font file. Latin glyphs and their OpenType features replace
-the Japanese font's subordinate Latin glyphs and features.
+Merges a sub font (e.g. Latin, kana) with a base font (e.g. CJK) into
+a single font file. Sub-font glyphs and their OpenType features replace
+the base font's corresponding glyphs and features.
 
-Usage (export mode — full export job with artifacts):
+Usage (package mode — full export with artifacts):
     cat config.json | python3 merge_fonts.py
 
-    config.json must include "outputDir" and "outputFolderName".
+    config.json must include "export.dir".
     Outputs a JSON manifest on stdout with paths to all generated files.
 
-Usage (legacy merge mode — single font file only):
-    echo '{"base": {...}, "outputPath": "/out/font.ttf"}' | python3 merge_fonts.py
+Usage (single-file mode):
+    echo '{"baseFont": {...}, "export": {"fontPath": "/out/font.ttf"}}' | python3 merge_fonts.py
 
     Outputs the font file path on stdout.
 
@@ -175,15 +175,16 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 def build_ofl_text(config: dict) -> str:
     """Build OFL.txt content from merge config."""
+    output = config.get("output") or {}
     copyrights = []
-    for key in ("base", "latin"):
+    for key in ("baseFont", "subFont"):
         src = config.get(key)
         if not src:
             continue
         c = (src.get("copyright") or "").strip()
         if c and c not in copyrights:
             copyrights.append(c)
-    user_copyright = (config.get("outputCopyright") or "").strip()
+    user_copyright = (output.get("copyright") or "").strip()
     if user_copyright and user_copyright not in copyrights:
         copyrights.append(user_copyright)
 
@@ -191,7 +192,7 @@ def build_ofl_text(config: dict) -> str:
         copyright_line = "\n".join(copyrights)
     else:
         year = datetime.datetime.now().year
-        family = config.get("outputFamilyName", "Font")
+        family = output.get("familyName", "Font")
         copyright_line = f"Copyright (c) {year} {family} Authors"
 
     return f"{copyright_line}\n\n{_OFL_BODY}"
@@ -199,13 +200,14 @@ def build_ofl_text(config: dict) -> str:
 
 def build_settings_text(config: dict) -> str:
     """Build Settings.txt content from merge config."""
-    weight = config.get("outputWeight", 400)
-    italic = config.get("outputItalic", False)
-    width = config.get("outputWidth", 5)
+    output = config.get("output") or {}
+    weight = output.get("weight", 400)
+    italic = output.get("italic", False)
+    width = output.get("width", 5)
     style = compute_style_name(weight, italic, width)
-    family = config.get("outputFamilyName", "")
+    family = output.get("familyName", "")
 
-    base = config["base"]
+    base = config["baseFont"]
     lines = [
         f"{family} {style}",
         "",
@@ -220,10 +222,10 @@ def build_settings_text(config: dict) -> str:
             lines.append(f"\u00b7 {a['name']} ({a.get('tag', '')}): {a.get('currentValue', '')}")
     lines.append(f"\u00b7 Path: {base.get('path', '')}")
 
-    lat = config.get("latin")
+    lat = config.get("subFont")
     if lat:
         lines.append("")
-        lines.append(f"[Latin/Kana Font] {lat.get('familyName', '')} {lat.get('styleName', '')}")
+        lines.append(f"[Sub Font] {lat.get('familyName', '')} {lat.get('styleName', '')}")
         lines.append(f"\u00b7 Scale: {lat.get('scale', 1.0)}")
         lines.append(f"\u00b7 Baseline Offset: {lat.get('baselineOffset', 0)}")
         for a in lat.get("axes", []):
@@ -258,55 +260,32 @@ def detect_sfnt_ext(font_path: str) -> str:
         return "otf" if lower.endswith(".otf") else "ttf"
 
 
-def prepare_output_dir(output_dir: str, folder_name: str, overwrite: bool) -> str:
-    """Create the output directory. Returns the full output directory path."""
-    folder_path = os.path.join(output_dir, folder_name)
-    if os.path.exists(folder_path):
+def prepare_output_dir(dir_path: str, overwrite: bool) -> str:
+    """Create the output directory. Returns the directory path."""
+    if os.path.exists(dir_path):
         if not overwrite:
+            folder_name = os.path.basename(dir_path)
             raise FileExistsError(
                 f'Output folder already exists: "{folder_name}". '
                 f"Pass overwrite=true to replace."
             )
-        shutil.rmtree(folder_path)
-    os.makedirs(folder_path, exist_ok=True)
-    return folder_path
+        shutil.rmtree(dir_path)
+    os.makedirs(dir_path, exist_ok=True)
+    return dir_path
 
 
-_OUTPUT_OPTIONS_DEFAULTS = {
-    "bundleMode": "directory",
-    "fontFormat": "auto",
-    "includeWoff2": True,
-    "writeConfigJson": False,
+_PACKAGE_DEFAULTS = {
+    "overwrite": False,
     "bundleInputFonts": False,
-    "fontDir": None,
-    "woff2Dir": None,
-    "writeOfl": True,
-    "writeSettings": True,
 }
 
 
-def resolve_output_options(config: dict) -> dict:
-    """Resolve outputOptions with defaults and validate values."""
-    raw = config.get("outputOptions") or {}
-    opts = dict(_OUTPUT_OPTIONS_DEFAULTS, **{k: v for k, v in raw.items()
-                                              if k in _OUTPUT_OPTIONS_DEFAULTS})
-
-    if opts["bundleMode"] != "directory":
-        raise ValueError(
-            f"Unsupported bundleMode: \"{opts['bundleMode']}\". "
-            f"Only \"directory\" is supported."
-        )
-    if opts["fontFormat"] != "auto":
-        raise ValueError(
-            f"Unsupported fontFormat: \"{opts['fontFormat']}\". "
-            f"Only \"auto\" is supported."
-        )
-
-    unknown = set(raw.keys()) - set(_OUTPUT_OPTIONS_DEFAULTS.keys())
-    if unknown:
-        raise ValueError(f"Unknown outputOptions keys: {sorted(unknown)}")
-
-    return opts
+def resolve_package_options(config: dict) -> dict:
+    """Resolve package-mode options with defaults from export.package."""
+    export = config.get("export") or {}
+    raw = export.get("package") or {}
+    return dict(_PACKAGE_DEFAULTS, **{k: v for k, v in raw.items()
+                                       if k in _PACKAGE_DEFAULTS})
 
 
 def bundle_input_fonts(config: dict, folder_path: str) -> dict:
@@ -318,7 +297,7 @@ def bundle_input_fonts(config: dict, folder_path: str) -> dict:
     source_dir = os.path.join(folder_path, "source")
     os.makedirs(source_dir, exist_ok=True)
     path_map = {}
-    for key in ("base", "latin"):
+    for key in ("baseFont", "subFont"):
         src = config.get(key)
         if not src or not src.get("path"):
             continue
@@ -351,20 +330,32 @@ def build_export_config(config: dict, path_map: dict = None) -> dict:
         return entry
 
     result = {}
-    base_entry = _font_entry("base")
+    base_entry = _font_entry("baseFont")
     if base_entry:
-        result["base"] = base_entry
-    latin_entry = _font_entry("latin")
-    if latin_entry:
-        result["latin"] = latin_entry
+        result["baseFont"] = base_entry
+    sub_entry = _font_entry("subFont")
+    if sub_entry:
+        result["subFont"] = sub_entry
 
-    for field in ("outputFamilyName", "outputWeight", "outputItalic",
-                  "outputWidth", "outputDesigner", "outputCopyright", "outputUpm"):
-        val = config.get(field)
+    output = config.get("output") or {}
+    for field in ("familyName", "weight", "italic",
+                  "width", "designer", "copyright", "upm"):
+        val = output.get(field)
         if val is not None:
-            result[field] = val
+            result.setdefault("output", {})[field] = val
 
-    result["outputOptions"] = resolve_output_options(config)
+    export = config.get("export") or {}
+    export_out = {}
+    pkg = export.get("package")
+    if pkg:
+        pkg_out = {"dir": pkg.get("dir", "")}
+        pkg_out.update(resolve_package_options(config))
+        export_out["package"] = pkg_out
+    path = export.get("path")
+    if path:
+        export_out["path"] = dict(path)
+    if export_out:
+        result["export"] = export_out
     return result
 
 
@@ -1774,8 +1765,9 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
       - Not use Reserved Font Names in the output name
     """
     name_table = merged["name"]
-    user_copyright = config.get("outputCopyright", "").strip()
-    user_designer = config.get("outputDesigner", "").strip()
+    output = config.get("output") or {}
+    user_copyright = output.get("copyright", "").strip()
+    user_designer = output.get("designer", "").strip()
 
     # --- Copyright (nameID 0): combine both sources + user's addition ---
     copyrights: list[str] = []
@@ -1825,7 +1817,8 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
 
 def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: dict):
     """Reconcile name, OS/2, hhea, head tables after merge."""
-    output_name = config.get("outputFamilyName", "Merged Font")
+    output = config.get("output") or {}
+    output_name = output.get("familyName", "Merged Font")
 
     # --- name table ---
     name_table = merged["name"]
@@ -1853,9 +1846,9 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
                 record.string = output_name
 
     # --- Weight / Italic / Width ---
-    output_weight = config.get("outputWeight", 400)
-    output_italic = config.get("outputItalic", False)
-    output_width = config.get("outputWidth", 5)
+    output_weight = output.get("weight", 400)
+    output_italic = output.get("italic", False)
+    output_width = output.get("width", 5)
 
     WEIGHT_NAMES = {
         100: "Thin", 200: "ExtraLight", 300: "Light", 400: "Regular",
@@ -1966,9 +1959,9 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     upm_ratio = merged_upm / lat_upm if lat_upm != merged_upm else 1.0
 
     # metricsSource: "base" (default) keeps base-font metrics and only
-    # expands them when the Latin font is larger; "latin" overwrites
-    # vertical metrics with the Latin font's values unconditionally.
-    metrics_source = config.get("metricsSource", "base")
+    # expands them when the sub font is larger; "sub" overwrites
+    # vertical metrics with the sub font's values unconditionally.
+    metrics_source = output.get("metricsSource", "base")
 
     lat_os2 = lat_font.get("OS/2")
     jp_os2 = merged.get("OS/2")
@@ -1978,7 +1971,7 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
         en_win_asc = int(round(lat_os2.usWinAscent * upm_ratio))
         en_win_desc = int(round(lat_os2.usWinDescent * upm_ratio))
 
-        if metrics_source == "latin":
+        if metrics_source == "sub":
             jp_os2.sTypoAscender = en_typo_asc
             jp_os2.sTypoDescender = en_typo_desc
             jp_os2.usWinAscent = en_win_asc
@@ -2003,7 +1996,7 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     if lat_hhea and jp_hhea:
         lat_hhea_asc = int(round(lat_hhea.ascent * upm_ratio))
         lat_hhea_desc = int(round(lat_hhea.descent * upm_ratio))
-        if metrics_source == "latin":
+        if metrics_source == "sub":
             jp_hhea.ascent = lat_hhea_asc
             jp_hhea.descent = lat_hhea_desc
         else:
@@ -2128,10 +2121,20 @@ def _scale_jp_metrics(merged: TTFont, ratio: float):
 
 
 
-def merge_fonts(config: dict, include_woff2: bool = True) -> str:
-    lat_cfg = config.get("latin")
-    jp_cfg = config["base"]
-    output_path = config["outputPath"]
+def merge_fonts(config: dict) -> str:
+    """Run the merge pipeline and write the output font.
+
+    Reads output paths from export.path (path mode).
+    """
+    export = config.get("export") or {}
+    paths = export.get("path") or {}
+    output = config.get("output") or {}
+    lat_cfg = config.get("subFont")
+    jp_cfg = config["baseFont"]
+
+    if "woff2" in paths and "font" not in paths:
+        raise ValueError("export.path.woff2 requires export.path.font")
+    output_path = paths["font"]
 
     S = 5
 
@@ -2139,8 +2142,8 @@ def merge_fonts(config: dict, include_woff2: bool = True) -> str:
     progress("loading", 1, f"1/{S} \u00b7 Loading fonts...")
     if lat_cfg:
         lat_font = TTFont(lat_cfg["path"])
-        _check_ofl(lat_font, "Latin font")
-        lat_font = _instantiate_if_variable(lat_font, lat_cfg, "Latin")
+        _check_ofl(lat_font, "Sub font")
+        lat_font = _instantiate_if_variable(lat_font, lat_cfg, "Sub")
     else:
         lat_font = None
 
@@ -2157,7 +2160,7 @@ def merge_fonts(config: dict, include_woff2: bool = True) -> str:
     # scale values so the existing transform pipeline handles everything
     # (outlines, hmtx, CFF hints, Private dict blues/stems, GPOS, metrics).
     jp_source_upm = merged["head"].unitsPerEm
-    output_upm = int(config.get("outputUpm") or jp_source_upm)
+    output_upm = int(output.get("upm") or jp_source_upm)
     jp_upm_ratio = output_upm / jp_source_upm
 
     # Scale the JP-origin GPOS lookups by the UPM ratio now, before any Latin
@@ -2751,85 +2754,73 @@ def merge_fonts(config: dict, include_woff2: bool = True) -> str:
     merged.save(output_path)
 
     # Step 14: Write WOFF2
-    if include_woff2:
-        base, _ = os.path.splitext(output_path)
-        woff2_path = base + ".woff2"
+    woff2_out = paths.get("woff2")
+    if woff2_out:
         progress("writing", 10, f"5/{S} \u00b7 Exporting .woff2...")
         merged.flavor = "woff2"
-        merged.save(woff2_path)
+        merged.save(woff2_out)
+
+    # Path-mode artifact writing
+    ofl_out = paths.get("ofl")
+    if ofl_out:
+        with open(ofl_out, "w", encoding="utf-8") as f:
+            f.write(build_ofl_text(config))
+
+    settings_out = paths.get("settings")
+    if settings_out:
+        with open(settings_out, "w", encoding="utf-8") as f:
+            f.write(build_settings_text(config))
+
+    config_out = paths.get("config")
+    if config_out:
+        export_cfg = build_export_config(config)
+        with open(config_out, "w", encoding="utf-8") as f:
+            json.dump(export_cfg, f, indent=2, ensure_ascii=False)
+            f.write("\n")
 
     progress("done", 100, "Merge complete")
     return output_path
 
 
-def export_fonts(config: dict) -> dict:
-    """Run a complete export job: create output dir, merge font, write artifacts.
+def package_fonts(config: dict) -> dict:
+    """Run a package export: create output dir, merge font, write all artifacts.
 
     Returns a manifest dict with paths of all generated files.
     """
-    opts = resolve_output_options(config)
+    export = config.get("export") or {}
+    pkg = export["package"]
+    opts = resolve_package_options(config)
 
-    output_dir = config["outputDir"]
-    folder_name = config["outputFolderName"]
-    overwrite = config.get("overwrite", False)
+    dir_path = pkg["dir"]
+    overwrite = opts["overwrite"]
 
-    folder_path = prepare_output_dir(output_dir, folder_name, overwrite)
+    folder_path = prepare_output_dir(dir_path, overwrite)
+    folder_name = os.path.basename(dir_path)
 
-    base_ext = detect_sfnt_ext(config["base"]["path"])
+    base_ext = detect_sfnt_ext(config["baseFont"]["path"])
     font_file_name = f"{folder_name}.{base_ext}"
+    font_path = os.path.join(folder_path, font_file_name)
+    woff2_path = os.path.join(folder_path, f"{folder_name}.woff2")
+    ofl_path = os.path.join(folder_path, "OFL.txt")
+    settings_path = os.path.join(folder_path, "Settings.txt")
 
-    # When fontDir is specified, write the font file directly into that
-    # directory (flat, no subfolder) instead of the default export folder.
-    font_dir = opts["fontDir"]
-    if font_dir:
-        os.makedirs(font_dir, exist_ok=True)
-        font_path = os.path.join(font_dir, font_file_name)
-    else:
-        font_path = os.path.join(folder_path, font_file_name)
+    # Build path-mode config to delegate to merge_fonts
+    path_block = {
+        "font": font_path,
+        "woff2": woff2_path,
+        "ofl": ofl_path,
+        "settings": settings_path,
+    }
+    merge_config = dict(config, export={"path": path_block})
+    merge_fonts(merge_config)
 
-    include_woff2 = opts["includeWoff2"]
-    merge_config = dict(config, outputPath=font_path)
-    merge_fonts(merge_config, include_woff2=include_woff2)
-
-    files = [font_path]
-
-    woff2_path = None
-    if include_woff2:
-        # When woff2Dir is specified, move the WOFF2 to that directory.
-        woff2_dir = opts["woff2Dir"]
-        default_woff2 = os.path.splitext(font_path)[0] + ".woff2"
-        if woff2_dir:
-            os.makedirs(woff2_dir, exist_ok=True)
-            woff2_path = os.path.join(woff2_dir, f"{folder_name}.woff2")
-            if os.path.exists(default_woff2) and default_woff2 != woff2_path:
-                shutil.move(default_woff2, woff2_path)
-        else:
-            woff2_path = default_woff2
-        files.append(woff2_path)
-
-    ofl_path = None
-    if opts["writeOfl"]:
-        ofl_path = os.path.join(folder_path, "OFL.txt")
-        with open(ofl_path, "w", encoding="utf-8") as f:
-            f.write(build_ofl_text(config))
-        files.append(ofl_path)
-
-    settings_path = None
-    if opts["writeSettings"]:
-        settings_path = os.path.join(folder_path, "Settings.txt")
-        with open(settings_path, "w", encoding="utf-8") as f:
-            f.write(build_settings_text(config))
-        files.append(settings_path)
+    files = [font_path, woff2_path, ofl_path, settings_path]
 
     config_path = None
     if opts["bundleInputFonts"]:
-        opts["writeConfigJson"] = True
-    if opts["writeConfigJson"]:
-        path_map = None
-        if opts["bundleInputFonts"]:
-            path_map = bundle_input_fonts(config, folder_path)
-            for src_path in path_map.values():
-                files.append(os.path.join(folder_path, src_path.lstrip("./")))
+        path_map = bundle_input_fonts(config, folder_path)
+        for src_path in path_map.values():
+            files.append(os.path.join(folder_path, src_path.lstrip("./")))
 
         export_cfg = build_export_config(config, path_map)
         config_path = os.path.join(folder_path, "ExportConfig.json")
@@ -2858,8 +2849,9 @@ def main():
         config_str = sys.stdin.read()
         config = json.loads(config_str)
 
-        if "outputDir" in config:
-            manifest = export_fonts(config)
+        export = config.get("export") or {}
+        if "package" in export:
+            manifest = package_fonts(config)
             print(json.dumps(manifest), flush=True)
         else:
             result = merge_fonts(config)
