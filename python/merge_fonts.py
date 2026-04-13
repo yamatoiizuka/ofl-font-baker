@@ -2751,6 +2751,12 @@ def merge_fonts(config: dict) -> str:
         _n = len(_td.CharStrings) if hasattr(_td, "CharStrings") else 0
         if _n < 60000:
             recalc_cff_font_bbox(merged)
+    # Ensure parent directory exists for all path-mode outputs
+    for p in (output_path, paths.get("woff2"), paths.get("ofl"),
+              paths.get("settings"), paths.get("config")):
+        if p:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+
     merged.save(output_path)
 
     # Step 14: Write WOFF2
