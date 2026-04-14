@@ -19,7 +19,8 @@
     "python:build": "python3 -m PyInstaller --onefile --name merge_fonts --distpath python/dist --workpath python/build --specpath python --hidden-import fontTools.varLib.instancer --hidden-import fontTools.pens.cu2quPen --hidden-import fontTools.pens.transformPen --hidden-import fontTools.pens.ttGlyphPen --hidden-import fontTools.pens.recordingPen --hidden-import fontTools.pens.pointPen python/merge_fonts.py",
     "pack": "npm run build && npm run python:build && electron-builder --dir",
     "dist": "npm run build && npm run python:build && electron-builder --mac --arm64",
-    "python:publish": "cd python && rm -rf dist && python3 -m build && twine upload dist/*"
+    "python:publish": "cd python && rm -rf dist && python3 -m build && twine upload dist/*",
+    "release": "bash scripts/release.sh"
   },
   "keywords": [
     "font",
