@@ -8,6 +8,7 @@ import { registerIpcHandlers } from '@/main/ipc-handlers';
 import { getShortcut } from '@/shared/shortcuts';
 import { isExporting, setExporting } from '@/main/export-state';
 import { abortMerge } from '@/main/merge-engine';
+import { initAutoUpdater } from '@/main/auto-updater';
 
 const APP_NAME = 'Font Baker';
 
@@ -157,6 +158,7 @@ app.whenReady().then(() => {
   buildMenu();
   registerIpcHandlers();
   createWindow();
+  initAutoUpdater(() => mainWindow);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
