@@ -65,13 +65,19 @@
       "en",
       "ja"
     ],
+    "afterAllArtifactBuild": "build/notarize-dmg.js",
     "mac": {
       "icon": "build/icon.icns",
       "category": "public.app-category.graphics-design",
       "target": [
         "dmg",
         "zip"
-      ]
+      ],
+      "identity": "Yamato Iizuka (GTFNHRDF69)",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "win": {
       "target": [
@@ -86,7 +92,6 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
-    "tailwindcss": "^4.2.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
@@ -94,6 +99,7 @@
     "electron": "^41.0.3",
     "electron-builder": "^26.8.1",
     "prettier": "^3.8.1",
+    "tailwindcss": "^4.2.2",
     "typescript": "^5.9.3",
     "vite": "^8.0.0"
   }
