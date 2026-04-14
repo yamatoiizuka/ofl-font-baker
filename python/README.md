@@ -9,6 +9,12 @@ Merges a base font (typically CJK) with a sub font (typically Latin or kana) int
 
 For details on features and background, see the [OFL Font Baker repository](https://github.com/yamatoiizuka/ofl-font-baker).
 
+## OFL Fonts Only
+
+This library only accepts fonts licensed under the [SIL Open Font License (OFL)](https://openfontlicense.org). If an input font's `name` table (nameID 13) does not contain an OFL license string, loading fails with an error.
+
+Merged output is automatically tagged with OFL-compliant copyright and license metadata.
+
 ## Installation
 
 ```bash
@@ -93,37 +99,37 @@ Progress is emitted as JSON lines on stderr.
 
 ### `output`
 
-| Key             | Default      | Description                                                                                                                                                         |
-| --------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `familyName`    | `"Font"`     | Output font family name.                                                                                                                                            |
-| `weight`        | `400`        | Font weight (100–900).                                                                                                                                              |
-| `italic`        | `false`      | Whether the output is italic.                                                                                                                                       |
-| `width`         | `5`          | Font width class (1–9).                                                                                                                                             |
-| `upm`           | (from base)  | Target units-per-em. When different from the base font, all metrics and outlines are scaled.                                                                         |
-| `copyright`     | `""`         | Additional copyright string appended to source copyrights.                                                                                                          |
-| `designer`      | `""`         | Designer name for nameID 9.                                                                                                                                         |
-| `metricsSource` | `"base"`     | Which font's vertical metrics (OS/2, hhea) to use. `"base"` keeps the base font metrics and expands only when the sub font is larger. `"sub"` overwrites with the sub font's metrics. |
+| Key             | Default     | Description                                                                                                                                                                           |
+| --------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `familyName`    | `"Font"`    | Output font family name.                                                                                                                                                              |
+| `weight`        | `400`       | Font weight (100–900).                                                                                                                                                                |
+| `italic`        | `false`     | Whether the output is italic.                                                                                                                                                         |
+| `width`         | `5`         | Font width class (1–9).                                                                                                                                                               |
+| `upm`           | (from base) | Target units-per-em. When different from the base font, all metrics and outlines are scaled.                                                                                          |
+| `copyright`     | `""`        | Additional copyright string appended to source copyrights.                                                                                                                            |
+| `designer`      | `""`        | Designer name for nameID 9.                                                                                                                                                           |
+| `metricsSource` | `"base"`    | Which font's vertical metrics (OS/2, hhea) to use. `"base"` keeps the base font metrics and expands only when the sub font is larger. `"sub"` overwrites with the sub font's metrics. |
 
 ### `export.path`
 
 All keys are optional. Only files whose paths are specified are written. `woff2` requires `font`.
 
-| Key        | Description                  |
-| ---------- | ---------------------------- |
-| `font`     | Font file (OTF/TTF) path.   |
-| `woff2`    | WOFF2 file path.             |
-| `ofl`      | OFL.txt path.                |
-| `settings` | Settings.txt path.           |
-| `config`   | ExportConfig.json path.      |
+| Key        | Description               |
+| ---------- | ------------------------- |
+| `font`     | Font file (OTF/TTF) path. |
+| `woff2`    | WOFF2 file path.          |
+| `ofl`      | OFL.txt path.             |
+| `settings` | Settings.txt path.        |
+| `config`   | ExportConfig.json path.   |
 
 ### `export.package`
 
 Creates a complete output directory. Always generates font, WOFF2, OFL.txt, and Settings.txt.
 
-| Key                | Default | Description                                                                                                                                         |
-| ------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dir`              |         | Output directory path (required).                                                                                                                   |
-| `overwrite`        | `false` | Allow overwriting an existing directory.                                                                                                            |
+| Key                | Default | Description                                                                                                                                          |
+| ------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dir`              |         | Output directory path (required).                                                                                                                    |
+| `overwrite`        | `false` | Allow overwriting an existing directory.                                                                                                             |
 | `bundleInputFonts` | `false` | Copy input fonts into a `source/` subdirectory and write `ExportConfig.json` with relative paths. Makes the package self-contained and reproducible. |
 
 ## Tests
