@@ -7,7 +7,7 @@
 ## Composite Font Builder
 
 OFL Font Baker is a macOS application for merging and exporting fonts.  
-It combines two font files into one and exports the result as a static font (OTF / TTF, WOFF2).
+It combines two font files into one and exports the result as a static font (`.otf` / `.ttf`, `.woff2`).
 
 In addition to mixed Latin/Japanese typesetting and kana replacement, it can also export a static instance of a variable font.
 
@@ -15,13 +15,21 @@ In addition to mixed Latin/Japanese typesetting and kana replacement, it can als
 
 ## Features
 
-- Export in the optimal format for the input (OTF / TTF), with WOFF2 generated alongside
-- Merging of two fonts
+### Merging
+
 - Per-font baseline and scale adjustment
-- Real-time preview
 - Variable font support (single-font export also supported)
-- OpenType feature preservation
+- Real-time preview
+- Kerning and OpenType feature preservation
 - Automatic metadata integration
+
+### Export Formats
+
+Both desktop and lightweight web formats are generated in a single export.
+
+- `.otf` / `.ttf`: Desktop use. Install on your computer to use system-wide.
+  - The optimal format is selected based on the input
+- `.woff2`: Web use. Upload to your server for use on websites.
 
 ## OFL Fonts Only
 
