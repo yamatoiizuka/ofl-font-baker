@@ -36,7 +36,7 @@ Both desktop and lightweight web formats are generated in a single export.
 Only fonts licensed under the **SIL Open Font License (OFL)** can be loaded.
 
 The OFL is an open-source license created by SIL International. It allows free use, modification, and redistribution of fonts while protecting attribution to the original authors.
-Many high-quality typefaces are published under the OFL, including those on [Google Fonts](https://fonts.google.com/), [Collletttivo](https://www.collletttivo.it/typefaces), and the [Noto font family](https://github.com/googlefonts/noto-fonts).
+Many high-quality typefaces are published under the OFL, including those on <a href="https://fonts.google.com/" target="_blank" rel="noopener noreferrer">Google Fonts ↗︎</a>, <a href="https://www.collletttivo.it/typefaces" target="_blank" rel="noopener noreferrer">Collletttivo ↗︎</a>, and the <a href="https://github.com/googlefonts/noto-fonts" target="_blank" rel="noopener noreferrer">Noto font family ↗︎</a>.
 
 ## Download
 
@@ -77,7 +77,7 @@ OFL Font Baker automatically sets metadata (copyright notices and license inform
 Rules 3 (font naming) and 4 (distribution method) are the user's responsibility.  
 When distributing, it is recommended to include an OFL.txt file containing the copyright notices and the full OFL license text.
 
-For more details, see the [SIL Open Font License official site](https://openfontlicense.org).
+For more details, see the <a href="https://openfontlicense.org" target="_blank" rel="noopener noreferrer">SIL Open Font License official site ↗︎</a>.
 
 ### Merging Your Own Fonts
 
@@ -104,16 +104,16 @@ https://openfontlicense.org
 
 Due to the limits of the author's testing environment, this application currently supports only **Apple Silicon Macs (arm64)**.
 
-That said, since the app is built on Electron, support for Windows or Intel Macs may be added in the future. If you'd like to help make that happen, a contribution via [Buy Me a Coffee](https://www.buymeacoffee.com/yamatoiizuka) would be a great encouragement.
+That said, since the app is built on Electron, support for Windows or Intel Macs may be added in the future. If you'd like to help make that happen, a contribution via <a href="https://www.buymeacoffee.com/yamatoiizuka" target="_blank" rel="noopener noreferrer">Buy Me a Coffee ↗︎</a> would be a great encouragement.
 
 ### License
 
-This software is released under the [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html) (AGPL).
+This software is released under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener noreferrer">GNU Affero General Public License v3.0 ↗︎</a> (AGPL).
 
 The AGPL license of this software does not typically apply directly to the output produced from input fonts. The distribution terms of such output are primarily governed by the licenses of the input fonts. Since this software only accepts OFL fonts, any derivative fonts are subject to the OFL license.
 
 The Python source code in the `python/` directory, which contains the core logic, is provided under the MIT License and is available as a standalone Python package on PyPI.
-[ofl-font-baker · PyPI ↗︎](https://pypi.org/project/ofl-font-baker/)
+<a href="https://pypi.org/project/ofl-font-baker/" target="_blank" rel="noopener noreferrer">ofl-font-baker · PyPI ↗︎</a>
 
 Test fonts and other third-party assets included in the repository are subject to their respective licenses (OFL, etc.).
 
@@ -133,9 +133,9 @@ This software is provided "AS IS", without warranty of any kind, express or impl
 
 ## Acknowledgments
 
-This application was designed and developed through dialogue with [Claude Opus 4.6](https://www.anthropic.com/claude).
+This application was designed and developed through dialogue with <a href="https://www.anthropic.com/claude" target="_blank" rel="noopener noreferrer">Claude Opus 4.6 ↗︎</a>.
 
-The core font merging engine uses [fontTools](https://github.com/fonttools/fonttools), and real-time preview is powered by [HarfBuzz](https://github.com/harfbuzz/harfbuzzjs).
+The core font merging engine uses <a href="https://github.com/fonttools/fonttools" target="_blank" rel="noopener noreferrer">fontTools ↗︎</a>, and real-time preview is powered by <a href="https://github.com/harfbuzz/harfbuzzjs" target="_blank" rel="noopener noreferrer">HarfBuzz ↗︎</a>.
 We are grateful to the authors of these and other wonderful open-source software projects.
 
 Above all, we extend our deepest respect to the type designers and type foundries who publish outstanding typefaces under the SIL Open Font License.
