@@ -36,7 +36,7 @@ echo "==> Building (sign + notarize .app + notarize/staple .dmg)"
 npm run dist
 
 echo "==> Verifying artifacts"
-xcrun stapler validate "release/Font Baker-${VERSION}-arm64.dmg"
+xcrun stapler validate "release/Font Baker-arm64.dmg"
 codesign --verify --deep --strict "release/mac-arm64/Font Baker.app"
 
 # latest-mac.yml records URLs with hyphens (Font-Baker-...), but electron-builder
@@ -49,10 +49,10 @@ done
 
 echo "==> Creating draft release ${TAG}"
 gh release create "$TAG" \
-  "release/Font-Baker-${VERSION}-arm64.dmg" \
-  "release/Font-Baker-${VERSION}-arm64.dmg.blockmap" \
-  "release/Font-Baker-${VERSION}-arm64-mac.zip" \
-  "release/Font-Baker-${VERSION}-arm64-mac.zip.blockmap" \
+  "release/Font-Baker-arm64.dmg" \
+  "release/Font-Baker-arm64.dmg.blockmap" \
+  "release/Font-Baker-arm64.zip" \
+  "release/Font-Baker-arm64.zip.blockmap" \
   "release/latest-mac.yml" \
   --draft \
   --title "$TAG" \

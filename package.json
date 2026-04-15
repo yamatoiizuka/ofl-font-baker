@@ -80,6 +80,7 @@
         "dmg",
         "zip"
       ],
+      "artifactName": "${productName}-${arch}.${ext}",
       "identity": "Yamato Iizuka (GTFNHRDF69)",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
