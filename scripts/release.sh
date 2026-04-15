@@ -55,7 +55,7 @@ gh release create "$TAG" \
   "release/Font-Baker-arm64.zip.blockmap" \
   "release/latest-mac.yml" \
   --draft \
-  --title "$TAG" \
+  --title "OFL Font Baker $TAG" \
   --notes "Release notes pending."
 
 echo ""
