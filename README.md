@@ -32,13 +32,22 @@ Many high-quality typefaces are published under the OFL, including those on [Goo
 
 ## Download
 
-You can download the `.dmg` file from the [Releases](https://github.com/yamatoiizuka/ofl-font-baker/releases) page.
+<a href="https://github.com/yamatoiizuka/ofl-font-baker/releases/latest/download/Font-Baker-arm64.dmg">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/download-for-mac-dark.svg">
+    <img src="docs/assets/download-for-mac-light.svg" alt="Download for Mac" height="48">
+  </picture>
+</a>
+
+<br>
+
+Apple Silicon Macs (arm64) only. For past versions, see the [Releases](https://github.com/yamatoiizuka/ofl-font-baker/releases) page.
 
 ## Support
 
 If you find this project useful, we would appreciate your support for continued development.
 
-<a href="https://www.buymeacoffee.com/yamatoiizuka" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="40"></a>
+<a href="https://www.buymeacoffee.com/yamatoiizuka" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="45"></a>
 
 ---
 
