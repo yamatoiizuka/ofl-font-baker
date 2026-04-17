@@ -146,6 +146,7 @@ hhea ascent/descent/lineGap、post underline、head bbox）と JP GPOS ルック
 ### OFL メタデータ
 
 - nameID 0 (Copyright): 両ソースの copyright を結合 + ユーザー追加
+- nameID 6 (PostScript Name): `outputPostScriptName` が設定されていればそれを使用、未設定なら `outputFamilyName` から printable ASCII 33-126 外 + `[]{}<>()/%` を除去したものを 63 バイトで打ち切って使用
 - nameID 9 (Designer): ユーザー設定値、空の場合はクリア
 - nameID 10 (Description): "Based on {fonts}. Merged/Baked with OFL Font Baker."
 - nameID 13/14 (License): OFL 1.1 テキスト + URL
@@ -169,7 +170,7 @@ hhea ascent/descent/lineGap、post underline、head bbox）と JP GPOS ルック
 localStorage に永続化される状態:
 - latinFont, baseFont
 - sampleText
-- outputFamilyName, outputWeight, outputItalic, outputWidth
+- outputFamilyName, outputPostScriptName, outputWeight, outputItalic, outputWidth
 - outputDesigner, outputCopyright, outputUpm
 
 ## IPC チャンネル

@@ -593,9 +593,17 @@ class TestOutputWeight:
 # Metadata (name table) correctness
 # ---------------------------------------------------------------------------
 
-def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyright=""):
+def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyright="",
+                     output_ps_name=None):
     """Run merge with metadata options and return TTFont + cleanup paths."""
     out = tempfile.mktemp(suffix=".ttf")
+    output = {
+        "familyName": output_family,
+        "designer": output_designer,
+        "copyright": output_copyright,
+    }
+    if output_ps_name is not None:
+        output["postScriptName"] = output_ps_name
     config = {
         "subFont": {
             "path": EN_VAR,
@@ -612,11 +620,7 @@ def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyri
             "baselineOffset": 0,
             "axes": [{"tag": "wght", "currentValue": 400}],
         },
-        "output": {
-            "familyName": output_family,
-            "designer": output_designer,
-            "copyright": output_copyright,
-        },
+        "output": output,
         "export": {"path": {"font": out}},
     }
     mf.merge_fonts(config)
@@ -625,6 +629,78 @@ def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyri
         if os.path.exists(f):
             os.remove(f)
     return font
+
+
+class TestSanitizePostScriptName:
+    """Unit tests for sanitize_postscript_name()."""
+
+    def test_ascii_only_unchanged(self):
+        assert mf.sanitize_postscript_name("NotoSans") == "NotoSans"
+
+    def test_spaces_stripped(self):
+        assert mf.sanitize_postscript_name("Noto Sans") == "NotoSans"
+
+    def test_japanese_becomes_empty(self):
+        assert mf.sanitize_postscript_name("\u5927\u548c\u660e\u671d") == ""
+
+    def test_mixed_keeps_ascii_drops_japanese(self):
+        assert mf.sanitize_postscript_name("Yamato \u660e\u671d") == "Yamato"
+
+    def test_forbidden_chars_stripped(self):
+        assert mf.sanitize_postscript_name("Noto/Sans") == "NotoSans"
+        assert mf.sanitize_postscript_name("Foo(Bar)") == "FooBar"
+        assert mf.sanitize_postscript_name("[Foo]{Bar}") == "FooBar"
+        assert mf.sanitize_postscript_name("<Foo>") == "Foo"
+        assert mf.sanitize_postscript_name("50%Off") == "50Off"
+
+    def test_all_forbidden_becomes_empty(self):
+        assert mf.sanitize_postscript_name("[](){}<>/%") == ""
+
+    def test_allowed_punctuation_preserved(self):
+        for n in ("Foo-Bar", "Foo.Bar", "Foo_Bar", "Foo+Bar", "Foo:Bar", "Foo#Bar"):
+            assert mf.sanitize_postscript_name(n) == n
+
+    def test_truncation_past_63(self):
+        assert mf.sanitize_postscript_name("A" * 64) == "A" * 63
+        assert mf.sanitize_postscript_name("A" * 100) == "A" * 63
+
+    def test_exact_63_not_truncated(self):
+        assert mf.sanitize_postscript_name("A" * 63) == "A" * 63
+
+    def test_control_chars_stripped(self):
+        assert mf.sanitize_postscript_name("Noto\tSans") == "NotoSans"
+        assert mf.sanitize_postscript_name("Noto\nSans") == "NotoSans"
+
+    def test_empty_input(self):
+        assert mf.sanitize_postscript_name("") == ""
+
+
+class TestValidatePostScriptName:
+    """Unit tests for validate_postscript_name()."""
+
+    def test_valid_names_pass(self):
+        for n in ("NotoSans-Regular", "Yamato", "Foo.Bar_Baz+Qux", "A" * 63):
+            mf.validate_postscript_name(n)
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError, match="empty"):
+            mf.validate_postscript_name("")
+
+    def test_multibyte_raises(self):
+        with pytest.raises(ValueError, match="invalid character"):
+            mf.validate_postscript_name("\u5927\u548c")
+
+    def test_forbidden_char_raises(self):
+        with pytest.raises(ValueError, match="invalid character"):
+            mf.validate_postscript_name("Foo/Bar")
+
+    def test_space_raises(self):
+        with pytest.raises(ValueError, match="invalid character"):
+            mf.validate_postscript_name("Foo Bar")
+
+    def test_too_long_raises(self):
+        with pytest.raises(ValueError, match="exceeds"):
+            mf.validate_postscript_name("A" * 64)
 
 
 class TestMetadataCorrectness:
@@ -647,6 +723,31 @@ class TestMetadataCorrectness:
         name6 = m["name"].getDebugName(6)
         assert " " not in name6
         assert "MyCustomFont" in name6
+
+    def test_postscript_name_derived_sanitizes_family(self):
+        """When postScriptName is absent, nameID 6 is sanitized from familyName."""
+        m = _merge_with_meta(output_family="Foo/Bar(Baz)")
+        name6 = m["name"].getDebugName(6)
+        for ch in "()[]{}<>/%":
+            assert ch not in name6, f"Forbidden char {ch!r} found in nameID 6: {name6!r}"
+        assert name6.startswith("FooBarBaz")
+
+    def test_postscript_name_explicit_override(self):
+        """Explicit postScriptName is used as the PS base name in nameID 6."""
+        m = _merge_with_meta(output_family="\u5927\u548c\u660e\u671d",
+                             output_ps_name="YamatoMincho")
+        name6 = m["name"].getDebugName(6)
+        assert name6.startswith("YamatoMincho"), f"Unexpected nameID 6: {name6!r}"
+
+    def test_postscript_name_invalid_raises(self):
+        """Invalid explicit postScriptName raises ValueError."""
+        with pytest.raises(ValueError, match="invalid character"):
+            _merge_with_meta(output_family="Foo", output_ps_name="Bad/Name")
+
+    def test_postscript_name_empty_family_raises(self):
+        """Family with only non-ASCII and no explicit PS name raises."""
+        with pytest.raises(ValueError, match="empty"):
+            _merge_with_meta(output_family="\u5927\u548c\u660e\u671d")
 
     def test_license_is_ofl(self):
         """nameID 13 contains the OFL license text."""

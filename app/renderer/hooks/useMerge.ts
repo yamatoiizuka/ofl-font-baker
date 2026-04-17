@@ -38,7 +38,7 @@ export function useMerge() {
    */
   async function startMerge() {
     const {
-      latinFont, baseFont, familyName,
+      latinFont, baseFont, familyName, postScriptName,
       fontWeight, fontItalic, fontWidth,
       designer, copyright, upm,
     } = useMergeStore.getState();
@@ -64,6 +64,7 @@ export function useMerge() {
       baseFont: baseFont!,
       output: {
         familyName,
+        postScriptName,
         weight: fontWeight,
         italic: fontItalic,
         width: fontWidth,

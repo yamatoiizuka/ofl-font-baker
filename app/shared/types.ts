@@ -36,6 +36,8 @@ export interface FontSource {
 
 export interface MergeOutput {
   familyName: string;
+  /** PostScript name (nameID 6). Printable ASCII 33-126 minus []{}<>()/%, <= 63 bytes. */
+  postScriptName: string;
   weight: number;
   italic: boolean;
   width: number;

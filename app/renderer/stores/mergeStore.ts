@@ -6,6 +6,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { FontSource, MergeProgress } from '@/shared/types';
+import { sanitizePostScriptName, needsManualPostScriptName } from '@/shared/postscript-name';
 
 // ---------------------------------------------------------------------------
 // Undoable state (tracked in history)
@@ -17,6 +18,10 @@ interface UndoableState {
   selectedRole: 'latin' | 'base' | null;
   sampleText: string;
   familyName: string;
+  /** PostScript name (nameID 6). Auto-derived from familyName unless postScriptNameDirty. */
+  postScriptName: string;
+  /** True once the user has manually edited postScriptName — suppresses auto-sync. */
+  postScriptNameDirty: boolean;
   fontWeight: number;
   fontItalic: boolean;
   fontWidth: number;
@@ -28,12 +33,16 @@ interface UndoableState {
 export const DEFAULT_TEXT =
   '国LINE国Word国character国type国123国456国$1,789円国グーテンベルクが活版印刷術を発明したのは1440年代後半といわれています。それから約20年後の1465年、その新しい技術はアルプスを越え、イタリアに伝わりました。ドイツから来たSweynheimとPannartzという二人がローマの北にあるSubiacoという村の修道院に滞在し、そこでイタリア最初の印刷物をつくったのです。';
 
+const INITIAL_FAMILY_NAME = 'Untitled Font';
+
 const INITIAL_UNDOABLE: UndoableState = {
   latinFont: null,
   baseFont: null,
   selectedRole: null,
   sampleText: DEFAULT_TEXT,
-  familyName: 'Untitled Font',
+  familyName: INITIAL_FAMILY_NAME,
+  postScriptName: sanitizePostScriptName(INITIAL_FAMILY_NAME),
+  postScriptNameDirty: false,
   fontWeight: 400,
   fontItalic: false,
   fontWidth: 5,
@@ -71,6 +80,7 @@ interface MergeState extends UndoableState {
   ) => void;
   updateFontAxis: (role: 'latin' | 'base', tag: string, value: number) => void;
   setFamilyName: (name: string) => void;
+  setPostScriptName: (name: string) => void;
   setFontWeight: (weight: number) => void;
   setFontItalic: (italic: boolean) => void;
   setFontWidth: (width: number) => void;
@@ -99,6 +109,8 @@ function extractUndoable(state: MergeState): UndoableState {
     selectedRole: state.selectedRole,
     sampleText: state.sampleText,
     familyName: state.familyName,
+    postScriptName: state.postScriptName,
+    postScriptNameDirty: state.postScriptNameDirty,
     fontWeight: state.fontWeight,
     fontItalic: state.fontItalic,
     fontWidth: state.fontWidth,
@@ -184,7 +196,31 @@ export const useMergeStore = create<MergeState>()(
 
       // Text setters don't push history per keystroke — components call
       // pushHistory() on blur to record one snapshot per edit session.
-      setFamilyName: (name) => set({ familyName: name }),
+      setFamilyName: (name) => set((state) => {
+        // Clean family (no characters lost beyond spaces): reset dirty flag
+        // and auto-sync the PostScript name. This keeps the PS field in
+        // sync with the family name whenever it *can* be, and lets
+        // previously-dirty values be reclaimed once the conflict is gone.
+        if (!needsManualPostScriptName(name)) {
+          return {
+            familyName: name,
+            postScriptName: sanitizePostScriptName(name),
+            postScriptNameDirty: false,
+          };
+        }
+        // Family needs manual PS name. If the user has already edited
+        // the PS field, preserve their entry; otherwise auto-sync the
+        // (possibly partial) sanitized value as a starting point.
+        if (state.postScriptNameDirty) {
+          return { familyName: name };
+        }
+        return {
+          familyName: name,
+          postScriptName: sanitizePostScriptName(name),
+        };
+      }),
+      setPostScriptName: (name) =>
+        set({ postScriptName: name, postScriptNameDirty: true }),
       setFontWeight: (weight) => {
         set({ fontWeight: weight });
         get().pushHistory();
@@ -257,6 +293,8 @@ export const useMergeStore = create<MergeState>()(
         sampleText: state.sampleText,
         previewFontSize: state.previewFontSize,
         familyName: state.familyName,
+        postScriptName: state.postScriptName,
+        postScriptNameDirty: state.postScriptNameDirty,
         fontWeight: state.fontWeight,
         fontItalic: state.fontItalic,
         fontWidth: state.fontWidth,
@@ -268,6 +306,11 @@ export const useMergeStore = create<MergeState>()(
         if (!state) return;
         if (state.baseFont) state.selectedRole = 'base';
         else if (state.latinFont) state.selectedRole = 'latin';
+        // Backfill postScriptName for stores persisted before the field existed.
+        if (!state.postScriptName) {
+          state.postScriptName = sanitizePostScriptName(state.familyName || '');
+          state.postScriptNameDirty = false;
+        }
         // Initialize history from rehydrated state
         const snapshot = extractUndoable(state);
         state._history = [snapshot];

@@ -76,6 +76,53 @@ def compute_style_name(weight: int, italic: bool, width: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# PostScript name (nameID 6) sanitization and validation
+# ---------------------------------------------------------------------------
+
+# Per OpenType spec, a PostScript name must consist of printable ASCII
+# (U+0021-U+007E) minus the ten characters below, and be at most 63 bytes.
+_PS_NAME_FORBIDDEN = set("[](){}<>/%")
+_PS_NAME_MAX_BYTES = 63
+
+
+def sanitize_postscript_name(name: str) -> str:
+    """Strip characters not allowed in a PostScript name.
+
+    Allowed: printable ASCII 33-126 minus [](){}<>/% (and space, which
+    falls outside the printable-ASCII range). Result is truncated to 63
+    bytes to match the spec limit for nameID 6.
+    """
+    result = []
+    for c in name:
+        cp = ord(c)
+        if 33 <= cp <= 126 and c not in _PS_NAME_FORBIDDEN:
+            result.append(c)
+    return "".join(result)[:_PS_NAME_MAX_BYTES]
+
+
+def validate_postscript_name(name: str) -> None:
+    """Raise ValueError if name is not a spec-compliant PostScript name.
+
+    A valid name is non-empty, uses only printable ASCII 33-126 minus
+    [](){}<>/% (space is excluded as it is outside that range), and is
+    at most 63 bytes long.
+    """
+    if not name:
+        raise ValueError("PostScript name is empty")
+    if len(name.encode("utf-8")) > _PS_NAME_MAX_BYTES:
+        raise ValueError(
+            f"PostScript name exceeds {_PS_NAME_MAX_BYTES} bytes: {name!r}"
+        )
+    for c in name:
+        cp = ord(c)
+        if not (33 <= cp <= 126) or c in _PS_NAME_FORBIDDEN:
+            raise ValueError(
+                f"PostScript name contains invalid character {c!r} "
+                f"(U+{cp:04X}): {name!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
 # Export artifact generators
 # ---------------------------------------------------------------------------
 
@@ -338,7 +385,7 @@ def build_export_config(config: dict, path_map: dict = None) -> dict:
         result["subFont"] = sub_entry
 
     output = config.get("output") or {}
-    for field in ("familyName", "weight", "italic",
+    for field in ("familyName", "postScriptName", "weight", "italic",
                   "width", "designer", "copyright", "upm"):
         val = output.get(field)
         if val is not None:
@@ -1820,6 +1867,14 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     output = config.get("output") or {}
     output_name = output.get("familyName", "Merged Font")
 
+    # Resolve and validate the PostScript base name (without style suffix).
+    # Explicit postScriptName takes priority; otherwise derive from familyName
+    # by stripping disallowed characters.
+    output_ps_base = (output.get("postScriptName") or "").strip()
+    if not output_ps_base:
+        output_ps_base = sanitize_postscript_name(output_name)
+    validate_postscript_name(output_ps_base)
+
     # --- name table ---
     name_table = merged["name"]
     for record in name_table.names:
@@ -1841,7 +1896,7 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
                         break
                 record.string = f"{output_name} {style}".strip()
             elif record.nameID == 6:
-                record.string = output_name.replace(" ", "")
+                record.string = output_ps_base
             elif record.nameID == 16:
                 record.string = output_name
 
@@ -1904,7 +1959,7 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
             record.string = f"{output_name} {style_name}"
         elif record.nameID == 6:
             ps_style = style_name.replace(" ", "")
-            record.string = f"{output_name.replace(' ', '')}-{ps_style}"
+            record.string = f"{output_ps_base}-{ps_style}"
         elif record.nameID == 17:
             # Typographic Subfamily — Illustrator uses this for weight display
             record.string = style_name
