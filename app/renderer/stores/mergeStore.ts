@@ -22,6 +22,8 @@ interface UndoableState {
   postScriptName: string;
   /** True once the user has manually edited postScriptName — suppresses auto-sync. */
   postScriptNameDirty: boolean;
+  /** Version string (nameID 5) — resets to the default when a new font is loaded. */
+  version: string;
   fontWeight: number;
   fontItalic: boolean;
   fontWidth: number;
@@ -34,6 +36,7 @@ export const DEFAULT_TEXT =
   '国LINE国Word国character国type国123国456国$1,789円国グーテンベルクが活版印刷術を発明したのは1440年代後半といわれています。それから約20年後の1465年、その新しい技術はアルプスを越え、イタリアに伝わりました。ドイツから来たSweynheimとPannartzという二人がローマの北にあるSubiacoという村の修道院に滞在し、そこでイタリア最初の印刷物をつくったのです。';
 
 const INITIAL_FAMILY_NAME = 'Untitled Font';
+const INITIAL_VERSION = '1.000';
 
 const INITIAL_UNDOABLE: UndoableState = {
   latinFont: null,
@@ -43,6 +46,7 @@ const INITIAL_UNDOABLE: UndoableState = {
   familyName: INITIAL_FAMILY_NAME,
   postScriptName: sanitizePostScriptName(INITIAL_FAMILY_NAME),
   postScriptNameDirty: false,
+  version: INITIAL_VERSION,
   fontWeight: 400,
   fontItalic: false,
   fontWidth: 5,
@@ -81,6 +85,7 @@ interface MergeState extends UndoableState {
   updateFontAxis: (role: 'latin' | 'base', tag: string, value: number) => void;
   setFamilyName: (name: string) => void;
   setPostScriptName: (name: string) => void;
+  setVersion: (version: string) => void;
   setFontWeight: (weight: number) => void;
   setFontItalic: (italic: boolean) => void;
   setFontWidth: (width: number) => void;
@@ -111,6 +116,7 @@ function extractUndoable(state: MergeState): UndoableState {
     familyName: state.familyName,
     postScriptName: state.postScriptName,
     postScriptNameDirty: state.postScriptNameDirty,
+    version: state.version,
     fontWeight: state.fontWeight,
     fontItalic: state.fontItalic,
     fontWidth: state.fontWidth,
@@ -151,6 +157,7 @@ export const useMergeStore = create<MergeState>()(
           fontWidth: INITIAL_UNDOABLE.fontWidth,
           upm: INITIAL_UNDOABLE.upm,
           fontItalic: INITIAL_UNDOABLE.fontItalic,
+          version: INITIAL_UNDOABLE.version,
         }));
         get().pushHistory();
       },
@@ -163,6 +170,7 @@ export const useMergeStore = create<MergeState>()(
           fontWidth: INITIAL_UNDOABLE.fontWidth,
           upm: INITIAL_UNDOABLE.upm,
           fontItalic: INITIAL_UNDOABLE.fontItalic,
+          version: INITIAL_UNDOABLE.version,
         }));
         get().pushHistory();
       },
@@ -221,6 +229,7 @@ export const useMergeStore = create<MergeState>()(
       }),
       setPostScriptName: (name) =>
         set({ postScriptName: name, postScriptNameDirty: true }),
+      setVersion: (version) => set({ version }),
       setFontWeight: (weight) => {
         set({ fontWeight: weight });
         get().pushHistory();
@@ -295,6 +304,7 @@ export const useMergeStore = create<MergeState>()(
         familyName: state.familyName,
         postScriptName: state.postScriptName,
         postScriptNameDirty: state.postScriptNameDirty,
+        version: state.version,
         fontWeight: state.fontWeight,
         fontItalic: state.fontItalic,
         fontWidth: state.fontWidth,
@@ -310,6 +320,10 @@ export const useMergeStore = create<MergeState>()(
         if (!state.postScriptName) {
           state.postScriptName = sanitizePostScriptName(state.familyName || '');
           state.postScriptNameDirty = false;
+        }
+        // Backfill version for stores persisted before the field existed.
+        if (!state.version) {
+          state.version = INITIAL_VERSION;
         }
         // Initialize history from rehydrated state
         const snapshot = extractUndoable(state);

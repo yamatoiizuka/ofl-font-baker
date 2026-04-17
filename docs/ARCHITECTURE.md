@@ -147,6 +147,7 @@ values, so the Latin envelope is taken in output UPM units.
 ### OFL Metadata
 
 - nameID 0 (Copyright): concatenate both sources' copyright + user addition
+- nameID 5 (Version String): from `outputVersion` (default `1.000`); Python prepends `Version ` if not already present. Resets to the default whenever a font is loaded, so derivative fonts don't inherit the base font's version.
 - nameID 6 (PostScript Name): from `outputPostScriptName` if set; otherwise derived from `outputFamilyName` by stripping characters outside printable ASCII 33-126 or in `[]{}<>()/%`, clamped to 63 bytes
 - nameID 9 (Designer): user-specified value; cleared if empty
 - nameID 10 (Description): "Based on {fonts}. Merged/Baked with OFL Font Baker."
@@ -171,7 +172,7 @@ All operations are managed in a single timeline:
 State persisted to localStorage:
 - latinFont, baseFont
 - sampleText
-- outputFamilyName, outputPostScriptName, outputWeight, outputItalic, outputWidth
+- outputFamilyName, outputPostScriptName, outputVersion, outputWeight, outputItalic, outputWidth
 - outputDesigner, outputCopyright, outputUpm
 
 ## IPC Channels

@@ -76,6 +76,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
     familyName,
     postScriptName,
     postScriptNameDirty,
+    version,
     fontWeight,
     fontItalic,
     fontWidth,
@@ -85,6 +86,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
     isMerging,
     setFamilyName,
     setPostScriptName,
+    setVersion,
     setFontWeight,
     setFontItalic,
     setFontWidth,
@@ -304,12 +306,25 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
             <div className="pb-2" />
 
             {/* ===== Info ===== */}
-            {description && (
-              <>
-                <SectionHeader>Info</SectionHeader>
-                <InfoRow label="Description" value={description} />
-              </>
-            )}
+            <SectionHeader>Info</SectionHeader>
+
+            <FieldRow label="Version">
+              <input
+                type="text"
+                value={version}
+                onChange={(e) => setVersion(e.target.value)}
+                onBlur={() => useMergeStore.getState().pushHistory()}
+                disabled={isMerging}
+                placeholder="1.000"
+                className={cn(
+                  inputClass,
+                  'placeholder:text-foreground/30',
+                  isMerging && 'opacity-50 cursor-not-allowed',
+                )}
+              />
+            </FieldRow>
+
+            {description && <InfoRow label="Description" value={description} />}
 
             {/* ===== Legal ===== */}
             <SectionHeader>Legal</SectionHeader>

@@ -163,7 +163,7 @@ export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => 
   const meta: FontMeta = {
     familyName: font.familyName,
     styleName: font.styleName,
-    version: '',
+    version: font.version || '',
     copyright: font.copyright || '',
     trademark: '',
     designer: font.designer || '',
@@ -200,7 +200,6 @@ export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => 
             <Section title="General">
               <InfoRow label="Family" value={meta.familyName} />
               <InfoRow label="Style" value={meta.styleName} />
-              <InfoRow label="Version" value={meta.version} />
               <InfoRow label="Glyphs" value={meta.glyphCount.toLocaleString()} />
               <InfoRow label="UPM" value={String(meta.unitsPerEm)} />
             </Section>
@@ -220,8 +219,9 @@ export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => 
               </Section>
             )}
 
-            {meta.description && (
+            {(meta.version || meta.description) && (
               <Section title="Info">
+                <InfoRow label="Version" value={meta.version} />
                 <InfoRow label="Description" value={meta.description} />
               </Section>
             )}

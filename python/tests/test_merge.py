@@ -594,7 +594,7 @@ class TestOutputWeight:
 # ---------------------------------------------------------------------------
 
 def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyright="",
-                     output_ps_name=None):
+                     output_ps_name=None, output_version=None, app_version=None):
     """Run merge with metadata options and return TTFont + cleanup paths."""
     out = tempfile.mktemp(suffix=".ttf")
     output = {
@@ -604,6 +604,8 @@ def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyri
     }
     if output_ps_name is not None:
         output["postScriptName"] = output_ps_name
+    if output_version is not None:
+        output["version"] = output_version
     config = {
         "subFont": {
             "path": EN_VAR,
@@ -623,6 +625,8 @@ def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyri
         "output": output,
         "export": {"path": {"font": out}},
     }
+    if app_version is not None:
+        config["appVersion"] = app_version
     mf.merge_fonts(config)
     font = TTFont(out)
     for f in (out, out.replace(".ttf", ".woff2")):
@@ -748,6 +752,42 @@ class TestMetadataCorrectness:
         """Family with only non-ASCII and no explicit PS name raises."""
         with pytest.raises(ValueError, match="empty"):
             _merge_with_meta(output_family="\u5927\u548c\u660e\u671d")
+
+    def test_version_defaults_to_1000(self):
+        """nameID 5 defaults to 'Version 1.000' when not supplied."""
+        m = _merge_with_meta()
+        v = m["name"].getDebugName(5)
+        assert v == "Version 1.000", f"Unexpected nameID 5: {v!r}"
+
+    def test_version_custom_value(self):
+        """Explicit version is written as 'Version X' in nameID 5."""
+        m = _merge_with_meta(output_version="2.5")
+        v = m["name"].getDebugName(5)
+        assert v == "Version 2.5", f"Unexpected nameID 5: {v!r}"
+
+    def test_version_with_explicit_prefix(self):
+        """If the value already starts with 'Version ', it is not doubled."""
+        m = _merge_with_meta(output_version="Version 3.0-beta")
+        v = m["name"].getDebugName(5)
+        assert v == "Version 3.0-beta", f"Unexpected nameID 5: {v!r}"
+
+    def test_version_empty_falls_back_to_default(self):
+        """Empty/whitespace version falls back to the 1.000 default."""
+        m = _merge_with_meta(output_version="  ")
+        v = m["name"].getDebugName(5)
+        assert v == "Version 1.000", f"Unexpected nameID 5: {v!r}"
+
+    def test_version_appends_app_version(self):
+        """appVersion is appended to nameID 5 as ';ofl-font-baker X.Y.Z'."""
+        m = _merge_with_meta(output_version="1.000", app_version="1.0.0")
+        v = m["name"].getDebugName(5)
+        assert v == "Version 1.000;ofl-font-baker 1.0.0", f"Unexpected nameID 5: {v!r}"
+
+    def test_version_no_app_version_suffix_when_missing(self):
+        """Missing appVersion produces no suffix."""
+        m = _merge_with_meta(output_version="1.000")
+        v = m["name"].getDebugName(5)
+        assert ";ofl-font-baker" not in v, f"Unexpected nameID 5 suffix: {v!r}"
 
     def test_license_is_ofl(self):
         """nameID 13 contains the OFL license text."""

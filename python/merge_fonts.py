@@ -385,7 +385,7 @@ def build_export_config(config: dict, path_map: dict = None) -> dict:
         result["subFont"] = sub_entry
 
     output = config.get("output") or {}
-    for field in ("familyName", "postScriptName", "weight", "italic",
+    for field in ("familyName", "postScriptName", "version", "weight", "italic",
                   "width", "designer", "copyright", "upm"):
         val = output.get(field)
         if val is not None:
@@ -1856,6 +1856,21 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
 
     # --- License URL (nameID 14) ---
     _set_name(name_table, 14, _OFL_LICENSE_URL)
+
+    # --- Version string (nameID 5) ---
+    # Default to 1.000 so derivative fonts don't inherit the base font's
+    # version. Users may supply any string; the "Version " prefix is
+    # enforced because the OpenType spec requires nameID 5 to begin with
+    # it (case-insensitive). A `;ofl-font-baker X.Y.Z` suffix is appended
+    # (when the generator version is provided) so the tool that produced
+    # the font is identifiable from its metadata.
+    version_value = (output.get("version") or "").strip() or "1.000"
+    if not version_value.lower().startswith("version "):
+        version_value = f"Version {version_value}"
+    app_version = (config.get("appVersion") or "").strip()
+    if app_version:
+        version_value = f"{version_value};ofl-font-baker {app_version}"
+    _set_name(name_table, 5, version_value)
 
 
 # ---------------------------------------------------------------------------
