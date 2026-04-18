@@ -1527,6 +1527,25 @@ class TestCFFHintPreservation:
         priv = self._fd_private(m, gname)
         assert getattr(priv, "BlueValues", None), "BlueValues missing on Private dict"
 
+    def test_cff_top_dict_family_name(self):
+        """CFF TopDict FamilyName mirrors nameID 1."""
+        m = _merge_cff_to_cff()
+        td = m["CFF "].cff.topDictIndex[0]
+        assert td.FamilyName == "TestHint"
+
+    def test_cff_top_dict_full_name(self):
+        """CFF TopDict FullName mirrors nameID 4 (family + style)."""
+        m = _merge_cff_to_cff()
+        td = m["CFF "].cff.topDictIndex[0]
+        assert td.FullName == "TestHint Regular"
+
+    def test_cff_top_dict_notice_mirrors_copyright(self):
+        """CFF TopDict Notice mirrors the merged nameID 0 copyright."""
+        m = _merge_cff_to_cff()
+        td = m["CFF "].cff.topDictIndex[0]
+        name_copyright = m["name"].getDebugName(0)
+        assert td.Notice == name_copyright
+
 
 @pytest.mark.skipif(
     not os.path.exists(_JP_CID_HINT),

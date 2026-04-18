@@ -155,6 +155,7 @@ hhea ascent/descent/lineGap、post underline、head bbox）と JP GPOS ルック
 - nameID 11 (Manufacturer URL): ユーザー設定値、空の場合はクリア
 - nameID 12 (Designer URL): ユーザー設定値、空の場合はクリア
 - nameID 13/14 (License): OFL 1.1 テキスト + URL
+- CFF TopDict `FullName` / `FamilyName` / `Notice`: nameID 4 / 1 / 0 と同じ値をセット。PDF 埋め込みや Adobe 系ツールが CFF を直接読む際にベースフォント名が残らないようにする。
 - OS/2 `achVendID`: ユーザー設定の 4 文字タグ（短い場合は空白で右詰め）、空の場合は `"    "`（ベンダー不明）をセット
 
 ## 状態管理 (Zustand)

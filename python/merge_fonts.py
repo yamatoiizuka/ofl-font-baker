@@ -2042,6 +2042,24 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     # --- OFL metadata: copyright, license, description ---
     _set_ofl_metadata(lat_font, jp_font, merged, config)
 
+    # --- CFF TopDict metadata (OTF only) ---
+    # CFF fonts carry a second copy of FullName / FamilyName / Copyright
+    # inside the CFF table's TopDict. PDF embedders and Adobe tools read
+    # those directly, so derivatives would keep the base font's name
+    # unless we mirror the name-table values here.
+    if "CFF " in merged:
+        td = merged["CFF "].cff.topDictIndex[0]
+        td.FullName = f"{output_name} {style_name}".strip()
+        td.FamilyName = output_name
+        cff_copyright = _get_name(merged, 0)
+        if cff_copyright:
+            # CFF 1 uses "Notice" as the canonical copyright field;
+            # "Copyright" is defined but rarely populated. Set whichever
+            # the TopDict exposes so inspectors see a consistent value.
+            td.Notice = cff_copyright
+            if hasattr(td, "Copyright"):
+                td.Copyright = cff_copyright
+
     # --- Copy feature name records from Latin font ---
     lat_name = lat_font.get("name") if lat_font else None
     if lat_name:

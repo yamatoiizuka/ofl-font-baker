@@ -156,6 +156,7 @@ values, so the Latin envelope is taken in output UPM units.
 - nameID 11 (Manufacturer URL): user-specified value; cleared if empty
 - nameID 12 (Designer URL): user-specified value; cleared if empty
 - nameID 13/14 (License): OFL 1.1 text + URL
+- CFF TopDict `FullName` / `FamilyName` / `Notice`: mirror nameID 4 / 1 / 0 so PDF embedders and Adobe tools see the derivative's name, not the base font's, when reading CFF directly.
 - OS/2 `achVendID`: user-specified 4-char tag (right-padded with spaces); defaults to `"    "` (unknown vendor) when empty
 
 ## State Management (Zustand)
