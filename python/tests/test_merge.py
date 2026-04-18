@@ -902,6 +902,31 @@ class TestMetadataCorrectness:
         m = _merge_with_meta()
         assert m["head"].created == m["head"].modified
 
+    def test_head_font_revision_matches_default(self):
+        """head.fontRevision defaults to 1.0 when no version is supplied."""
+        m = _merge_with_meta()
+        assert m["head"].fontRevision == 1.0
+
+    def test_head_font_revision_matches_version(self):
+        """head.fontRevision tracks output.version numerically."""
+        m = _merge_with_meta(output_version="2.5")
+        assert m["head"].fontRevision == 2.5
+
+    def test_head_font_revision_strips_version_prefix(self):
+        """'Version ' prefix is dropped before parsing fontRevision."""
+        m = _merge_with_meta(output_version="Version 3.25")
+        assert m["head"].fontRevision == 3.25
+
+    def test_head_font_revision_strips_suffix(self):
+        """Non-numeric suffixes like '-beta' are dropped before parsing."""
+        m = _merge_with_meta(output_version="1.500-beta")
+        assert m["head"].fontRevision == 1.5
+
+    def test_head_font_revision_falls_back_on_garbage(self):
+        """Unparseable version values fall back to 1.0."""
+        m = _merge_with_meta(output_version="pre-release")
+        assert m["head"].fontRevision == 1.0
+
     def test_trademark_includes_user_addition(self):
         """outputTrademark is appended to nameID 7."""
         m = _merge_with_meta(output_trademark="Acme is a trademark of Acme Foundry")

@@ -25,6 +25,7 @@ import copy
 import datetime
 import json
 import os
+import re
 import shutil
 import struct
 import sys
@@ -1996,6 +1997,17 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
         # and modified disagree by a few seconds. Pin both to the same
         # instant so inspectors report a consistent timestamp pair.
         merged.recalcTimestamp = False
+
+        # fontRevision (Fixed 16.16) should track the nameID 5 number.
+        # Parse the leading numeric from output.version so values like
+        # "1.000-beta" or "Version 2.5" collapse to the numeric prefix
+        # (1.0 / 2.5). Anything that doesn't start with a number falls
+        # back to the 1.000 default.
+        version_raw = (output.get("version") or "").strip() or "1.000"
+        if version_raw.lower().startswith("version "):
+            version_raw = version_raw[len("Version "):].strip()
+        m = re.match(r"^\d+(?:\.\d+)?", version_raw)
+        head.fontRevision = float(m.group(0)) if m else 1.0
     if os2:
         if output_italic:
             os2.fsSelection |= 0x0001   # bit 0 = italic
