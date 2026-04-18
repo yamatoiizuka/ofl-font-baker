@@ -153,7 +153,7 @@ values, so the Latin envelope is taken in output UPM units.
 - nameID 6 (PostScript Name): from `outputPostScriptName` if set; otherwise derived from `outputFamilyName` by stripping characters outside printable ASCII 33-126 or in `[]{}<>()/%`, clamped to 63 bytes
 - nameID 8 (Manufacturer): user-specified value; cleared if empty
 - nameID 9 (Designer): always cleared — source designers are acknowledged via nameID 10 instead
-- nameID 10 (Description): "Based on {fonts}. Merged/Baked with OFL Font Baker."
+- nameID 10 (Description): "Based on {fonts}. Built with OFL Font Baker."
 - nameID 11 (Manufacturer URL): user-specified value; cleared if empty
 - nameID 12 (Designer URL): always cleared
 - nameID 13/14 (License): OFL 1.1 text + URL
@@ -213,7 +213,7 @@ python3 -m pytest python/tests/test_merge.py -k LargeCID -v   # 65535-glyph test
 | GPOS scaling | 3 | Kern scale, baseline unaffected, T+o pair kerning |
 | Feature preservation | 8 | calt/case/frac/ss01, subordinate Latin removal, chaining remap |
 | Metadata correctness | 12 | familyName, copyright concat, designer, OFL license, description |
-| Metadata (base only) | 5 | familyName, OFL, copyright, designer, "Baked with" |
+| Metadata (base only) | 5 | familyName, OFL, copyright, designer, "Built with" |
 | Output weight | 4 | usWeightClass, nameID 2/4/17 |
 | Glyph names | 2 | post format 2.0, alternate glyph names |
 | Composite integrity | 2 | Reference completeness, hmtx completeness |

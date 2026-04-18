@@ -907,11 +907,11 @@ class TestMetadataCorrectness:
         # here and rely on the user-addition test for positive coverage.
         assert tm is None or isinstance(tm, str)
 
-    def test_description_mentions_merged(self):
-        """Two-font merge includes 'Merged with' in nameID 10."""
+    def test_description_mentions_built_with(self):
+        """Two-font merge includes 'Built with OFL Font Baker' in nameID 10."""
         m = _merge_with_meta()
         desc = m["name"].getDebugName(10)
-        assert "Merged with OFL Font Baker" in desc
+        assert "Built with OFL Font Baker" in desc
 
 
 class TestMetadataBaseOnly:
@@ -959,12 +959,11 @@ class TestMetadataBaseOnly:
         d = m["name"].getDebugName(9)
         assert d is None or d == "", f"Expected cleared designer, got '{d}'"
 
-    def test_description_baked_not_merged(self):
-        """Base-only uses 'Baked with', not 'Merged with'."""
+    def test_description_mentions_built_with(self):
+        """Base-only also uses 'Built with OFL Font Baker' in nameID 10."""
         m = self._merge_base_only_meta()
         desc = m["name"].getDebugName(10) or ""
-        assert "Merged with" not in desc
-        assert "Baked with OFL Font Baker" in desc
+        assert "Built with OFL Font Baker" in desc
 
 
 # ---------------------------------------------------------------------------
@@ -1961,16 +1960,16 @@ class TestBuildSettingsText:
         text = mf.build_settings_text(config)
         assert "MyFont Bold Italic" in text
 
-    def test_base_only_shows_baked(self):
+    def test_base_only_shows_built_with(self):
         config = {
             "baseFont": {"familyName": "Noto", "styleName": "Regular",
                          "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
             "output": {"familyName": "MyFont", "weight": 400},
         }
         text = mf.build_settings_text(config)
-        assert "Baked with" in text
+        assert "Built with OFL Font Baker" in text
 
-    def test_with_latin_shows_merged(self):
+    def test_with_latin_shows_sub_font(self):
         config = {
             "baseFont": {"familyName": "Noto", "styleName": "Regular",
                          "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
@@ -1979,7 +1978,7 @@ class TestBuildSettingsText:
             "output": {"familyName": "MyFont", "weight": 400},
         }
         text = mf.build_settings_text(config)
-        assert "Merged with" in text
+        assert "Built with OFL Font Baker" in text
         assert "[Sub Font]" in text
 
 
@@ -2107,7 +2106,7 @@ class TestPackageFonts:
         with open(manifest["settingsPath"]) as f:
             content = f.read()
             assert "TestFont" in content
-            assert "Merged with" in content
+            assert "Built with OFL Font Baker" in content
         import shutil
         shutil.rmtree(d)
 

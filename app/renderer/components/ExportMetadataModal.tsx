@@ -158,7 +158,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
   }
   const description =
     descParts.length > 0
-      ? `Based on ${descParts.join(' and ')}${latinFont ? '. Merged with OFL Font Baker.' : '. Baked with OFL Font Baker.'}`
+      ? `Based on ${descParts.join(' and ')}. Built with OFL Font Baker.`
       : '';
 
   const ready = !loading && (jpMeta || latMeta);

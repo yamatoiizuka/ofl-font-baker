@@ -281,10 +281,7 @@ def build_settings_text(config: dict) -> str:
         lines.append(f"\u00b7 Path: {lat.get('path', '')}")
 
     lines.extend(["", "-", ""])
-    if lat:
-        lines.append("Merged with OFL Font Baker by Yamato Iizuka")
-    else:
-        lines.append("Baked with OFL Font Baker by Yamato Iizuka")
+    lines.append("Built with OFL Font Baker by Yamato Iizuka")
     lines.append("https://github.com/yamatoiizuka/ofl-font-baker")
 
     return "\n".join(lines) + "\n"
@@ -1862,8 +1859,7 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
                 part += f" by {designer}"
             desc_parts.append(part)
     if desc_parts:
-        suffix = ". Merged with OFL Font Baker." if lat_font else ". Baked with OFL Font Baker."
-        desc = f"Based on {' and '.join(desc_parts)}{suffix}"
+        desc = f"Based on {' and '.join(desc_parts)}. Built with OFL Font Baker."
         _set_name(name_table, 10, desc)
 
     # --- Designer (nameID 9) / Designer URL (nameID 12) ---
