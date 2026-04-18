@@ -40,7 +40,7 @@ export function useMerge() {
     const {
       latinFont, baseFont, familyName, postScriptName, version,
       fontWeight, fontItalic, fontWidth,
-      designer, designerURL, manufacturer, manufacturerURL, vendorID,
+      manufacturer, manufacturerURL, vendorID,
       copyright, trademark, upm,
     } = useMergeStore.getState();
 
@@ -70,8 +70,6 @@ export function useMerge() {
         weight: fontWeight,
         italic: fontItalic,
         width: fontWidth,
-        designer,
-        designerURL,
         manufacturer,
         manufacturerURL,
         vendorID,

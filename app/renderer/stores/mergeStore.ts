@@ -27,8 +27,6 @@ interface UndoableState {
   fontWeight: number;
   fontItalic: boolean;
   fontWidth: number;
-  designer: string;
-  designerURL: string;
   manufacturer: string;
   manufacturerURL: string;
   vendorID: string;
@@ -55,8 +53,6 @@ const INITIAL_UNDOABLE: UndoableState = {
   fontWeight: 400,
   fontItalic: false,
   fontWidth: 5,
-  designer: '',
-  designerURL: '',
   manufacturer: '',
   manufacturerURL: '',
   vendorID: '',
@@ -99,8 +95,6 @@ interface MergeState extends UndoableState {
   setFontWeight: (weight: number) => void;
   setFontItalic: (italic: boolean) => void;
   setFontWidth: (width: number) => void;
-  setDesigner: (designer: string) => void;
-  setDesignerURL: (url: string) => void;
   setManufacturer: (manufacturer: string) => void;
   setManufacturerURL: (url: string) => void;
   setVendorID: (vendorID: string) => void;
@@ -135,8 +129,6 @@ function extractUndoable(state: MergeState): UndoableState {
     fontWeight: state.fontWeight,
     fontItalic: state.fontItalic,
     fontWidth: state.fontWidth,
-    designer: state.designer,
-    designerURL: state.designerURL,
     manufacturer: state.manufacturer,
     manufacturerURL: state.manufacturerURL,
     vendorID: state.vendorID,
@@ -262,8 +254,6 @@ export const useMergeStore = create<MergeState>()(
         set({ fontWidth: width });
         get().pushHistory();
       },
-      setDesigner: (designer) => set({ designer: designer }),
-      setDesignerURL: (url) => set({ designerURL: url }),
       setManufacturer: (manufacturer) => set({ manufacturer }),
       setManufacturerURL: (url) => set({ manufacturerURL: url }),
       setVendorID: (vendorID) => set({ vendorID }),
@@ -333,8 +323,6 @@ export const useMergeStore = create<MergeState>()(
         fontWeight: state.fontWeight,
         fontItalic: state.fontItalic,
         fontWidth: state.fontWidth,
-        designer: state.designer,
-        designerURL: state.designerURL,
         manufacturer: state.manufacturer,
         manufacturerURL: state.manufacturerURL,
         vendorID: state.vendorID,

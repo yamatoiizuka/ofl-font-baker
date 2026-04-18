@@ -152,10 +152,10 @@ values, so the Latin envelope is taken in output UPM units.
 - nameID 5 (Version String): from `outputVersion` (default `1.000`); Python prepends `Version ` if not already present. Resets to the default whenever a font is loaded, so derivative fonts don't inherit the base font's version.
 - nameID 6 (PostScript Name): from `outputPostScriptName` if set; otherwise derived from `outputFamilyName` by stripping characters outside printable ASCII 33-126 or in `[]{}<>()/%`, clamped to 63 bytes
 - nameID 8 (Manufacturer): user-specified value; cleared if empty
-- nameID 9 (Designer): user-specified value; cleared if empty
+- nameID 9 (Designer): always cleared — source designers are acknowledged via nameID 10 instead
 - nameID 10 (Description): "Based on {fonts}. Merged/Baked with OFL Font Baker."
 - nameID 11 (Manufacturer URL): user-specified value; cleared if empty
-- nameID 12 (Designer URL): user-specified value; cleared if empty
+- nameID 12 (Designer URL): always cleared
 - nameID 13/14 (License): OFL 1.1 text + URL
 - CFF TopDict `FullName` / `FamilyName` / `Notice`: mirror nameID 4 / 1 / 0 so PDF embedders and Adobe tools see the derivative's name, not the base font's, when reading CFF directly.
 - OS/2 `achVendID`: user-specified 4-char tag (right-padded with spaces); defaults to `"    "` (unknown vendor) when empty
@@ -180,7 +180,7 @@ State persisted to localStorage:
 - latinFont, baseFont
 - sampleText
 - outputFamilyName, outputPostScriptName, outputVersion, outputWeight, outputItalic, outputWidth
-- outputDesigner, outputDesignerURL, outputManufacturer, outputManufacturerURL, outputVendorID, outputCopyright, outputTrademark, outputUpm
+- outputManufacturer, outputManufacturerURL, outputVendorID, outputCopyright, outputTrademark, outputUpm
 
 ## IPC Channels
 

@@ -151,10 +151,10 @@ hhea ascent/descent/lineGap、post underline、head bbox）と JP GPOS ルック
 - nameID 5 (Version String): `outputVersion`（デフォルト `1.000`）を使用。Python 側で `Version ` 接頭辞が無ければ自動で付与する。派生フォントがベースフォントのバージョンを引き継がないよう、フォントを読み込むたびにデフォルトへリセットされる。
 - nameID 6 (PostScript Name): `outputPostScriptName` が設定されていればそれを使用、未設定なら `outputFamilyName` から printable ASCII 33-126 外 + `[]{}<>()/%` を除去したものを 63 バイトで打ち切って使用
 - nameID 8 (Manufacturer): ユーザー設定値、空の場合はクリア
-- nameID 9 (Designer): ユーザー設定値、空の場合はクリア
+- nameID 9 (Designer): 常にクリア。元書体のデザイナーは nameID 10 の "by <source designer>" で明記する
 - nameID 10 (Description): "Based on {fonts}. Merged/Baked with OFL Font Baker."
 - nameID 11 (Manufacturer URL): ユーザー設定値、空の場合はクリア
-- nameID 12 (Designer URL): ユーザー設定値、空の場合はクリア
+- nameID 12 (Designer URL): 常にクリア
 - nameID 13/14 (License): OFL 1.1 テキスト + URL
 - CFF TopDict `FullName` / `FamilyName` / `Notice`: nameID 4 / 1 / 0 と同じ値をセット。PDF 埋め込みや Adobe 系ツールが CFF を直接読む際にベースフォント名が残らないようにする。
 - OS/2 `achVendID`: ユーザー設定の 4 文字タグ（短い場合は空白で右詰め）、空の場合は `"    "`（ベンダー不明）をセット
@@ -179,7 +179,7 @@ localStorage に永続化される状態:
 - latinFont, baseFont
 - sampleText
 - outputFamilyName, outputPostScriptName, outputVersion, outputWeight, outputItalic, outputWidth
-- outputDesigner, outputDesignerURL, outputManufacturer, outputManufacturerURL, outputVendorID, outputCopyright, outputTrademark, outputUpm
+- outputManufacturer, outputManufacturerURL, outputVendorID, outputCopyright, outputTrademark, outputUpm
 
 ## IPC チャンネル
 

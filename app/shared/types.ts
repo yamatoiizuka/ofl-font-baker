@@ -50,9 +50,6 @@ export interface MergeOutput {
   weight: number;
   italic: boolean;
   width: number;
-  designer: string;
-  /** Designer URL (nameID 12). Empty clears the record. */
-  designerURL: string;
   /** Manufacturer name (nameID 8). Empty clears the record. */
   manufacturer: string;
   /** Manufacturer URL (nameID 11). Empty clears the record. */

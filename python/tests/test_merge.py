@@ -593,20 +593,16 @@ class TestOutputWeight:
 # Metadata (name table) correctness
 # ---------------------------------------------------------------------------
 
-def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyright="",
+def _merge_with_meta(output_family="TestMeta", output_copyright="",
                      output_ps_name=None, output_version=None, app_version=None,
-                     output_designer_url=None, output_manufacturer=None,
-                     output_manufacturer_url=None, output_vendor_id=None,
-                     output_trademark=None):
+                     output_manufacturer=None, output_manufacturer_url=None,
+                     output_vendor_id=None, output_trademark=None):
     """Run merge with metadata options and return TTFont + cleanup paths."""
     out = tempfile.mktemp(suffix=".ttf")
     output = {
         "familyName": output_family,
-        "designer": output_designer,
         "copyright": output_copyright,
     }
-    if output_designer_url is not None:
-        output["designerURL"] = output_designer_url
     if output_manufacturer is not None:
         output["manufacturer"] = output_manufacturer
     if output_manufacturer_url is not None:
@@ -866,27 +862,17 @@ class TestMetadataCorrectness:
         cr = m["name"].getDebugName(0)
         assert cr is not None and len(cr) > 0
 
-    def test_designer_set_when_provided(self):
-        """outputDesigner is written to nameID 9."""
-        m = _merge_with_meta(output_designer="John Doe")
-        assert m["name"].getDebugName(9) == "John Doe"
-
-    def test_designer_empty_clears(self):
-        """Empty outputDesigner clears nameID 9."""
-        m = _merge_with_meta(output_designer="")
+    def test_designer_always_cleared(self):
+        """nameID 9 is always cleared — Designer belongs to the source authors."""
+        m = _merge_with_meta()
         d = m["name"].getDebugName(9)
-        assert d is None or d == "", f"Expected empty designer, got '{d}'"
+        assert d is None or d == "", f"Expected cleared designer, got '{d}'"
 
-    def test_designer_url_set_when_provided(self):
-        """outputDesignerURL is written to nameID 12."""
-        m = _merge_with_meta(output_designer_url="https://example.com")
-        assert m["name"].getDebugName(12) == "https://example.com"
-
-    def test_designer_url_empty_clears(self):
-        """Missing/empty outputDesignerURL clears nameID 12."""
-        m = _merge_with_meta(output_designer_url="")
+    def test_designer_url_always_cleared(self):
+        """nameID 12 is always cleared — Designer URL is not set on the derivative."""
+        m = _merge_with_meta()
         url = m["name"].getDebugName(12)
-        assert url is None or url == "", f"Expected empty designer URL, got '{url}'"
+        assert url is None or url == "", f"Expected cleared designer URL, got '{url}'"
 
     def test_manufacturer_set_when_provided(self):
         """outputManufacturer is written to nameID 8."""
@@ -999,7 +985,7 @@ class TestMetadataCorrectness:
 class TestMetadataBaseOnly:
     """Metadata for base-font-only merge (no Latin font)."""
 
-    def _merge_base_only_meta(self, output_designer="", output_copyright=""):
+    def _merge_base_only_meta(self, output_copyright=""):
         out = tempfile.mktemp(suffix=".ttf")
         config = {
             "baseFont": {
@@ -1010,7 +996,6 @@ class TestMetadataBaseOnly:
             },
             "output": {
                 "familyName": "BaseOnlyMeta",
-                "designer": output_designer,
                 "copyright": output_copyright,
             },
             "export": {"path": {"font": out}},
@@ -1036,9 +1021,11 @@ class TestMetadataBaseOnly:
         cr = m["name"].getDebugName(0)
         assert cr is not None and len(cr) > 0
 
-    def test_designer_set(self):
-        m = self._merge_base_only_meta(output_designer="Jane Smith")
-        assert m["name"].getDebugName(9) == "Jane Smith"
+    def test_designer_cleared(self):
+        """Base-only merges also clear nameID 9 — Designer is never set on the output."""
+        m = self._merge_base_only_meta()
+        d = m["name"].getDebugName(9)
+        assert d is None or d == "", f"Expected cleared designer, got '{d}'"
 
     def test_description_baked_not_merged(self):
         """Base-only uses 'Baked with', not 'Merged with'."""

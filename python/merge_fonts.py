@@ -408,8 +408,8 @@ def build_export_config(config: dict, path_map: dict = None) -> dict:
 
     output = config.get("output") or {}
     for field in ("familyName", "postScriptName", "version", "weight", "italic",
-                  "width", "designer", "designerURL", "manufacturer",
-                  "manufacturerURL", "vendorID", "copyright", "trademark", "upm"):
+                  "width", "manufacturer", "manufacturerURL", "vendorID",
+                  "copyright", "trademark", "upm"):
         val = output.get(field)
         if val is not None:
             result.setdefault("output", {})[field] = val
@@ -1838,8 +1838,6 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
     output = config.get("output") or {}
     user_copyright = output.get("copyright", "").strip()
     user_trademark = output.get("trademark", "").strip()
-    user_designer = output.get("designer", "").strip()
-    user_designer_url = output.get("designerURL", "").strip()
     user_manufacturer = output.get("manufacturer", "").strip()
     user_manufacturer_url = output.get("manufacturerURL", "").strip()
 
@@ -1890,14 +1888,14 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
         desc = f"Based on {' and '.join(desc_parts)}{suffix}"
         _set_name(name_table, 10, desc)
 
-    # --- Designer (nameID 9) ---
-    # Set to user value, or clear (original designer doesn't apply to derivative)
-    _set_name(name_table, 9, user_designer if user_designer else "")
-
-    # --- Designer URL (nameID 12) ---
-    # Same policy as Designer: user-supplied value, or clear so the
-    # derivative doesn't inherit the source vendor's URL.
-    _set_name(name_table, 12, user_designer_url if user_designer_url else "")
+    # --- Designer (nameID 9) / Designer URL (nameID 12) ---
+    # Always cleared. The merge operator is represented via Manufacturer
+    # (nameID 8 / 11), not Designer, because "designer" rightfully
+    # belongs to the type designers of the source fonts — which are
+    # acknowledged in the Description (nameID 10) via the "by <source
+    # designer>" clause.
+    _set_name(name_table, 9, "")
+    _set_name(name_table, 12, "")
 
     # --- Manufacturer (nameID 8) and Manufacturer URL (nameID 11) ---
     # Same policy: user-supplied values overwrite, empty clears the

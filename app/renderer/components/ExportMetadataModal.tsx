@@ -82,8 +82,6 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
     fontWeight,
     fontItalic,
     fontWidth,
-    designer,
-    designerURL,
     manufacturer,
     manufacturerURL,
     vendorID,
@@ -97,8 +95,6 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
     setFontWeight,
     setFontItalic,
     setFontWidth,
-    setDesigner,
-    setDesignerURL,
     setManufacturer,
     setManufacturerURL,
     setVendorID,
@@ -310,39 +306,11 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
             </div>
 
             {/* ===== Author ===== */}
+            {/* Designer / Designer URL are intentionally omitted — the
+                merge operator attributes themselves through Manufacturer.
+                Designer stays with the original type designers and is
+                surfaced via the source credit in nameID 10. */}
             <SectionHeader>Author</SectionHeader>
-
-            <FieldRow label="Designer">
-              <input
-                type="text"
-                value={designer}
-                onChange={(e) => setDesigner(e.target.value)}
-                onBlur={() => useMergeStore.getState().pushHistory()}
-                disabled={isMerging}
-                placeholder="Designer name (optional)"
-                className={cn(
-                  inputClass,
-                  'placeholder:text-foreground/30',
-                  isMerging && 'opacity-50 cursor-not-allowed',
-                )}
-              />
-            </FieldRow>
-
-            <FieldRow label="Designer URL">
-              <input
-                type="text"
-                value={designerURL}
-                onChange={(e) => setDesignerURL(e.target.value)}
-                onBlur={() => useMergeStore.getState().pushHistory()}
-                disabled={isMerging}
-                placeholder="https://example.com (optional)"
-                className={cn(
-                  inputClass,
-                  'placeholder:text-foreground/30',
-                  isMerging && 'opacity-50 cursor-not-allowed',
-                )}
-              />
-            </FieldRow>
 
             <FieldRow label="Manufacturer">
               <input
