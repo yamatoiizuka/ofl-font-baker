@@ -317,7 +317,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
                 onChange={(e) => setDesigner(e.target.value)}
                 onBlur={() => useMergeStore.getState().pushHistory()}
                 disabled={isMerging}
-                placeholder="Your name (optional)"
+                placeholder="Designer name (optional)"
                 className={cn(
                   inputClass,
                   'placeholder:text-foreground/30',
