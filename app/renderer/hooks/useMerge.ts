@@ -35,8 +35,9 @@ export function useMerge() {
   /**
    * Initiates the font merge process by reading current store state, prompting for an output path,
    * and sending the merge configuration to the main process via IPC.
+   * @returns The absolute path of the exported font on success, otherwise null.
    */
-  async function startMerge() {
+  async function startMerge(): Promise<string | null> {
     const {
       latinFont, baseFont, familyName,
       fontWeight, fontItalic, fontWidth,
@@ -45,13 +46,13 @@ export function useMerge() {
 
     if (!baseFont) {
       window.electronAPI.showAlert?.('No base font', 'Please load a base font first.');
-      return;
+      return null;
     }
 
     const fileStyle = computeFileStyleName(fontWeight, fontItalic, fontWidth);
     const defaultFolderName = `${familyName.replace(/\s+/g, '')}-${fileStyle}`;
     const chosenPath = await window.electronAPI.pickOutput(defaultFolderName);
-    if (!chosenPath) return;
+    if (!chosenPath) return null;
 
     // Show the spinner immediately. The first "real" progress event only
     // arrives after the PyInstaller binary cold-starts and fontTools imports,
@@ -85,8 +86,9 @@ export function useMerge() {
         setMergeProgress({ stage: 'error', percent: 0, message: result.error });
       }
       setIsMerging(false);
-      return;
+      return null;
     }
+    return result.path ?? null;
   }
 
   return { startMerge, isMerging };

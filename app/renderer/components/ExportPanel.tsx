@@ -7,6 +7,7 @@ import { useMergeStore } from '@/renderer/stores/mergeStore';
 import { useMerge } from '@/renderer/hooks/useMerge';
 import { Button } from '@/renderer/components/ui/button';
 import { ExportMetadataModal } from '@/renderer/components/ExportMetadataModal';
+import { ExportCompleteModal } from '@/renderer/components/ExportCompleteModal';
 import { cn } from '@/renderer/lib/utils';
 import { WEIGHT_MAP, DONE_DISPLAY_MS, ERROR_DISPLAY_MS } from '@/shared/constants';
 
@@ -29,6 +30,15 @@ export const ExportPanel: React.FC = () => {
   const { startMerge, isMerging } = useMerge();
   const [isHoveringStop, setIsHoveringStop] = useState(false);
   const [metadataOpen, setMetadataOpen] = useState(false);
+  const [completeOpen, setCompleteOpen] = useState(false);
+
+  /**
+   * Kicks off the merge and opens the completion modal when it succeeds.
+   */
+  async function handleExport() {
+    const exportedPath = await startMerge();
+    if (exportedPath) setCompleteOpen(true);
+  }
 
   const hasValidName = familyName.trim().length > 0;
   const canMerge = baseFont && !isMerging && hasValidName;
@@ -178,7 +188,7 @@ export const ExportPanel: React.FC = () => {
           </Button>
         ) : (
           <Button
-            onClick={startMerge}
+            onClick={handleExport}
             disabled={!canMerge}
             size="lg"
             className="rounded-md w-[100px] @[36rem]:w-[130px] h-[38px] shrink-0 text-base"
@@ -188,6 +198,7 @@ export const ExportPanel: React.FC = () => {
         )}
 
         <ExportMetadataModal open={metadataOpen} onOpenChange={setMetadataOpen} />
+        <ExportCompleteModal open={completeOpen} onOpenChange={setCompleteOpen} />
       </div>
     </div>
   );
