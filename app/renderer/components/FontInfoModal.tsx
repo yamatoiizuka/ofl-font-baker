@@ -78,7 +78,7 @@ function extractMeta(font: any, source: FontSource): FontMeta {
 
   return {
     familyName: getStr(names.fontFamily) || source.familyName,
-    styleName: source.isVariable ? 'Variable' : (getStr(names.fontSubfamily) || source.styleName),
+    styleName: source.isVariable ? 'Variable' : getStr(names.fontSubfamily) || source.styleName,
     version: getStr(names.version),
     copyright: getStr(names.copyright),
     trademark: getStr(names.trademark),
@@ -165,11 +165,11 @@ export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => 
     styleName: font.styleName,
     version: font.version || '',
     copyright: font.copyright || '',
-    trademark: '',
+    trademark: font.trademark || '',
     designer: font.designer || '',
-    designerURL: '',
-    manufacturer: '',
-    manufacturerURL: '',
+    designerURL: font.designerURL || '',
+    manufacturer: font.manufacturer || '',
+    manufacturerURL: font.manufacturerURL || '',
     license: font.license || '',
     licenseURL: font.licenseURL || '',
     description: font.description || '',
@@ -215,7 +215,7 @@ export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => 
                 <InfoRow label="Designer" value={meta.designer} />
                 <InfoRow label="Designer URL" value={urlValue(meta.designerURL)} />
                 <InfoRow label="Manufacturer" value={meta.manufacturer} />
-                <InfoRow label="Mfr. URL" value={urlValue(meta.manufacturerURL)} />
+                <InfoRow label="Manufacturer URL" value={urlValue(meta.manufacturerURL)} />
               </Section>
             )}
 

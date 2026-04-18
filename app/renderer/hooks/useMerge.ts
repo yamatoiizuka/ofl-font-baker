@@ -40,7 +40,8 @@ export function useMerge() {
     const {
       latinFont, baseFont, familyName, postScriptName, version,
       fontWeight, fontItalic, fontWidth,
-      designer, copyright, upm,
+      designer, designerURL, manufacturer, manufacturerURL,
+      copyright, upm,
     } = useMergeStore.getState();
 
     if (!baseFont) {
@@ -70,6 +71,9 @@ export function useMerge() {
         italic: fontItalic,
         width: fontWidth,
         designer,
+        designerURL,
+        manufacturer,
+        manufacturerURL,
         copyright,
         upm,
       },

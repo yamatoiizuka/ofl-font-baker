@@ -28,6 +28,9 @@ interface UndoableState {
   fontItalic: boolean;
   fontWidth: number;
   designer: string;
+  designerURL: string;
+  manufacturer: string;
+  manufacturerURL: string;
   copyright: string;
   upm: number;
 }
@@ -51,6 +54,9 @@ const INITIAL_UNDOABLE: UndoableState = {
   fontItalic: false,
   fontWidth: 5,
   designer: '',
+  designerURL: '',
+  manufacturer: '',
+  manufacturerURL: '',
   copyright: '',
   upm: 1000,
 };
@@ -90,6 +96,9 @@ interface MergeState extends UndoableState {
   setFontItalic: (italic: boolean) => void;
   setFontWidth: (width: number) => void;
   setDesigner: (designer: string) => void;
+  setDesignerURL: (url: string) => void;
+  setManufacturer: (manufacturer: string) => void;
+  setManufacturerURL: (url: string) => void;
   setCopyright: (copyright: string) => void;
   setUpm: (upm: number) => void;
   setMergeProgress: (progress: MergeProgress | null) => void;
@@ -121,6 +130,9 @@ function extractUndoable(state: MergeState): UndoableState {
     fontItalic: state.fontItalic,
     fontWidth: state.fontWidth,
     designer: state.designer,
+    designerURL: state.designerURL,
+    manufacturer: state.manufacturer,
+    manufacturerURL: state.manufacturerURL,
     copyright: state.copyright,
     upm: state.upm,
   };
@@ -243,6 +255,9 @@ export const useMergeStore = create<MergeState>()(
         get().pushHistory();
       },
       setDesigner: (designer) => set({ designer: designer }),
+      setDesignerURL: (url) => set({ designerURL: url }),
+      setManufacturer: (manufacturer) => set({ manufacturer }),
+      setManufacturerURL: (url) => set({ manufacturerURL: url }),
       setCopyright: (copyright) => set({ copyright: copyright }),
       setUpm: (upm) => set({ upm: upm }),
       setMergeProgress: (progress) => set({ mergeProgress: progress }),
@@ -309,6 +324,9 @@ export const useMergeStore = create<MergeState>()(
         fontItalic: state.fontItalic,
         fontWidth: state.fontWidth,
         designer: state.designer,
+        designerURL: state.designerURL,
+        manufacturer: state.manufacturer,
+        manufacturerURL: state.manufacturerURL,
         copyright: state.copyright,
         upm: state.upm,
       }),

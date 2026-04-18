@@ -594,7 +594,9 @@ class TestOutputWeight:
 # ---------------------------------------------------------------------------
 
 def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyright="",
-                     output_ps_name=None, output_version=None, app_version=None):
+                     output_ps_name=None, output_version=None, app_version=None,
+                     output_designer_url=None, output_manufacturer=None,
+                     output_manufacturer_url=None):
     """Run merge with metadata options and return TTFont + cleanup paths."""
     out = tempfile.mktemp(suffix=".ttf")
     output = {
@@ -602,6 +604,12 @@ def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyri
         "designer": output_designer,
         "copyright": output_copyright,
     }
+    if output_designer_url is not None:
+        output["designerURL"] = output_designer_url
+    if output_manufacturer is not None:
+        output["manufacturer"] = output_manufacturer
+    if output_manufacturer_url is not None:
+        output["manufacturerURL"] = output_manufacturer_url
     if output_ps_name is not None:
         output["postScriptName"] = output_ps_name
     if output_version is not None:
@@ -829,6 +837,39 @@ class TestMetadataCorrectness:
         m = _merge_with_meta(output_designer="")
         d = m["name"].getDebugName(9)
         assert d is None or d == "", f"Expected empty designer, got '{d}'"
+
+    def test_designer_url_set_when_provided(self):
+        """outputDesignerURL is written to nameID 12."""
+        m = _merge_with_meta(output_designer_url="https://example.com")
+        assert m["name"].getDebugName(12) == "https://example.com"
+
+    def test_designer_url_empty_clears(self):
+        """Missing/empty outputDesignerURL clears nameID 12."""
+        m = _merge_with_meta(output_designer_url="")
+        url = m["name"].getDebugName(12)
+        assert url is None or url == "", f"Expected empty designer URL, got '{url}'"
+
+    def test_manufacturer_set_when_provided(self):
+        """outputManufacturer is written to nameID 8."""
+        m = _merge_with_meta(output_manufacturer="Acme Foundry")
+        assert m["name"].getDebugName(8) == "Acme Foundry"
+
+    def test_manufacturer_empty_clears(self):
+        """Missing outputManufacturer clears nameID 8."""
+        m = _merge_with_meta(output_manufacturer="")
+        v = m["name"].getDebugName(8)
+        assert v is None or v == "", f"Expected empty manufacturer, got '{v}'"
+
+    def test_manufacturer_url_set_when_provided(self):
+        """outputManufacturerURL is written to nameID 11."""
+        m = _merge_with_meta(output_manufacturer_url="https://acme.example")
+        assert m["name"].getDebugName(11) == "https://acme.example"
+
+    def test_manufacturer_url_empty_clears(self):
+        """Missing outputManufacturerURL clears nameID 11."""
+        m = _merge_with_meta(output_manufacturer_url="")
+        url = m["name"].getDebugName(11)
+        assert url is None or url == "", f"Expected empty manufacturer URL, got '{url}'"
 
     def test_description_mentions_sources(self):
         """nameID 10 mentions source font names."""

@@ -12,6 +12,7 @@ interface Props {
 
 interface SourceMeta {
   copyright: string;
+  trademark: string;
   designer: string;
   familyName: string;
 }
@@ -81,6 +82,9 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
     fontItalic,
     fontWidth,
     designer,
+    designerURL,
+    manufacturer,
+    manufacturerURL,
     copyright,
     upm,
     isMerging,
@@ -91,6 +95,9 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
     setFontItalic,
     setFontWidth,
     setDesigner,
+    setDesignerURL,
+    setManufacturer,
+    setManufacturerURL,
     setCopyright,
     setUpm,
   } = useMergeStore();
@@ -112,6 +119,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
   const jpMeta: SourceMeta | null = baseFont
     ? {
         copyright: baseFont.copyright || '',
+        trademark: baseFont.trademark || '',
         designer: baseFont.designer || '',
         familyName: baseFont.familyName,
       }
@@ -119,6 +127,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
   const latMeta: SourceMeta | null = latinFont
     ? {
         copyright: latinFont.copyright || '',
+        trademark: latinFont.trademark || '',
         designer: latinFont.designer || '',
         familyName: latinFont.familyName,
       }
@@ -134,6 +143,12 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
   if (jpMeta?.copyright) sourceCopyrights.push(jpMeta.copyright);
   if (latMeta?.copyright && latMeta.copyright !== jpMeta?.copyright)
     sourceCopyrights.push(latMeta.copyright);
+
+  // Source trademarks (read-only, preserved as acknowledgment per OFL 1.1 §4)
+  const sourceTrademarks: string[] = [];
+  if (jpMeta?.trademark) sourceTrademarks.push(jpMeta.trademark);
+  if (latMeta?.trademark && latMeta.trademark !== jpMeta?.trademark)
+    sourceTrademarks.push(latMeta.trademark);
 
   // Description with designer credit
   const descParts: string[] = [];
@@ -303,6 +318,55 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
                 )}
               />
             </FieldRow>
+
+            <FieldRow label="Designer URL">
+              <input
+                type="text"
+                value={designerURL}
+                onChange={(e) => setDesignerURL(e.target.value)}
+                onBlur={() => useMergeStore.getState().pushHistory()}
+                disabled={isMerging}
+                placeholder="https://example.com (optional)"
+                className={cn(
+                  inputClass,
+                  'placeholder:text-foreground/30',
+                  isMerging && 'opacity-50 cursor-not-allowed',
+                )}
+              />
+            </FieldRow>
+
+            <FieldRow label="Manufacturer">
+              <input
+                type="text"
+                value={manufacturer}
+                onChange={(e) => setManufacturer(e.target.value)}
+                onBlur={() => useMergeStore.getState().pushHistory()}
+                disabled={isMerging}
+                placeholder="Organization (optional)"
+                className={cn(
+                  inputClass,
+                  'placeholder:text-foreground/30',
+                  isMerging && 'opacity-50 cursor-not-allowed',
+                )}
+              />
+            </FieldRow>
+
+            <FieldRow label="Manufacturer URL">
+              <input
+                type="text"
+                value={manufacturerURL}
+                onChange={(e) => setManufacturerURL(e.target.value)}
+                onBlur={() => useMergeStore.getState().pushHistory()}
+                disabled={isMerging}
+                placeholder="https://example.com (optional)"
+                className={cn(
+                  inputClass,
+                  'placeholder:text-foreground/30',
+                  isMerging && 'opacity-50 cursor-not-allowed',
+                )}
+              />
+            </FieldRow>
+
             <div className="pb-2" />
 
             {/* ===== Info ===== */}
@@ -350,6 +414,15 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
               />
             </FieldRow>
             <div className="h-[10px]" />
+
+            {sourceTrademarks.length > 0 && (
+              <InfoRow
+                label="Trademark"
+                value={
+                  <div className="whitespace-pre-line">{sourceTrademarks.join('\n')}</div>
+                }
+              />
+            )}
 
             <InfoRow
               label="License"

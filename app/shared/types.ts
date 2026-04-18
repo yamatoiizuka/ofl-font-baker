@@ -28,7 +28,11 @@ export interface FontSource {
   axes: VariableAxis[]; // Empty array if static font
   // Cached metadata (loaded once, avoids re-parsing)
   copyright?: string;
+  trademark?: string;
   designer?: string;
+  designerURL?: string;
+  manufacturer?: string;
+  manufacturerURL?: string;
   license?: string;
   licenseURL?: string;
   description?: string;
@@ -45,6 +49,12 @@ export interface MergeOutput {
   italic: boolean;
   width: number;
   designer: string;
+  /** Designer URL (nameID 12). Empty clears the record. */
+  designerURL: string;
+  /** Manufacturer name (nameID 8). Empty clears the record. */
+  manufacturer: string;
+  /** Manufacturer URL (nameID 11). Empty clears the record. */
+  manufacturerURL: string;
   copyright: string;
   upm: number;
 }
