@@ -29,6 +29,7 @@ import shutil
 import struct
 import sys
 
+from fontTools.misc.timeTools import timestampNow
 from fontTools.ttLib import TTFont
 from fontTools.pens.pointPen import SegmentToPointPen
 from fontTools.pens.recordingPen import RecordingPen
@@ -1979,13 +1980,22 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
         # font's tag would misattribute the derivative.
         os2.achVendID = "    "
 
-    # Set italic flags
+    # Set italic flags + refresh timestamps so the derivative reports its
+    # own creation/modification time rather than inheriting the base font's.
     head = merged.get("head")
     if head:
         if output_italic:
             head.macStyle |= 0x0002   # bit 1 = italic
         else:
             head.macStyle &= ~0x0002
+        now = timestampNow()
+        head.created = now
+        head.modified = now
+        # fontTools rewrites head.modified to "now" during save() when
+        # recalcTimestamp is true (the default), which would make created
+        # and modified disagree by a few seconds. Pin both to the same
+        # instant so inspectors report a consistent timestamp pair.
+        merged.recalcTimestamp = False
     if os2:
         if output_italic:
             os2.fsSelection |= 0x0001   # bit 0 = italic

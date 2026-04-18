@@ -888,6 +888,20 @@ class TestMetadataCorrectness:
         m = _merge_with_meta()
         assert m["name"].getDebugName(25) is None
 
+    def test_head_created_is_fresh(self):
+        """head.created is refreshed at merge time, not inherited from the base."""
+        from fontTools.misc.timeTools import timestampNow
+        before = timestampNow()
+        m = _merge_with_meta()
+        after = timestampNow()
+        assert before <= m["head"].created <= after + 60
+        assert before <= m["head"].modified <= after + 60
+
+    def test_head_created_and_modified_match(self):
+        """head.created and head.modified are pinned to the same instant."""
+        m = _merge_with_meta()
+        assert m["head"].created == m["head"].modified
+
     def test_trademark_includes_user_addition(self):
         """outputTrademark is appended to nameID 7."""
         m = _merge_with_meta(output_trademark="Acme is a trademark of Acme Foundry")
