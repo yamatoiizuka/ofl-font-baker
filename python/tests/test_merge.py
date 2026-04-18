@@ -962,6 +962,11 @@ class TestMetadataCorrectness:
         assert desc is not None
         assert "Based on" in desc
 
+    def test_variations_ps_name_prefix_removed(self):
+        """nameID 25 is dropped from the output (no variable instances)."""
+        m = _merge_with_meta()
+        assert m["name"].getDebugName(25) is None
+
     def test_description_mentions_merged(self):
         """Two-font merge includes 'Merged with' in nameID 10."""
         m = _merge_with_meta()

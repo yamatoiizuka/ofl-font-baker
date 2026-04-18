@@ -2042,6 +2042,14 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     # --- OFL metadata: copyright, license, description ---
     _set_ofl_metadata(lat_font, jp_font, merged, config)
 
+    # --- Drop Variations PostScript Name Prefix (nameID 25) ---
+    # nameID 25 is the prefix used to build PostScript names for a
+    # variable font's named instances. Because the output is always a
+    # static instance (we bake axis values), this record has no purpose
+    # and inheriting it from the variable base font would leak the
+    # source family name into inspectors.
+    name_table.removeNames(nameID=25)
+
     # --- CFF TopDict metadata (OTF only) ---
     # CFF fonts carry a second copy of FullName / FamilyName / Copyright
     # inside the CFF table's TopDict. PDF embedders and Adobe tools read
