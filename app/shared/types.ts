@@ -60,6 +60,8 @@ export interface MergeOutput {
   /** OS/2 achVendID (4 chars). Empty resolves to 4 spaces on the Python side. */
   vendorID: string;
   copyright: string;
+  /** Extra trademark text appended after source trademarks (nameID 7). */
+  trademark: string;
   upm: number;
 }
 

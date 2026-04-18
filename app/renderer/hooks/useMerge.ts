@@ -41,7 +41,7 @@ export function useMerge() {
       latinFont, baseFont, familyName, postScriptName, version,
       fontWeight, fontItalic, fontWidth,
       designer, designerURL, manufacturer, manufacturerURL, vendorID,
-      copyright, upm,
+      copyright, trademark, upm,
     } = useMergeStore.getState();
 
     if (!baseFont) {
@@ -76,6 +76,7 @@ export function useMerge() {
         manufacturerURL,
         vendorID,
         copyright,
+        trademark,
         upm,
       },
       export: {

@@ -409,7 +409,7 @@ def build_export_config(config: dict, path_map: dict = None) -> dict:
     output = config.get("output") or {}
     for field in ("familyName", "postScriptName", "version", "weight", "italic",
                   "width", "designer", "designerURL", "manufacturer",
-                  "manufacturerURL", "vendorID", "copyright", "upm"):
+                  "manufacturerURL", "vendorID", "copyright", "trademark", "upm"):
         val = output.get(field)
         if val is not None:
             result.setdefault("output", {})[field] = val
@@ -1837,6 +1837,7 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
     name_table = merged["name"]
     output = config.get("output") or {}
     user_copyright = output.get("copyright", "").strip()
+    user_trademark = output.get("trademark", "").strip()
     user_designer = output.get("designer", "").strip()
     user_designer_url = output.get("designerURL", "").strip()
     user_manufacturer = output.get("manufacturer", "").strip()
@@ -1855,6 +1856,22 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
     combined_copyright = "\n".join(copyrights) if copyrights else ""
     if combined_copyright:
         _set_name(name_table, 0, combined_copyright)
+
+    # --- Trademark (nameID 7): combine both sources + user's addition ---
+    # Preserved as acknowledgment per OFL 1.1 §4 (trademark text is
+    # factual attribution, not promotional use of the author's name).
+    trademarks: list[str] = []
+    for font in (jp_font, lat_font):
+        if font is None:
+            continue
+        t = _get_name(font, 7)
+        if t and t not in trademarks:
+            trademarks.append(t)
+    if user_trademark and user_trademark not in trademarks:
+        trademarks.append(user_trademark)
+    combined_trademark = "\n".join(trademarks) if trademarks else ""
+    if combined_trademark:
+        _set_name(name_table, 7, combined_trademark)
 
     # --- Description (nameID 10): attribution with designer credit ---
     desc_parts: list[str] = []

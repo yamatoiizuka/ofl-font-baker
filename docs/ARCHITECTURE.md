@@ -147,6 +147,7 @@ values, so the Latin envelope is taken in output UPM units.
 ### OFL Metadata
 
 - nameID 0 (Copyright): concatenate both sources' copyright + user addition
+- nameID 7 (Trademark): concatenate both sources' trademark + user addition; record is cleared only when all three are empty
 - nameID 3 (Unique Font Identifier): auto-built as `{version};{vendorID};{PostScript full name}`; vendorID is omitted when blank. Ensures OS font caches treat distinct versions/styles as separate entries so derivatives don't collide with their base font.
 - nameID 5 (Version String): from `outputVersion` (default `1.000`); Python prepends `Version ` if not already present. Resets to the default whenever a font is loaded, so derivative fonts don't inherit the base font's version.
 - nameID 6 (PostScript Name): from `outputPostScriptName` if set; otherwise derived from `outputFamilyName` by stripping characters outside printable ASCII 33-126 or in `[]{}<>()/%`, clamped to 63 bytes
@@ -179,7 +180,7 @@ State persisted to localStorage:
 - latinFont, baseFont
 - sampleText
 - outputFamilyName, outputPostScriptName, outputVersion, outputWeight, outputItalic, outputWidth
-- outputDesigner, outputDesignerURL, outputManufacturer, outputManufacturerURL, outputVendorID, outputCopyright, outputUpm
+- outputDesigner, outputDesignerURL, outputManufacturer, outputManufacturerURL, outputVendorID, outputCopyright, outputTrademark, outputUpm
 
 ## IPC Channels
 

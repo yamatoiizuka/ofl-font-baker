@@ -146,6 +146,7 @@ hhea ascent/descent/lineGap、post underline、head bbox）と JP GPOS ルック
 ### OFL メタデータ
 
 - nameID 0 (Copyright): 両ソースの copyright を結合 + ユーザー追加
+- nameID 7 (Trademark): 両ソースの trademark を結合 + ユーザー追加。3 つとも空のときだけレコードを残さない
 - nameID 3 (Unique Font Identifier): `{version};{vendorID};{PostScript フルネーム}` を自動生成（vendorID が空なら該当セグメントを省略）。派生フォントがベースフォントと同じ UniqueID を持たないようにして、OS のフォントキャッシュが別物として扱えるようにする。
 - nameID 5 (Version String): `outputVersion`（デフォルト `1.000`）を使用。Python 側で `Version ` 接頭辞が無ければ自動で付与する。派生フォントがベースフォントのバージョンを引き継がないよう、フォントを読み込むたびにデフォルトへリセットされる。
 - nameID 6 (PostScript Name): `outputPostScriptName` が設定されていればそれを使用、未設定なら `outputFamilyName` から printable ASCII 33-126 外 + `[]{}<>()/%` を除去したものを 63 バイトで打ち切って使用
@@ -178,7 +179,7 @@ localStorage に永続化される状態:
 - latinFont, baseFont
 - sampleText
 - outputFamilyName, outputPostScriptName, outputVersion, outputWeight, outputItalic, outputWidth
-- outputDesigner, outputDesignerURL, outputManufacturer, outputManufacturerURL, outputVendorID, outputCopyright, outputUpm
+- outputDesigner, outputDesignerURL, outputManufacturer, outputManufacturerURL, outputVendorID, outputCopyright, outputTrademark, outputUpm
 
 ## IPC チャンネル
 

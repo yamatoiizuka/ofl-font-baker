@@ -88,6 +88,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
     manufacturerURL,
     vendorID,
     copyright,
+    trademark,
     upm,
     isMerging,
     setFamilyName,
@@ -102,6 +103,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
     setManufacturerURL,
     setVendorID,
     setCopyright,
+    setTrademark,
     setUpm,
   } = useMergeStore();
 
@@ -453,14 +455,27 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
             </FieldRow>
             <div className="h-[10px]" />
 
-            {sourceTrademarks.length > 0 && (
-              <InfoRow
-                label="Trademark"
-                value={
-                  <div className="whitespace-pre-line">{sourceTrademarks.join('\n')}</div>
-                }
+            <InfoRow
+              label="Trademark"
+              value={<div className="whitespace-pre-line">{sourceTrademarks.join('\n')}</div>}
+            />
+
+            <FieldRow label="">
+              <input
+                type="text"
+                value={trademark}
+                onChange={(e) => setTrademark(e.target.value)}
+                onBlur={() => useMergeStore.getState().pushHistory()}
+                disabled={isMerging}
+                placeholder="Additional trademark (optional)"
+                className={cn(
+                  inputClass,
+                  'placeholder:text-foreground/30',
+                  isMerging && 'opacity-50 cursor-not-allowed',
+                )}
               />
-            )}
+            </FieldRow>
+            <div className="h-[10px]" />
 
             <InfoRow
               label="License"
