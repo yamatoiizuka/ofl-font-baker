@@ -312,7 +312,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
                 onChange={(e) => setManufacturer(e.target.value)}
                 onBlur={() => useMergeStore.getState().pushHistory()}
                 disabled={isMerging}
-                placeholder="Organization (optional)"
+                placeholder="Your name or organization (optional)"
                 className={cn(
                   inputClass,
                   'placeholder:text-foreground/30',
