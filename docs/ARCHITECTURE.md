@@ -155,6 +155,7 @@ values, so the Latin envelope is taken in output UPM units.
 - nameID 11 (Manufacturer URL): user-specified value; cleared if empty
 - nameID 12 (Designer URL): user-specified value; cleared if empty
 - nameID 13/14 (License): OFL 1.1 text + URL
+- OS/2 `achVendID`: user-specified 4-char tag (right-padded with spaces); defaults to `"    "` (unknown vendor) when empty
 
 ## State Management (Zustand)
 
@@ -176,7 +177,7 @@ State persisted to localStorage:
 - latinFont, baseFont
 - sampleText
 - outputFamilyName, outputPostScriptName, outputVersion, outputWeight, outputItalic, outputWidth
-- outputDesigner, outputDesignerURL, outputManufacturer, outputManufacturerURL, outputCopyright, outputUpm
+- outputDesigner, outputDesignerURL, outputManufacturer, outputManufacturerURL, outputVendorID, outputCopyright, outputUpm
 
 ## IPC Channels
 

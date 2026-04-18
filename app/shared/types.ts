@@ -37,6 +37,8 @@ export interface FontSource {
   licenseURL?: string;
   description?: string;
   version?: string;
+  /** OS/2 achVendID — 4-char type-foundry identifier. */
+  vendorID?: string;
 }
 
 export interface MergeOutput {
@@ -55,6 +57,8 @@ export interface MergeOutput {
   manufacturer: string;
   /** Manufacturer URL (nameID 11). Empty clears the record. */
   manufacturerURL: string;
+  /** OS/2 achVendID (4 chars). Empty resolves to 4 spaces on the Python side. */
+  vendorID: string;
   copyright: string;
   upm: number;
 }

@@ -123,6 +123,28 @@ def validate_postscript_name(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# OS/2 achVendID (Vendor ID) sanitization
+# ---------------------------------------------------------------------------
+
+_VENDOR_ID_MAX = 4
+
+
+def sanitize_vendor_id(raw: str) -> str:
+    """Strip disallowed characters, uppercase, and clamp to 4 chars.
+
+    Allowed: printable ASCII 33-126 minus the PostScript-name forbidden
+    set (`[]{}<>()/%`). Whitespace is dropped; the field is right-padded
+    with spaces at write time, not from user input.
+    """
+    cleaned = []
+    for c in raw:
+        cp = ord(c)
+        if 33 <= cp <= 126 and c not in _PS_NAME_FORBIDDEN:
+            cleaned.append(c.upper())
+    return "".join(cleaned)[:_VENDOR_ID_MAX]
+
+
+# ---------------------------------------------------------------------------
 # Export artifact generators
 # ---------------------------------------------------------------------------
 
@@ -387,7 +409,7 @@ def build_export_config(config: dict, path_map: dict = None) -> dict:
     output = config.get("output") or {}
     for field in ("familyName", "postScriptName", "version", "weight", "italic",
                   "width", "designer", "designerURL", "manufacturer",
-                  "manufacturerURL", "copyright", "upm"):
+                  "manufacturerURL", "vendorID", "copyright", "upm"):
         val = output.get(field)
         if val is not None:
             result.setdefault("output", {})[field] = val
@@ -1959,9 +1981,17 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
 
     # Set OS/2 usWeightClass and usWidthClass
     os2 = merged.get("OS/2")
+    # Sanitize the user's vendor ID: strip non-ASCII / forbidden characters,
+    # uppercase, and truncate to 4 chars. Empty results fall back to the
+    # "unknown vendor" placeholder ("    ") at write time below.
+    vendor_raw = sanitize_vendor_id(output.get("vendorID") or "")
     if os2:
         os2.usWeightClass = output_weight
         os2.usWidthClass = output_width
+        # achVendID is exactly 4 ASCII characters; right-pad with spaces
+        # when shorter, and default to "    " (unknown vendor) when not
+        # supplied so the derivative doesn't claim the base font's tag.
+        os2.achVendID = (vendor_raw + "    ")[:4]
 
     # Set italic flags
     head = merged.get("head")

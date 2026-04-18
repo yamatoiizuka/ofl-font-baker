@@ -31,6 +31,7 @@ interface UndoableState {
   designerURL: string;
   manufacturer: string;
   manufacturerURL: string;
+  vendorID: string;
   copyright: string;
   upm: number;
 }
@@ -57,6 +58,7 @@ const INITIAL_UNDOABLE: UndoableState = {
   designerURL: '',
   manufacturer: '',
   manufacturerURL: '',
+  vendorID: '',
   copyright: '',
   upm: 1000,
 };
@@ -99,6 +101,7 @@ interface MergeState extends UndoableState {
   setDesignerURL: (url: string) => void;
   setManufacturer: (manufacturer: string) => void;
   setManufacturerURL: (url: string) => void;
+  setVendorID: (vendorID: string) => void;
   setCopyright: (copyright: string) => void;
   setUpm: (upm: number) => void;
   setMergeProgress: (progress: MergeProgress | null) => void;
@@ -133,6 +136,7 @@ function extractUndoable(state: MergeState): UndoableState {
     designerURL: state.designerURL,
     manufacturer: state.manufacturer,
     manufacturerURL: state.manufacturerURL,
+    vendorID: state.vendorID,
     copyright: state.copyright,
     upm: state.upm,
   };
@@ -258,6 +262,7 @@ export const useMergeStore = create<MergeState>()(
       setDesignerURL: (url) => set({ designerURL: url }),
       setManufacturer: (manufacturer) => set({ manufacturer }),
       setManufacturerURL: (url) => set({ manufacturerURL: url }),
+      setVendorID: (vendorID) => set({ vendorID }),
       setCopyright: (copyright) => set({ copyright: copyright }),
       setUpm: (upm) => set({ upm: upm }),
       setMergeProgress: (progress) => set({ mergeProgress: progress }),
@@ -327,6 +332,7 @@ export const useMergeStore = create<MergeState>()(
         designerURL: state.designerURL,
         manufacturer: state.manufacturer,
         manufacturerURL: state.manufacturerURL,
+        vendorID: state.vendorID,
         copyright: state.copyright,
         upm: state.upm,
       }),

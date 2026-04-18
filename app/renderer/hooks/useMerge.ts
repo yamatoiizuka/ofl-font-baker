@@ -40,7 +40,7 @@ export function useMerge() {
     const {
       latinFont, baseFont, familyName, postScriptName, version,
       fontWeight, fontItalic, fontWidth,
-      designer, designerURL, manufacturer, manufacturerURL,
+      designer, designerURL, manufacturer, manufacturerURL, vendorID,
       copyright, upm,
     } = useMergeStore.getState();
 
@@ -74,6 +74,7 @@ export function useMerge() {
         designerURL,
         manufacturer,
         manufacturerURL,
+        vendorID,
         copyright,
         upm,
       },

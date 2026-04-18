@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/renderer/com
 import { WEIGHT_MAP, WIDTH_MAP, computeStyleName } from '@/shared/constants';
 import { useMergeStore } from '@/renderer/stores/mergeStore';
 import { needsManualPostScriptName, sanitizePostScriptName } from '@/shared/postscript-name';
+import { sanitizeVendorID, hasInvalidVendorChar } from '@/shared/vendor-id';
 import { cn } from '@/renderer/lib/utils';
 
 interface Props {
@@ -85,6 +86,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
     designerURL,
     manufacturer,
     manufacturerURL,
+    vendorID,
     copyright,
     upm,
     isMerging,
@@ -98,6 +100,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
     setDesignerURL,
     setManufacturer,
     setManufacturerURL,
+    setVendorID,
     setCopyright,
     setUpm,
   } = useMergeStore();
@@ -110,6 +113,10 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
   // constraint has clearly been understood.
   const psNameNeedsManual = needsManualPostScriptName(familyName);
   const showPsNameHint = psNameNeedsManual && !postScriptNameDirty;
+  // Real-time hint for Vendor ID: the sanitizer will clean this up on
+  // blur, but we flag disallowed characters while the user is still
+  // typing so the auto-strip doesn't feel magical.
+  const showVendorIDHint = hasInvalidVendorChar(vendorID);
   // Flag when sanitization wipes the user's input to empty — nameID 6
   // cannot be empty, so Export is blocked until they supply something.
   const showPsNameError =
@@ -367,6 +374,37 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
               />
             </FieldRow>
 
+            <FieldRow label="Vendor ID">
+              <div>
+                {showVendorIDHint && (
+                  <div className="text-[12px] text-amber-500 mb-1.5 flex items-center gap-1">
+                    <span>⚠</span>
+                    <span>English characters only</span>
+                  </div>
+                )}
+                <input
+                  type="text"
+                  value={vendorID}
+                  maxLength={4}
+                  onChange={(e) => setVendorID(e.target.value)}
+                  onBlur={(e) => {
+                    // Auto-uppercase and strip anything outside OS/2
+                    // achVendID's allowed charset on commit, matching the
+                    // PostScript-name field's sanitize-on-blur behavior.
+                    const sanitized = sanitizeVendorID(e.target.value);
+                    if (sanitized !== e.target.value) setVendorID(sanitized);
+                    useMergeStore.getState().pushHistory();
+                  }}
+                  disabled={isMerging}
+                  placeholder="4-char tag (optional)"
+                  className={cn(
+                    inputClass,
+                    'placeholder:text-foreground/30',
+                    isMerging && 'opacity-50 cursor-not-allowed',
+                  )}
+                />
+              </div>
+            </FieldRow>
             <div className="pb-2" />
 
             {/* ===== Info ===== */}

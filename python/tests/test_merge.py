@@ -596,7 +596,7 @@ class TestOutputWeight:
 def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyright="",
                      output_ps_name=None, output_version=None, app_version=None,
                      output_designer_url=None, output_manufacturer=None,
-                     output_manufacturer_url=None):
+                     output_manufacturer_url=None, output_vendor_id=None):
     """Run merge with metadata options and return TTFont + cleanup paths."""
     out = tempfile.mktemp(suffix=".ttf")
     output = {
@@ -610,6 +610,8 @@ def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyri
         output["manufacturer"] = output_manufacturer
     if output_manufacturer_url is not None:
         output["manufacturerURL"] = output_manufacturer_url
+    if output_vendor_id is not None:
+        output["vendorID"] = output_vendor_id
     if output_ps_name is not None:
         output["postScriptName"] = output_ps_name
     if output_version is not None:
@@ -685,6 +687,40 @@ class TestSanitizePostScriptName:
 
     def test_empty_input(self):
         assert mf.sanitize_postscript_name("") == ""
+
+
+class TestSanitizeVendorID:
+    """Unit tests for sanitize_vendor_id()."""
+
+    def test_uppercase_passes_through(self):
+        assert mf.sanitize_vendor_id("ACME") == "ACME"
+
+    def test_lowercase_is_uppercased(self):
+        assert mf.sanitize_vendor_id("acme") == "ACME"
+
+    def test_mixed_case_uppercased(self):
+        assert mf.sanitize_vendor_id("AcMe") == "ACME"
+
+    def test_truncated_to_four(self):
+        assert mf.sanitize_vendor_id("ACMECORP") == "ACME"
+
+    def test_japanese_stripped(self):
+        assert mf.sanitize_vendor_id("\u3042bcd") == "BCD"
+
+    def test_spaces_stripped(self):
+        assert mf.sanitize_vendor_id("A B") == "AB"
+
+    def test_forbidden_chars_stripped(self):
+        assert mf.sanitize_vendor_id("A(B)C") == "ABC"
+
+    def test_digits_allowed(self):
+        assert mf.sanitize_vendor_id("v2.0") == "V2.0"
+
+    def test_empty_input(self):
+        assert mf.sanitize_vendor_id("") == ""
+
+    def test_all_stripped_becomes_empty(self):
+        assert mf.sanitize_vendor_id("\u3042\u3044") == ""
 
 
 class TestValidatePostScriptName:
@@ -870,6 +906,36 @@ class TestMetadataCorrectness:
         m = _merge_with_meta(output_manufacturer_url="")
         url = m["name"].getDebugName(11)
         assert url is None or url == "", f"Expected empty manufacturer URL, got '{url}'"
+
+    def test_vendor_id_set_when_provided(self):
+        """outputVendorID is written to OS/2 achVendID."""
+        m = _merge_with_meta(output_vendor_id="ACME")
+        assert m["OS/2"].achVendID == "ACME"
+
+    def test_vendor_id_padded_when_short(self):
+        """Short vendorID is right-padded with spaces to exactly 4 chars."""
+        m = _merge_with_meta(output_vendor_id="X")
+        assert m["OS/2"].achVendID == "X   "
+
+    def test_vendor_id_truncated_when_long(self):
+        """Long vendorID is truncated to 4 chars."""
+        m = _merge_with_meta(output_vendor_id="TOOLONG")
+        assert m["OS/2"].achVendID == "TOOL"
+
+    def test_vendor_id_empty_defaults_to_blank(self):
+        """Missing outputVendorID resolves to 4 spaces (unknown vendor)."""
+        m = _merge_with_meta(output_vendor_id="")
+        assert m["OS/2"].achVendID == "    "
+
+    def test_vendor_id_uppercased(self):
+        """Lowercase outputVendorID is auto-uppercased."""
+        m = _merge_with_meta(output_vendor_id="acme")
+        assert m["OS/2"].achVendID == "ACME"
+
+    def test_vendor_id_strips_non_ascii(self):
+        """Non-ASCII characters in outputVendorID are dropped."""
+        m = _merge_with_meta(output_vendor_id="\u3042bcd")
+        assert m["OS/2"].achVendID == "BCD "
 
     def test_description_mentions_sources(self):
         """nameID 10 mentions source font names."""

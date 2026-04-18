@@ -174,7 +174,7 @@ export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => 
     licenseURL: font.licenseURL || '',
     description: font.description || '',
     fsType: 0,
-    vendorID: '',
+    vendorID: font.vendorID || '',
     unitsPerEm: font.unitsPerEm,
     glyphCount: font.glyphCount,
     ascender: font.ascender,
@@ -210,12 +210,17 @@ export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => 
               <InfoRow label="Line Gap" value={meta.lineGap !== 0 ? String(meta.lineGap) : null} />
             </Section>
 
-            {(meta.designer || meta.designerURL || meta.manufacturer || meta.manufacturerURL) && (
+            {(meta.designer ||
+              meta.designerURL ||
+              meta.manufacturer ||
+              meta.manufacturerURL ||
+              meta.vendorID.trim()) && (
               <Section title="Author">
                 <InfoRow label="Designer" value={meta.designer} />
                 <InfoRow label="Designer URL" value={urlValue(meta.designerURL)} />
                 <InfoRow label="Manufacturer" value={meta.manufacturer} />
                 <InfoRow label="Manufacturer URL" value={urlValue(meta.manufacturerURL)} />
+                <InfoRow label="Vendor ID" value={meta.vendorID.trim() || null} />
               </Section>
             )}
 

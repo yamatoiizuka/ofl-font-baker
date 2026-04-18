@@ -154,6 +154,7 @@ hhea ascent/descent/lineGap、post underline、head bbox）と JP GPOS ルック
 - nameID 11 (Manufacturer URL): ユーザー設定値、空の場合はクリア
 - nameID 12 (Designer URL): ユーザー設定値、空の場合はクリア
 - nameID 13/14 (License): OFL 1.1 テキスト + URL
+- OS/2 `achVendID`: ユーザー設定の 4 文字タグ（短い場合は空白で右詰め）、空の場合は `"    "`（ベンダー不明）をセット
 
 ## 状態管理 (Zustand)
 
@@ -175,7 +176,7 @@ localStorage に永続化される状態:
 - latinFont, baseFont
 - sampleText
 - outputFamilyName, outputPostScriptName, outputVersion, outputWeight, outputItalic, outputWidth
-- outputDesigner, outputDesignerURL, outputManufacturer, outputManufacturerURL, outputCopyright, outputUpm
+- outputDesigner, outputDesignerURL, outputManufacturer, outputManufacturerURL, outputVendorID, outputCopyright, outputUpm
 
 ## IPC チャンネル
 

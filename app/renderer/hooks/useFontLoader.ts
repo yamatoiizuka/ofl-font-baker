@@ -179,6 +179,7 @@ export function useFontLoader() {
           licenseURL: getStr(font.names.licenseURL),
           description: getStr(font.names.description),
           version: getStr(font.names.version),
+          vendorID: (font as any).tables?.os2?.achVendID ?? '',
         };
 
         if (role === 'latin') {
