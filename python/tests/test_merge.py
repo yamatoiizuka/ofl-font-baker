@@ -937,6 +937,24 @@ class TestMetadataCorrectness:
         m = _merge_with_meta(output_vendor_id="\u3042bcd")
         assert m["OS/2"].achVendID == "BCD "
 
+    def test_unique_id_includes_version_vendor_ps(self):
+        """nameID 3 = '{version};{vendor};{PS-full-name}' when all supplied."""
+        m = _merge_with_meta(output_family="TestUID", output_version="2.500",
+                             output_vendor_id="ACME")
+        assert m["name"].getDebugName(3) == "2.500;ACME;TestUID-Regular"
+
+    def test_unique_id_omits_vendor_when_blank(self):
+        """Blank vendorID is dropped from the uniqueID segments."""
+        m = _merge_with_meta(output_family="TestUID", output_version="1.000",
+                             output_vendor_id="")
+        assert m["name"].getDebugName(3) == "1.000;TestUID-Regular"
+
+    def test_unique_id_strips_version_prefix(self):
+        """'Version ' prefix is dropped from the uniqueID version segment."""
+        m = _merge_with_meta(output_family="TestUID",
+                             output_version="Version 3.0")
+        assert m["name"].getDebugName(3) == "3.0;TestUID-Regular"
+
     def test_description_mentions_sources(self):
         """nameID 10 mentions source font names."""
         m = _merge_with_meta()

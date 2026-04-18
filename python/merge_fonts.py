@@ -2024,6 +2024,21 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
             # Typographic Subfamily — Illustrator uses this for weight display
             record.string = style_name
 
+    # --- Unique Font Identifier (nameID 3) ---
+    # Auto-built as "{version};{vendorID};{PostScript full name}" so the
+    # OS font cache can tell distinct versions/styles apart. Without a
+    # fresh ID, derivatives collide with the base font in the cache and
+    # render using stale glyphs. Vendor is omitted when blank.
+    version_for_id = (output.get("version") or "").strip() or "1.000"
+    if version_for_id.lower().startswith("version "):
+        version_for_id = version_for_id[len("Version "):].strip()
+    ps_full_name = f"{output_ps_base}-{style_name.replace(' ', '')}"
+    unique_parts = [version_for_id]
+    if vendor_raw:
+        unique_parts.append(vendor_raw)
+    unique_parts.append(ps_full_name)
+    _set_name(name_table, 3, ";".join(unique_parts))
+
     # --- OFL metadata: copyright, license, description ---
     _set_ofl_metadata(lat_font, jp_font, merged, config)
 
