@@ -123,28 +123,6 @@ def validate_postscript_name(name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# OS/2 achVendID (Vendor ID) sanitization
-# ---------------------------------------------------------------------------
-
-_VENDOR_ID_MAX = 4
-
-
-def sanitize_vendor_id(raw: str) -> str:
-    """Strip disallowed characters, uppercase, and clamp to 4 chars.
-
-    Allowed: printable ASCII 33-126 minus the PostScript-name forbidden
-    set (`[]{}<>()/%`). Whitespace is dropped; the field is right-padded
-    with spaces at write time, not from user input.
-    """
-    cleaned = []
-    for c in raw:
-        cp = ord(c)
-        if 33 <= cp <= 126 and c not in _PS_NAME_FORBIDDEN:
-            cleaned.append(c.upper())
-    return "".join(cleaned)[:_VENDOR_ID_MAX]
-
-
-# ---------------------------------------------------------------------------
 # Export artifact generators
 # ---------------------------------------------------------------------------
 
@@ -408,7 +386,7 @@ def build_export_config(config: dict, path_map: dict = None) -> dict:
 
     output = config.get("output") or {}
     for field in ("familyName", "postScriptName", "version", "weight", "italic",
-                  "width", "manufacturer", "manufacturerURL", "vendorID",
+                  "width", "manufacturer", "manufacturerURL",
                   "copyright", "trademark", "upm"):
         val = output.get(field)
         if val is not None:
@@ -1996,17 +1974,14 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
 
     # Set OS/2 usWeightClass and usWidthClass
     os2 = merged.get("OS/2")
-    # Sanitize the user's vendor ID: strip non-ASCII / forbidden characters,
-    # uppercase, and truncate to 4 chars. Empty results fall back to the
-    # "unknown vendor" placeholder ("    ") at write time below.
-    vendor_raw = sanitize_vendor_id(output.get("vendorID") or "")
     if os2:
         os2.usWeightClass = output_weight
         os2.usWidthClass = output_width
-        # achVendID is exactly 4 ASCII characters; right-pad with spaces
-        # when shorter, and default to "    " (unknown vendor) when not
-        # supplied so the derivative doesn't claim the base font's tag.
-        os2.achVendID = (vendor_raw + "    ")[:4]
+        # achVendID is fixed to four spaces — the "unknown vendor"
+        # placeholder. The merge operator doesn't typically have a
+        # Microsoft-registered vendor tag, and inheriting the base
+        # font's tag would misattribute the derivative.
+        os2.achVendID = "    "
 
     # Set italic flags
     head = merged.get("head")
@@ -2040,19 +2015,16 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
             record.string = style_name
 
     # --- Unique Font Identifier (nameID 3) ---
-    # Auto-built as "{version};{vendorID};{PostScript full name}" so the
-    # OS font cache can tell distinct versions/styles apart. Without a
-    # fresh ID, derivatives collide with the base font in the cache and
-    # render using stale glyphs. Vendor is omitted when blank.
+    # Auto-built as "{version};{PostScript full name}" so the OS font
+    # cache can tell distinct versions/styles apart. Without a fresh
+    # ID, derivatives collide with the base font in the cache and
+    # render using stale glyphs. Vendor ID is omitted because the
+    # derivative has no vendor tag.
     version_for_id = (output.get("version") or "").strip() or "1.000"
     if version_for_id.lower().startswith("version "):
         version_for_id = version_for_id[len("Version "):].strip()
     ps_full_name = f"{output_ps_base}-{style_name.replace(' ', '')}"
-    unique_parts = [version_for_id]
-    if vendor_raw:
-        unique_parts.append(vendor_raw)
-    unique_parts.append(ps_full_name)
-    _set_name(name_table, 3, ";".join(unique_parts))
+    _set_name(name_table, 3, f"{version_for_id};{ps_full_name}")
 
     # --- OFL metadata: copyright, license, description ---
     _set_ofl_metadata(lat_font, jp_font, merged, config)

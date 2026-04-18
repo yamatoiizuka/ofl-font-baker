@@ -29,7 +29,6 @@ interface UndoableState {
   fontWidth: number;
   manufacturer: string;
   manufacturerURL: string;
-  vendorID: string;
   copyright: string;
   trademark: string;
   upm: number;
@@ -55,7 +54,6 @@ const INITIAL_UNDOABLE: UndoableState = {
   fontWidth: 5,
   manufacturer: '',
   manufacturerURL: '',
-  vendorID: '',
   copyright: '',
   trademark: '',
   upm: 1000,
@@ -97,7 +95,6 @@ interface MergeState extends UndoableState {
   setFontWidth: (width: number) => void;
   setManufacturer: (manufacturer: string) => void;
   setManufacturerURL: (url: string) => void;
-  setVendorID: (vendorID: string) => void;
   setCopyright: (copyright: string) => void;
   setTrademark: (trademark: string) => void;
   setUpm: (upm: number) => void;
@@ -131,7 +128,6 @@ function extractUndoable(state: MergeState): UndoableState {
     fontWidth: state.fontWidth,
     manufacturer: state.manufacturer,
     manufacturerURL: state.manufacturerURL,
-    vendorID: state.vendorID,
     copyright: state.copyright,
     trademark: state.trademark,
     upm: state.upm,
@@ -256,7 +252,6 @@ export const useMergeStore = create<MergeState>()(
       },
       setManufacturer: (manufacturer) => set({ manufacturer }),
       setManufacturerURL: (url) => set({ manufacturerURL: url }),
-      setVendorID: (vendorID) => set({ vendorID }),
       setCopyright: (copyright) => set({ copyright: copyright }),
       setTrademark: (trademark) => set({ trademark }),
       setUpm: (upm) => set({ upm: upm }),
@@ -325,7 +320,6 @@ export const useMergeStore = create<MergeState>()(
         fontWidth: state.fontWidth,
         manufacturer: state.manufacturer,
         manufacturerURL: state.manufacturerURL,
-        vendorID: state.vendorID,
         copyright: state.copyright,
         trademark: state.trademark,
         upm: state.upm,

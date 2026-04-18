@@ -147,7 +147,7 @@ hhea ascent/descent/lineGap、post underline、head bbox）と JP GPOS ルック
 
 - nameID 0 (Copyright): 両ソースの copyright を結合 + ユーザー追加
 - nameID 7 (Trademark): 両ソースの trademark を結合 + ユーザー追加。3 つとも空のときだけレコードを残さない
-- nameID 3 (Unique Font Identifier): `{version};{vendorID};{PostScript フルネーム}` を自動生成（vendorID が空なら該当セグメントを省略）。派生フォントがベースフォントと同じ UniqueID を持たないようにして、OS のフォントキャッシュが別物として扱えるようにする。
+- nameID 3 (Unique Font Identifier): `{version};{PostScript フルネーム}` を自動生成。派生フォントがベースフォントと同じ UniqueID を持たないようにして、OS のフォントキャッシュが別物として扱えるようにする。
 - nameID 5 (Version String): `outputVersion`（デフォルト `1.000`）を使用。Python 側で `Version ` 接頭辞が無ければ自動で付与する。派生フォントがベースフォントのバージョンを引き継がないよう、フォントを読み込むたびにデフォルトへリセットされる。
 - nameID 6 (PostScript Name): `outputPostScriptName` が設定されていればそれを使用、未設定なら `outputFamilyName` から printable ASCII 33-126 外 + `[]{}<>()/%` を除去したものを 63 バイトで打ち切って使用
 - nameID 8 (Manufacturer): ユーザー設定値、空の場合はクリア
@@ -156,6 +156,7 @@ hhea ascent/descent/lineGap、post underline、head bbox）と JP GPOS ルック
 - nameID 11 (Manufacturer URL): ユーザー設定値、空の場合はクリア
 - nameID 12 (Designer URL): 常にクリア
 - nameID 13/14 (License): OFL 1.1 テキスト + URL
+- OS/2 `achVendID`: 常に半角スペース 4 つ（ベンダー不明）に固定。派生フォントがベースフォントの登録ベンダータグを引き継がないようにする。
 - CFF TopDict `FullName` / `FamilyName` / `Notice`: nameID 4 / 1 / 0 と同じ値をセット。PDF 埋め込みや Adobe 系ツールが CFF を直接読む際にベースフォント名が残らないようにする。
 - OS/2 `achVendID`: ユーザー設定の 4 文字タグ（短い場合は空白で右詰め）、空の場合は `"    "`（ベンダー不明）をセット
 
@@ -179,7 +180,7 @@ localStorage に永続化される状態:
 - latinFont, baseFont
 - sampleText
 - outputFamilyName, outputPostScriptName, outputVersion, outputWeight, outputItalic, outputWidth
-- outputManufacturer, outputManufacturerURL, outputVendorID, outputCopyright, outputTrademark, outputUpm
+- outputManufacturer, outputManufacturerURL, outputCopyright, outputTrademark, outputUpm
 
 ## IPC チャンネル
 
