@@ -32,13 +32,19 @@ const DialogOverlay = React.forwardRef<
 ));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
+interface DialogContentProps
+  extends React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> {
+  /** When true, omit the floating close (×) button outside the dialog box. */
+  hideCloseButton?: boolean;
+}
+
 /**
  * The main content container for a dialog, rendered in a portal with an overlay backdrop.
  */
 const DialogContent = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, onPointerDownOutside, ...props }, ref) => (
+  DialogContentProps
+>(({ className, children, onPointerDownOutside, hideCloseButton, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 pointer-events-none">
@@ -58,13 +64,15 @@ const DialogContent = React.forwardRef<
         >
           {children}
         </div>
-        <DialogPrimitive.Close
-          aria-label="Close"
-          className="absolute -right-[40px] top-0 flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-full bg-white pointer-events-auto"
-          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        >
-          <img src={modalCloseSvg} alt="" width={30} height={30} draggable={false} />
-        </DialogPrimitive.Close>
+        {!hideCloseButton && (
+          <DialogPrimitive.Close
+            aria-label="Close"
+            className="absolute -right-[40px] top-0 flex h-[30px] w-[30px] cursor-pointer items-center justify-center rounded-full bg-white pointer-events-auto"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            <img src={modalCloseSvg} alt="" width={30} height={30} draggable={false} />
+          </DialogPrimitive.Close>
+        )}
       </DialogPrimitive.Content>
     </div>
   </DialogPortal>

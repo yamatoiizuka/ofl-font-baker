@@ -7,9 +7,11 @@ import { useMergeStore } from '@/renderer/stores/mergeStore';
 import { useMerge } from '@/renderer/hooks/useMerge';
 import { Button } from '@/renderer/components/ui/button';
 import { ExportMetadataModal } from '@/renderer/components/ExportMetadataModal';
+import { ExportCompleteModal } from '@/renderer/components/ExportCompleteModal';
+import { ExportFailedModal } from '@/renderer/components/ExportFailedModal';
 import { cn } from '@/renderer/lib/utils';
 import { needsManualPostScriptName, validatePostScriptName } from '@/shared/postscript-name';
-import { WEIGHT_MAP, DONE_DISPLAY_MS, ERROR_DISPLAY_MS } from '@/shared/constants';
+import { WEIGHT_MAP, DONE_DISPLAY_MS } from '@/shared/constants';
 
 /**
  * Export panel component with font family name input, weight selector, progress bar,
@@ -32,6 +34,18 @@ export const ExportPanel: React.FC = () => {
   const { startMerge, isMerging } = useMerge();
   const [isHoveringStop, setIsHoveringStop] = useState(false);
   const [metadataOpen, setMetadataOpen] = useState(false);
+  const [completeOpen, setCompleteOpen] = useState(false);
+  const [failedError, setFailedError] = useState<string | null>(null);
+
+  /**
+   * Kicks off the merge and routes the result to the completion or failure modal.
+   */
+  async function handleExport() {
+    const res = await startMerge();
+    if (res.kind === 'success') setCompleteOpen(true);
+    else if (res.kind === 'error') setFailedError(res.error);
+    // cancelled: no modal, silent dismissal.
+  }
 
   const hasValidName = familyName.trim().length > 0;
   // Red label when the PostScript name is invalid (empty or contains
@@ -47,42 +61,32 @@ export const ExportPanel: React.FC = () => {
     hasValidName && !psError && needsManualPostScriptName(familyName) && !postScriptNameDirty;
   const canMerge = baseFont && !isMerging && hasValidName && !psError;
   const isDone = mergeProgress?.stage === 'done';
-  const isError = mergeProgress?.stage === 'error';
   const showProgress = mergeProgress && !isDone;
 
-  // Auto-hide progress after done or error
+  // Auto-hide the "Export complete" inline status after the configured delay.
+  // Errors no longer land in mergeProgress (they route to the Failed modal),
+  // so only the done state needs to auto-clear.
   useEffect(() => {
-    if (!isDone && !isError) return;
-    const timer = setTimeout(
-      () => setMergeProgress(null),
-      isError ? ERROR_DISPLAY_MS : DONE_DISPLAY_MS,
-    );
+    if (!isDone) return;
+    const timer = setTimeout(() => setMergeProgress(null), DONE_DISPLAY_MS);
     return () => clearTimeout(timer);
-  }, [isDone, isError, setMergeProgress]);
+  }, [isDone, setMergeProgress]);
 
   /**
-   * Cancels the ongoing merge process and updates the progress state.
+   * Cancels the ongoing merge process. The inline progress is cleared so the
+   * panel returns to its idle state immediately.
    */
   function handleStop() {
     window.electronAPI.abortMerge();
     setIsMerging(false);
-    setMergeProgress({
-      stage: 'error',
-      percent: 0,
-      message: 'Export cancelled',
-    });
+    setMergeProgress(null);
   }
 
   return (
     <div className="@container shrink-0 border-t border-border">
       {/* Progress / Done message */}
       {showProgress && (
-        <div
-          className={cn(
-            'px-8 pt-4 pb-2 text-xs',
-            isError ? 'text-red-400' : 'text-muted-foreground',
-          )}
-        >
+        <div className="px-8 pt-4 pb-2 text-xs text-muted-foreground">
           {mergeProgress.message.endsWith('...') ? (
             <>
               {mergeProgress.message.slice(0, -3)}
@@ -216,7 +220,7 @@ export const ExportPanel: React.FC = () => {
               </Button>
             ) : (
               <Button
-                onClick={startMerge}
+                onClick={handleExport}
                 disabled={!canMerge}
                 size="lg"
                 className="rounded-md w-[100px] @[36rem]:w-[130px] h-[38px] shrink-0 text-base"
@@ -228,6 +232,16 @@ export const ExportPanel: React.FC = () => {
         </div>
 
         <ExportMetadataModal open={metadataOpen} onOpenChange={setMetadataOpen} />
+        <ExportCompleteModal open={completeOpen} onOpenChange={setCompleteOpen} />
+        <ExportFailedModal
+          error={failedError}
+          baseFamily={baseFont?.familyName}
+          subFamily={latinFont?.familyName}
+          open={failedError !== null}
+          onOpenChange={(open) => {
+            if (!open) setFailedError(null);
+          }}
+        />
       </div>
     </div>
   );
