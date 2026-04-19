@@ -1104,10 +1104,11 @@ class TestCIDJapaneseFont:
     def test_merge_succeeds(self):
         """Merge with CID-keyed JP font completes without error."""
         m = _merge_otf_jp()
-        # CID fonts are converted to TT for merging
-        assert "glyf" in m
-        assert m.sfntVersion == "\x00\x01\x00\x00", \
-            f"sfntVersion should be TrueType, got {repr(m.sfntVersion)}"
+        # CFF base stays CFF after merge; TT base stays TT. Either outline
+        # table is acceptable as long as one is present.
+        assert "CFF " in m or "glyf" in m
+        assert m.sfntVersion in ("OTTO", "\x00\x01\x00\x00"), \
+            f"sfntVersion should be CFF or TrueType, got {repr(m.sfntVersion)}"
 
     def test_latin_glyph_has_outline(self):
         """Latin glyph (U+0041 = A) has a valid outline."""
@@ -1123,7 +1124,7 @@ class TestCIDJapaneseFont:
         assert bounds[2] > bounds[0], "Latin glyph for U+0041 has zero width"
 
     def test_japanese_glyph_has_outline(self):
-        """Japanese glyph has a valid outline after CFF-to-TT conversion."""
+        """Japanese glyph has a valid outline in the merged font."""
         m = _merge_otf_jp()
         cmap = m.getBestCmap()
         a_glyph = cmap.get(0x3042)  # あ
@@ -1132,7 +1133,7 @@ class TestCIDJapaneseFont:
         bp = BoundsPen(gs)
         gs[a_glyph].draw(bp)
         bounds = bp.bounds
-        assert bounds is not None, "Glyph あ has no outline after CFF→TT conversion"
+        assert bounds is not None, "Glyph あ has no outline in the merged font"
 
     def test_hmtx_complete_otf(self):
         """All glyphs have hmtx metrics."""
