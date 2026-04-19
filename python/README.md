@@ -99,16 +99,20 @@ Progress is emitted as JSON lines on stderr.
 
 ### `output`
 
-| Key             | Default     | Description                                                                                                                                                                           |
-| --------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `familyName`    | `"Font"`    | Output font family name.                                                                                                                                                              |
-| `weight`        | `400`       | Font weight (100–900).                                                                                                                                                                |
-| `italic`        | `false`     | Whether the output is italic.                                                                                                                                                         |
-| `width`         | `5`         | Font width class (1–9).                                                                                                                                                               |
-| `upm`           | (from base) | Target units-per-em. When different from the base font, all metrics and outlines are scaled.                                                                                          |
-| `copyright`     | `""`        | Additional copyright string appended to source copyrights.                                                                                                                            |
-| `designer`      | `""`        | Designer name for nameID 9.                                                                                                                                                           |
-| `metricsSource` | `"base"`    | Which font's vertical metrics (OS/2, hhea) to use. `"base"` keeps the base font metrics and expands only when the sub font is larger. `"sub"` overwrites with the sub font's metrics. |
+| Key               | Default     | Description                                                                                                                                                                           |
+| ----------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `familyName`      | `"Font"`    | Output font family name.                                                                                                                                                              |
+| `postScriptName`  | `""`        | PostScript name (nameID 6). When empty, derived from `familyName` by stripping chars outside printable ASCII 33–126 and `[]{}<>()/%`, clamped to 63 bytes.                            |
+| `version`         | `"1.000"`   | Version string (nameID 5). A `Version ` prefix is prepended automatically if missing.                                                                                                 |
+| `weight`          | `400`       | Font weight (100–900).                                                                                                                                                                |
+| `italic`          | `false`     | Whether the output is italic.                                                                                                                                                         |
+| `width`           | `5`         | Font width class (1–9).                                                                                                                                                               |
+| `upm`             | (from base) | Target units-per-em. When different from the base font, all metrics and outlines are scaled.                                                                                          |
+| `manufacturer`    | `""`        | Manufacturer name (nameID 8).                                                                                                                                                         |
+| `manufacturerURL` | `""`        | Manufacturer URL (nameID 11).                                                                                                                                                         |
+| `copyright`       | `""`        | Additional copyright string appended to source copyrights.                                                                                                                            |
+| `trademark`       | `""`        | Additional trademark string appended to source trademarks.                                                                                                                            |
+| `metricsSource`   | `"base"`    | Which font's vertical metrics (OS/2, hhea) to use. `"base"` keeps the base font metrics and expands only when the sub font is larger. `"sub"` overwrites with the sub font's metrics. |
 
 ### `export.path`
 
