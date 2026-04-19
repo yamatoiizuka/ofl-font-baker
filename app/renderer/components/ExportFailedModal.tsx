@@ -8,6 +8,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Dialog, DialogContent, DialogTitle } from '@/renderer/components/ui/dialog';
 import { Button } from '@/renderer/components/ui/button';
 import { buildCopyableError } from '@/shared/error-format';
+import { cn } from '@/renderer/lib/utils';
 import failedSvg from '@/renderer/assets/icons/failed.svg';
 import copySvg from '@/renderer/assets/icons/copy.svg';
 
@@ -89,7 +90,12 @@ export const ExportFailedModal: React.FC<Props> = ({
               type="button"
               onClick={handleCopy}
               disabled={!clipboardPayload}
-              className="inline-flex items-center gap-2 text-[14px] text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+              className={cn(
+                'inline-flex items-center gap-2 text-[14px] text-muted-foreground disabled:opacity-50 disabled:cursor-not-allowed',
+                copied
+                  ? 'cursor-default'
+                  : 'cursor-pointer hover:text-foreground',
+              )}
             >
               {copied ? (
                 'Copied!'
