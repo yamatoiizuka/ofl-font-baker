@@ -3,6 +3,7 @@
  */
 
 import { spawn } from 'child_process';
+import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { MergeConfig, MergeProgress, ExportManifest } from '@/shared/types';
@@ -86,6 +87,9 @@ export function runMerge(
       baseFont: fontSource(config.baseFont),
       output: config.output,
       export: config.export,
+      // Stamped into nameID 5 alongside the user-visible version so the
+      // generator tool is identifiable in the output font.
+      appVersion: app.getVersion(),
     };
 
     const proc = spawn(command, args, {

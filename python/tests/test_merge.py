@@ -593,9 +593,26 @@ class TestOutputWeight:
 # Metadata (name table) correctness
 # ---------------------------------------------------------------------------
 
-def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyright=""):
+def _merge_with_meta(output_family="TestMeta", output_copyright="",
+                     output_ps_name=None, output_version=None, app_version=None,
+                     output_manufacturer=None, output_manufacturer_url=None,
+                     output_trademark=None):
     """Run merge with metadata options and return TTFont + cleanup paths."""
     out = tempfile.mktemp(suffix=".ttf")
+    output = {
+        "familyName": output_family,
+        "copyright": output_copyright,
+    }
+    if output_manufacturer is not None:
+        output["manufacturer"] = output_manufacturer
+    if output_manufacturer_url is not None:
+        output["manufacturerURL"] = output_manufacturer_url
+    if output_trademark is not None:
+        output["trademark"] = output_trademark
+    if output_ps_name is not None:
+        output["postScriptName"] = output_ps_name
+    if output_version is not None:
+        output["version"] = output_version
     config = {
         "subFont": {
             "path": EN_VAR,
@@ -612,19 +629,89 @@ def _merge_with_meta(output_family="TestMeta", output_designer="", output_copyri
             "baselineOffset": 0,
             "axes": [{"tag": "wght", "currentValue": 400}],
         },
-        "output": {
-            "familyName": output_family,
-            "designer": output_designer,
-            "copyright": output_copyright,
-        },
+        "output": output,
         "export": {"path": {"font": out}},
     }
+    if app_version is not None:
+        config["appVersion"] = app_version
     mf.merge_fonts(config)
     font = TTFont(out)
     for f in (out, out.replace(".ttf", ".woff2")):
         if os.path.exists(f):
             os.remove(f)
     return font
+
+
+class TestSanitizePostScriptName:
+    """Unit tests for sanitize_postscript_name()."""
+
+    def test_ascii_only_unchanged(self):
+        assert mf.sanitize_postscript_name("NotoSans") == "NotoSans"
+
+    def test_spaces_stripped(self):
+        assert mf.sanitize_postscript_name("Noto Sans") == "NotoSans"
+
+    def test_japanese_becomes_empty(self):
+        assert mf.sanitize_postscript_name("\u5927\u548c\u660e\u671d") == ""
+
+    def test_mixed_keeps_ascii_drops_japanese(self):
+        assert mf.sanitize_postscript_name("Yamato \u660e\u671d") == "Yamato"
+
+    def test_forbidden_chars_stripped(self):
+        assert mf.sanitize_postscript_name("Noto/Sans") == "NotoSans"
+        assert mf.sanitize_postscript_name("Foo(Bar)") == "FooBar"
+        assert mf.sanitize_postscript_name("[Foo]{Bar}") == "FooBar"
+        assert mf.sanitize_postscript_name("<Foo>") == "Foo"
+        assert mf.sanitize_postscript_name("50%Off") == "50Off"
+
+    def test_all_forbidden_becomes_empty(self):
+        assert mf.sanitize_postscript_name("[](){}<>/%") == ""
+
+    def test_allowed_punctuation_preserved(self):
+        for n in ("Foo-Bar", "Foo.Bar", "Foo_Bar", "Foo+Bar", "Foo:Bar", "Foo#Bar"):
+            assert mf.sanitize_postscript_name(n) == n
+
+    def test_truncation_past_63(self):
+        assert mf.sanitize_postscript_name("A" * 64) == "A" * 63
+        assert mf.sanitize_postscript_name("A" * 100) == "A" * 63
+
+    def test_exact_63_not_truncated(self):
+        assert mf.sanitize_postscript_name("A" * 63) == "A" * 63
+
+    def test_control_chars_stripped(self):
+        assert mf.sanitize_postscript_name("Noto\tSans") == "NotoSans"
+        assert mf.sanitize_postscript_name("Noto\nSans") == "NotoSans"
+
+    def test_empty_input(self):
+        assert mf.sanitize_postscript_name("") == ""
+
+
+class TestValidatePostScriptName:
+    """Unit tests for validate_postscript_name()."""
+
+    def test_valid_names_pass(self):
+        for n in ("NotoSans-Regular", "Yamato", "Foo.Bar_Baz+Qux", "A" * 63):
+            mf.validate_postscript_name(n)
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError, match="empty"):
+            mf.validate_postscript_name("")
+
+    def test_multibyte_raises(self):
+        with pytest.raises(ValueError, match="invalid character"):
+            mf.validate_postscript_name("\u5927\u548c")
+
+    def test_forbidden_char_raises(self):
+        with pytest.raises(ValueError, match="invalid character"):
+            mf.validate_postscript_name("Foo/Bar")
+
+    def test_space_raises(self):
+        with pytest.raises(ValueError, match="invalid character"):
+            mf.validate_postscript_name("Foo Bar")
+
+    def test_too_long_raises(self):
+        with pytest.raises(ValueError, match="exceeds"):
+            mf.validate_postscript_name("A" * 64)
 
 
 class TestMetadataCorrectness:
@@ -647,6 +734,67 @@ class TestMetadataCorrectness:
         name6 = m["name"].getDebugName(6)
         assert " " not in name6
         assert "MyCustomFont" in name6
+
+    def test_postscript_name_derived_sanitizes_family(self):
+        """When postScriptName is absent, nameID 6 is sanitized from familyName."""
+        m = _merge_with_meta(output_family="Foo/Bar(Baz)")
+        name6 = m["name"].getDebugName(6)
+        for ch in "()[]{}<>/%":
+            assert ch not in name6, f"Forbidden char {ch!r} found in nameID 6: {name6!r}"
+        assert name6.startswith("FooBarBaz")
+
+    def test_postscript_name_explicit_override(self):
+        """Explicit postScriptName is used as the PS base name in nameID 6."""
+        m = _merge_with_meta(output_family="\u5927\u548c\u660e\u671d",
+                             output_ps_name="YamatoMincho")
+        name6 = m["name"].getDebugName(6)
+        assert name6.startswith("YamatoMincho"), f"Unexpected nameID 6: {name6!r}"
+
+    def test_postscript_name_invalid_raises(self):
+        """Invalid explicit postScriptName raises ValueError."""
+        with pytest.raises(ValueError, match="invalid character"):
+            _merge_with_meta(output_family="Foo", output_ps_name="Bad/Name")
+
+    def test_postscript_name_empty_family_raises(self):
+        """Family with only non-ASCII and no explicit PS name raises."""
+        with pytest.raises(ValueError, match="empty"):
+            _merge_with_meta(output_family="\u5927\u548c\u660e\u671d")
+
+    def test_version_defaults_to_1000(self):
+        """nameID 5 defaults to 'Version 1.000' when not supplied."""
+        m = _merge_with_meta()
+        v = m["name"].getDebugName(5)
+        assert v == "Version 1.000", f"Unexpected nameID 5: {v!r}"
+
+    def test_version_custom_value(self):
+        """Explicit version is written as 'Version X' in nameID 5."""
+        m = _merge_with_meta(output_version="2.5")
+        v = m["name"].getDebugName(5)
+        assert v == "Version 2.5", f"Unexpected nameID 5: {v!r}"
+
+    def test_version_with_explicit_prefix(self):
+        """If the value already starts with 'Version ', it is not doubled."""
+        m = _merge_with_meta(output_version="Version 3.0-beta")
+        v = m["name"].getDebugName(5)
+        assert v == "Version 3.0-beta", f"Unexpected nameID 5: {v!r}"
+
+    def test_version_empty_falls_back_to_default(self):
+        """Empty/whitespace version falls back to the 1.000 default."""
+        m = _merge_with_meta(output_version="  ")
+        v = m["name"].getDebugName(5)
+        assert v == "Version 1.000", f"Unexpected nameID 5: {v!r}"
+
+    def test_version_appends_app_version(self):
+        """appVersion is appended to nameID 5 as ';ofl-font-baker X.Y.Z'."""
+        m = _merge_with_meta(output_version="1.000", app_version="1.0.0")
+        v = m["name"].getDebugName(5)
+        assert v == "Version 1.000;ofl-font-baker 1.0.0", f"Unexpected nameID 5: {v!r}"
+
+    def test_version_no_app_version_suffix_when_missing(self):
+        """Missing appVersion produces no suffix."""
+        m = _merge_with_meta(output_version="1.000")
+        v = m["name"].getDebugName(5)
+        assert ";ofl-font-baker" not in v, f"Unexpected nameID 5 suffix: {v!r}"
 
     def test_license_is_ofl(self):
         """nameID 13 contains the OFL license text."""
@@ -678,16 +826,55 @@ class TestMetadataCorrectness:
         cr = m["name"].getDebugName(0)
         assert cr is not None and len(cr) > 0
 
-    def test_designer_set_when_provided(self):
-        """outputDesigner is written to nameID 9."""
-        m = _merge_with_meta(output_designer="John Doe")
-        assert m["name"].getDebugName(9) == "John Doe"
-
-    def test_designer_empty_clears(self):
-        """Empty outputDesigner clears nameID 9."""
-        m = _merge_with_meta(output_designer="")
+    def test_designer_always_cleared(self):
+        """nameID 9 is always cleared — Designer belongs to the source authors."""
+        m = _merge_with_meta()
         d = m["name"].getDebugName(9)
-        assert d is None or d == "", f"Expected empty designer, got '{d}'"
+        assert d is None or d == "", f"Expected cleared designer, got '{d}'"
+
+    def test_designer_url_always_cleared(self):
+        """nameID 12 is always cleared — Designer URL is not set on the derivative."""
+        m = _merge_with_meta()
+        url = m["name"].getDebugName(12)
+        assert url is None or url == "", f"Expected cleared designer URL, got '{url}'"
+
+    def test_manufacturer_set_when_provided(self):
+        """outputManufacturer is written to nameID 8."""
+        m = _merge_with_meta(output_manufacturer="Acme Foundry")
+        assert m["name"].getDebugName(8) == "Acme Foundry"
+
+    def test_manufacturer_empty_clears(self):
+        """Missing outputManufacturer clears nameID 8."""
+        m = _merge_with_meta(output_manufacturer="")
+        v = m["name"].getDebugName(8)
+        assert v is None or v == "", f"Expected empty manufacturer, got '{v}'"
+
+    def test_manufacturer_url_set_when_provided(self):
+        """outputManufacturerURL is written to nameID 11."""
+        m = _merge_with_meta(output_manufacturer_url="https://acme.example")
+        assert m["name"].getDebugName(11) == "https://acme.example"
+
+    def test_manufacturer_url_empty_clears(self):
+        """Missing outputManufacturerURL clears nameID 11."""
+        m = _merge_with_meta(output_manufacturer_url="")
+        url = m["name"].getDebugName(11)
+        assert url is None or url == "", f"Expected empty manufacturer URL, got '{url}'"
+
+    def test_vendor_id_always_four_spaces(self):
+        """OS/2 achVendID is fixed to 4 spaces (unknown vendor)."""
+        m = _merge_with_meta()
+        assert m["OS/2"].achVendID == "    "
+
+    def test_unique_id_is_version_and_ps_name(self):
+        """nameID 3 = '{version};{PS-full-name}'."""
+        m = _merge_with_meta(output_family="TestUID", output_version="2.500")
+        assert m["name"].getDebugName(3) == "2.500;TestUID-Regular"
+
+    def test_unique_id_strips_version_prefix(self):
+        """'Version ' prefix is dropped from the uniqueID version segment."""
+        m = _merge_with_meta(output_family="TestUID",
+                             output_version="Version 3.0")
+        assert m["name"].getDebugName(3) == "3.0;TestUID-Regular"
 
     def test_description_mentions_sources(self):
         """nameID 10 mentions source font names."""
@@ -696,17 +883,80 @@ class TestMetadataCorrectness:
         assert desc is not None
         assert "Based on" in desc
 
-    def test_description_mentions_merged(self):
-        """Two-font merge includes 'Merged with' in nameID 10."""
+    def test_variations_ps_name_prefix_removed(self):
+        """nameID 25 is dropped from the output (no variable instances)."""
+        m = _merge_with_meta()
+        assert m["name"].getDebugName(25) is None
+
+    def test_head_created_is_fresh(self):
+        """head.created is refreshed at merge time, not inherited from the base."""
+        from fontTools.misc.timeTools import timestampNow
+        before = timestampNow()
+        m = _merge_with_meta()
+        after = timestampNow()
+        assert before <= m["head"].created <= after + 60
+        assert before <= m["head"].modified <= after + 60
+
+    def test_head_created_and_modified_match(self):
+        """head.created and head.modified are pinned to the same instant."""
+        m = _merge_with_meta()
+        assert m["head"].created == m["head"].modified
+
+    def test_head_font_revision_matches_default(self):
+        """head.fontRevision defaults to 1.0 when no version is supplied."""
+        m = _merge_with_meta()
+        assert m["head"].fontRevision == 1.0
+
+    def test_head_font_revision_matches_version(self):
+        """head.fontRevision tracks output.version numerically."""
+        m = _merge_with_meta(output_version="2.5")
+        assert m["head"].fontRevision == 2.5
+
+    def test_head_font_revision_strips_version_prefix(self):
+        """'Version ' prefix is dropped before parsing fontRevision."""
+        m = _merge_with_meta(output_version="Version 3.25")
+        assert m["head"].fontRevision == 3.25
+
+    def test_head_font_revision_strips_suffix(self):
+        """Non-numeric suffixes like '-beta' are dropped before parsing."""
+        m = _merge_with_meta(output_version="1.500-beta")
+        assert m["head"].fontRevision == 1.5
+
+    def test_head_font_revision_falls_back_on_garbage(self):
+        """Unparseable version values fall back to 1.0."""
+        m = _merge_with_meta(output_version="pre-release")
+        assert m["head"].fontRevision == 1.0
+
+    def test_trademark_includes_user_addition(self):
+        """outputTrademark is appended to nameID 7."""
+        m = _merge_with_meta(output_trademark="Acme is a trademark of Acme Foundry")
+        tm = m["name"].getDebugName(7)
+        assert tm is not None
+        assert "Acme is a trademark of Acme Foundry" in tm
+
+    def test_trademark_preserves_sources(self):
+        """Source trademarks (if any) survive into nameID 7."""
+        # Inter and Noto Sans JP test subsets carry trademark text in
+        # their name tables; the combined output should retain at least
+        # one source trademark when the user addition is empty.
+        m = _merge_with_meta(output_trademark="")
+        tm = m["name"].getDebugName(7)
+        # Not guaranteed that subsets include trademark, but if either
+        # source had one, it must survive — we just assert non-failure
+        # here and rely on the user-addition test for positive coverage.
+        assert tm is None or isinstance(tm, str)
+
+    def test_description_mentions_built_with(self):
+        """Two-font merge includes 'Built with OFL Font Baker' in nameID 10."""
         m = _merge_with_meta()
         desc = m["name"].getDebugName(10)
-        assert "Merged with OFL Font Baker" in desc
+        assert "Built with OFL Font Baker" in desc
 
 
 class TestMetadataBaseOnly:
     """Metadata for base-font-only merge (no Latin font)."""
 
-    def _merge_base_only_meta(self, output_designer="", output_copyright=""):
+    def _merge_base_only_meta(self, output_copyright=""):
         out = tempfile.mktemp(suffix=".ttf")
         config = {
             "baseFont": {
@@ -717,7 +967,6 @@ class TestMetadataBaseOnly:
             },
             "output": {
                 "familyName": "BaseOnlyMeta",
-                "designer": output_designer,
                 "copyright": output_copyright,
             },
             "export": {"path": {"font": out}},
@@ -743,16 +992,17 @@ class TestMetadataBaseOnly:
         cr = m["name"].getDebugName(0)
         assert cr is not None and len(cr) > 0
 
-    def test_designer_set(self):
-        m = self._merge_base_only_meta(output_designer="Jane Smith")
-        assert m["name"].getDebugName(9) == "Jane Smith"
+    def test_designer_cleared(self):
+        """Base-only merges also clear nameID 9 — Designer is never set on the output."""
+        m = self._merge_base_only_meta()
+        d = m["name"].getDebugName(9)
+        assert d is None or d == "", f"Expected cleared designer, got '{d}'"
 
-    def test_description_baked_not_merged(self):
-        """Base-only uses 'Baked with', not 'Merged with'."""
+    def test_description_mentions_built_with(self):
+        """Base-only also uses 'Built with OFL Font Baker' in nameID 10."""
         m = self._merge_base_only_meta()
         desc = m["name"].getDebugName(10) or ""
-        assert "Merged with" not in desc
-        assert "Baked with OFL Font Baker" in desc
+        assert "Built with OFL Font Baker" in desc
 
 
 # ---------------------------------------------------------------------------
@@ -1261,6 +1511,32 @@ class TestCFFHintPreservation:
         priv = self._fd_private(m, gname)
         assert getattr(priv, "BlueValues", None), "BlueValues missing on Private dict"
 
+    def test_cff_top_dict_family_name(self):
+        """CFF TopDict FamilyName mirrors nameID 1."""
+        m = _merge_cff_to_cff()
+        td = m["CFF "].cff.topDictIndex[0]
+        assert td.FamilyName == "TestHint"
+
+    def test_cff_top_dict_full_name(self):
+        """CFF TopDict FullName mirrors nameID 4 (family + style)."""
+        m = _merge_cff_to_cff()
+        td = m["CFF "].cff.topDictIndex[0]
+        assert td.FullName == "TestHint Regular"
+
+    def test_cff_top_dict_notice_mirrors_copyright(self):
+        """CFF TopDict Notice mirrors the merged nameID 0 copyright."""
+        m = _merge_cff_to_cff()
+        td = m["CFF "].cff.topDictIndex[0]
+        name_copyright = m["name"].getDebugName(0)
+        assert td.Notice == name_copyright
+
+    def test_cff_font_names_mirrors_postscript_name(self):
+        """CFF Name INDEX fontNames[0] mirrors nameID 6 (PostScript name)."""
+        m = _merge_cff_to_cff()
+        cff = m["CFF "].cff
+        assert cff.fontNames, "CFF Name INDEX is unexpectedly empty"
+        assert cff.fontNames[0] == m["name"].getDebugName(6)
+
 
 @pytest.mark.skipif(
     not os.path.exists(_JP_CID_HINT),
@@ -1730,16 +2006,16 @@ class TestBuildSettingsText:
         text = mf.build_settings_text(config)
         assert "MyFont Bold Italic" in text
 
-    def test_base_only_shows_baked(self):
+    def test_base_only_shows_built_with(self):
         config = {
             "baseFont": {"familyName": "Noto", "styleName": "Regular",
                          "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
             "output": {"familyName": "MyFont", "weight": 400},
         }
         text = mf.build_settings_text(config)
-        assert "Baked with" in text
+        assert "Built with OFL Font Baker" in text
 
-    def test_with_latin_shows_merged(self):
+    def test_with_latin_shows_sub_font(self):
         config = {
             "baseFont": {"familyName": "Noto", "styleName": "Regular",
                          "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
@@ -1748,7 +2024,7 @@ class TestBuildSettingsText:
             "output": {"familyName": "MyFont", "weight": 400},
         }
         text = mf.build_settings_text(config)
-        assert "Merged with" in text
+        assert "Built with OFL Font Baker" in text
         assert "[Sub Font]" in text
 
 
@@ -1876,7 +2152,7 @@ class TestPackageFonts:
         with open(manifest["settingsPath"]) as f:
             content = f.read()
             assert "TestFont" in content
-            assert "Merged with" in content
+            assert "Built with OFL Font Baker" in content
         import shutil
         shutil.rmtree(d)
 

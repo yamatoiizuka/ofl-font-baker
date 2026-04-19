@@ -25,10 +25,12 @@ import copy
 import datetime
 import json
 import os
+import re
 import shutil
 import struct
 import sys
 
+from fontTools.misc.timeTools import timestampNow
 from fontTools.ttLib import TTFont
 from fontTools.pens.pointPen import SegmentToPointPen
 from fontTools.pens.recordingPen import RecordingPen
@@ -73,6 +75,53 @@ def compute_style_name(weight: int, italic: bool, width: int) -> str:
     if italic:
         parts.append("Italic")
     return " ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# PostScript name (nameID 6) sanitization and validation
+# ---------------------------------------------------------------------------
+
+# Per OpenType spec, a PostScript name must consist of printable ASCII
+# (U+0021-U+007E) minus the ten characters below, and be at most 63 bytes.
+_PS_NAME_FORBIDDEN = set("[](){}<>/%")
+_PS_NAME_MAX_BYTES = 63
+
+
+def sanitize_postscript_name(name: str) -> str:
+    """Strip characters not allowed in a PostScript name.
+
+    Allowed: printable ASCII 33-126 minus [](){}<>/% (and space, which
+    falls outside the printable-ASCII range). Result is truncated to 63
+    bytes to match the spec limit for nameID 6.
+    """
+    result = []
+    for c in name:
+        cp = ord(c)
+        if 33 <= cp <= 126 and c not in _PS_NAME_FORBIDDEN:
+            result.append(c)
+    return "".join(result)[:_PS_NAME_MAX_BYTES]
+
+
+def validate_postscript_name(name: str) -> None:
+    """Raise ValueError if name is not a spec-compliant PostScript name.
+
+    A valid name is non-empty, uses only printable ASCII 33-126 minus
+    [](){}<>/% (space is excluded as it is outside that range), and is
+    at most 63 bytes long.
+    """
+    if not name:
+        raise ValueError("PostScript name is empty")
+    if len(name.encode("utf-8")) > _PS_NAME_MAX_BYTES:
+        raise ValueError(
+            f"PostScript name exceeds {_PS_NAME_MAX_BYTES} bytes: {name!r}"
+        )
+    for c in name:
+        cp = ord(c)
+        if not (33 <= cp <= 126) or c in _PS_NAME_FORBIDDEN:
+            raise ValueError(
+                f"PostScript name contains invalid character {c!r} "
+                f"(U+{cp:04X}): {name!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -234,10 +283,7 @@ def build_settings_text(config: dict) -> str:
         lines.append(f"\u00b7 Path: {lat.get('path', '')}")
 
     lines.extend(["", "-", ""])
-    if lat:
-        lines.append("Merged with OFL Font Baker by Yamato Iizuka")
-    else:
-        lines.append("Baked with OFL Font Baker by Yamato Iizuka")
+    lines.append("Built with OFL Font Baker by Yamato Iizuka")
     lines.append("https://github.com/yamatoiizuka/ofl-font-baker")
 
     return "\n".join(lines) + "\n"
@@ -338,8 +384,9 @@ def build_export_config(config: dict, path_map: dict = None) -> dict:
         result["subFont"] = sub_entry
 
     output = config.get("output") or {}
-    for field in ("familyName", "weight", "italic",
-                  "width", "designer", "copyright", "upm"):
+    for field in ("familyName", "postScriptName", "version", "weight", "italic",
+                  "width", "manufacturer", "manufacturerURL",
+                  "copyright", "trademark", "upm"):
         val = output.get(field)
         if val is not None:
             result.setdefault("output", {})[field] = val
@@ -1767,7 +1814,9 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
     name_table = merged["name"]
     output = config.get("output") or {}
     user_copyright = output.get("copyright", "").strip()
-    user_designer = output.get("designer", "").strip()
+    user_trademark = output.get("trademark", "").strip()
+    user_manufacturer = output.get("manufacturer", "").strip()
+    user_manufacturer_url = output.get("manufacturerURL", "").strip()
 
     # --- Copyright (nameID 0): combine both sources + user's addition ---
     copyrights: list[str] = []
@@ -1783,6 +1832,22 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
     if combined_copyright:
         _set_name(name_table, 0, combined_copyright)
 
+    # --- Trademark (nameID 7): combine both sources + user's addition ---
+    # Preserved as acknowledgment per OFL 1.1 §4 (trademark text is
+    # factual attribution, not promotional use of the author's name).
+    trademarks: list[str] = []
+    for font in (jp_font, lat_font):
+        if font is None:
+            continue
+        t = _get_name(font, 7)
+        if t and t not in trademarks:
+            trademarks.append(t)
+    if user_trademark and user_trademark not in trademarks:
+        trademarks.append(user_trademark)
+    combined_trademark = "\n".join(trademarks) if trademarks else ""
+    if combined_trademark:
+        _set_name(name_table, 7, combined_trademark)
+
     # --- Description (nameID 10): attribution with designer credit ---
     desc_parts: list[str] = []
     for font in (jp_font, lat_font):
@@ -1796,19 +1861,44 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
                 part += f" by {designer}"
             desc_parts.append(part)
     if desc_parts:
-        suffix = ". Merged with OFL Font Baker." if lat_font else ". Baked with OFL Font Baker."
-        desc = f"Based on {' and '.join(desc_parts)}{suffix}"
+        desc = f"Based on {' and '.join(desc_parts)}. Built with OFL Font Baker."
         _set_name(name_table, 10, desc)
 
-    # --- Designer (nameID 9) ---
-    # Set to user value, or clear (original designer doesn't apply to derivative)
-    _set_name(name_table, 9, user_designer if user_designer else "")
+    # --- Designer (nameID 9) / Designer URL (nameID 12) ---
+    # Always cleared. The merge operator is represented via Manufacturer
+    # (nameID 8 / 11), not Designer, because "designer" rightfully
+    # belongs to the type designers of the source fonts — which are
+    # acknowledged in the Description (nameID 10) via the "by <source
+    # designer>" clause.
+    _set_name(name_table, 9, "")
+    _set_name(name_table, 12, "")
+
+    # --- Manufacturer (nameID 8) and Manufacturer URL (nameID 11) ---
+    # Same policy: user-supplied values overwrite, empty clears the
+    # original vendor's attribution on the derivative.
+    _set_name(name_table, 8, user_manufacturer if user_manufacturer else "")
+    _set_name(name_table, 11, user_manufacturer_url if user_manufacturer_url else "")
 
     # --- License (nameID 13) ---
     _set_name(name_table, 13, _OFL_LICENSE_TEXT)
 
     # --- License URL (nameID 14) ---
     _set_name(name_table, 14, _OFL_LICENSE_URL)
+
+    # --- Version string (nameID 5) ---
+    # Default to 1.000 so derivative fonts don't inherit the base font's
+    # version. Users may supply any string; the "Version " prefix is
+    # enforced because the OpenType spec requires nameID 5 to begin with
+    # it (case-insensitive). A `;ofl-font-baker X.Y.Z` suffix is appended
+    # (when the generator version is provided) so the tool that produced
+    # the font is identifiable from its metadata.
+    version_value = (output.get("version") or "").strip() or "1.000"
+    if not version_value.lower().startswith("version "):
+        version_value = f"Version {version_value}"
+    app_version = (config.get("appVersion") or "").strip()
+    if app_version:
+        version_value = f"{version_value};ofl-font-baker {app_version}"
+    _set_name(name_table, 5, version_value)
 
 
 # ---------------------------------------------------------------------------
@@ -1819,6 +1909,14 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     """Reconcile name, OS/2, hhea, head tables after merge."""
     output = config.get("output") or {}
     output_name = output.get("familyName", "Merged Font")
+
+    # Resolve and validate the PostScript base name (without style suffix).
+    # Explicit postScriptName takes priority; otherwise derive from familyName
+    # by stripping disallowed characters.
+    output_ps_base = (output.get("postScriptName") or "").strip()
+    if not output_ps_base:
+        output_ps_base = sanitize_postscript_name(output_name)
+    validate_postscript_name(output_ps_base)
 
     # --- name table ---
     name_table = merged["name"]
@@ -1841,7 +1939,7 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
                         break
                 record.string = f"{output_name} {style}".strip()
             elif record.nameID == 6:
-                record.string = output_name.replace(" ", "")
+                record.string = output_ps_base
             elif record.nameID == 16:
                 record.string = output_name
 
@@ -1877,14 +1975,39 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     if os2:
         os2.usWeightClass = output_weight
         os2.usWidthClass = output_width
+        # achVendID is fixed to four spaces — the "unknown vendor"
+        # placeholder. The merge operator doesn't typically have a
+        # Microsoft-registered vendor tag, and inheriting the base
+        # font's tag would misattribute the derivative.
+        os2.achVendID = "    "
 
-    # Set italic flags
+    # Set italic flags + refresh timestamps so the derivative reports its
+    # own creation/modification time rather than inheriting the base font's.
     head = merged.get("head")
     if head:
         if output_italic:
             head.macStyle |= 0x0002   # bit 1 = italic
         else:
             head.macStyle &= ~0x0002
+        now = timestampNow()
+        head.created = now
+        head.modified = now
+        # fontTools rewrites head.modified to "now" during save() when
+        # recalcTimestamp is true (the default), which would make created
+        # and modified disagree by a few seconds. Pin both to the same
+        # instant so inspectors report a consistent timestamp pair.
+        merged.recalcTimestamp = False
+
+        # fontRevision (Fixed 16.16) should track the nameID 5 number.
+        # Parse the leading numeric from output.version so values like
+        # "1.000-beta" or "Version 2.5" collapse to the numeric prefix
+        # (1.0 / 2.5). Anything that doesn't start with a number falls
+        # back to the 1.000 default.
+        version_raw = (output.get("version") or "").strip() or "1.000"
+        if version_raw.lower().startswith("version "):
+            version_raw = version_raw[len("Version "):].strip()
+        m = re.match(r"^\d+(?:\.\d+)?", version_raw)
+        head.fontRevision = float(m.group(0)) if m else 1.0
     if os2:
         if output_italic:
             os2.fsSelection |= 0x0001   # bit 0 = italic
@@ -1904,13 +2027,59 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
             record.string = f"{output_name} {style_name}"
         elif record.nameID == 6:
             ps_style = style_name.replace(" ", "")
-            record.string = f"{output_name.replace(' ', '')}-{ps_style}"
+            record.string = f"{output_ps_base}-{ps_style}"
         elif record.nameID == 17:
             # Typographic Subfamily — Illustrator uses this for weight display
             record.string = style_name
 
+    # --- Unique Font Identifier (nameID 3) ---
+    # Auto-built as "{version};{PostScript full name}" so the OS font
+    # cache can tell distinct versions/styles apart. Without a fresh
+    # ID, derivatives collide with the base font in the cache and
+    # render using stale glyphs. Vendor ID is omitted because the
+    # derivative has no vendor tag.
+    version_for_id = (output.get("version") or "").strip() or "1.000"
+    if version_for_id.lower().startswith("version "):
+        version_for_id = version_for_id[len("Version "):].strip()
+    ps_full_name = f"{output_ps_base}-{style_name.replace(' ', '')}"
+    _set_name(name_table, 3, f"{version_for_id};{ps_full_name}")
+
     # --- OFL metadata: copyright, license, description ---
     _set_ofl_metadata(lat_font, jp_font, merged, config)
+
+    # --- Drop Variations PostScript Name Prefix (nameID 25) ---
+    # nameID 25 is the prefix used to build PostScript names for a
+    # variable font's named instances. Because the output is always a
+    # static instance (we bake axis values), this record has no purpose
+    # and inheriting it from the variable base font would leak the
+    # source family name into inspectors.
+    name_table.removeNames(nameID=25)
+
+    # --- CFF TopDict metadata (OTF only) ---
+    # CFF fonts carry a second copy of FullName / FamilyName / Copyright
+    # inside the CFF table's TopDict. PDF embedders and Adobe tools read
+    # those directly, so derivatives would keep the base font's name
+    # unless we mirror the name-table values here.
+    if "CFF " in merged:
+        cff = merged["CFF "].cff
+        td = cff.topDictIndex[0]
+        td.FullName = f"{output_name} {style_name}".strip()
+        td.FamilyName = output_name
+        cff_copyright = _get_name(merged, 0)
+        if cff_copyright:
+            # CFF 1 uses "Notice" as the canonical copyright field;
+            # "Copyright" is defined but rarely populated. Set whichever
+            # the TopDict exposes so inspectors see a consistent value.
+            td.Notice = cff_copyright
+            if hasattr(td, "Copyright"):
+                td.Copyright = cff_copyright
+        # CFF Name INDEX — the PostScript name at the very top of the
+        # CFF binary. PDF embedders and some Adobe tools read it in
+        # preference to the name table / TopDict FullName, so leaving
+        # it at the base font's value would re-leak the source name.
+        ps_full = _get_name(merged, 6)
+        if ps_full and cff.fontNames:
+            cff.fontNames[0] = ps_full
 
     # --- Copy feature name records from Latin font ---
     lat_name = lat_font.get("name") if lat_font else None

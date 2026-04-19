@@ -28,19 +28,35 @@ export interface FontSource {
   axes: VariableAxis[]; // Empty array if static font
   // Cached metadata (loaded once, avoids re-parsing)
   copyright?: string;
+  trademark?: string;
   designer?: string;
+  designerURL?: string;
+  manufacturer?: string;
+  manufacturerURL?: string;
   license?: string;
   licenseURL?: string;
   description?: string;
+  version?: string;
+  /** OS/2 achVendID — 4-char type-foundry identifier. */
+  vendorID?: string;
 }
 
 export interface MergeOutput {
   familyName: string;
+  /** PostScript name (nameID 6). Printable ASCII 33-126 minus []{}<>()/%, <= 63 bytes. */
+  postScriptName: string;
+  /** Version string (nameID 5). Python prepends "Version " if absent. */
+  version: string;
   weight: number;
   italic: boolean;
   width: number;
-  designer: string;
+  /** Manufacturer name (nameID 8). Empty clears the record. */
+  manufacturer: string;
+  /** Manufacturer URL (nameID 11). Empty clears the record. */
+  manufacturerURL: string;
   copyright: string;
+  /** Extra trademark text appended after source trademarks (nameID 7). */
+  trademark: string;
   upm: number;
 }
 

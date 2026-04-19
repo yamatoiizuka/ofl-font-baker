@@ -6,6 +6,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { FontSource, MergeProgress } from '@/shared/types';
+import { sanitizePostScriptName, needsManualPostScriptName } from '@/shared/postscript-name';
 
 // ---------------------------------------------------------------------------
 // Undoable state (tracked in history)
@@ -17,28 +18,44 @@ interface UndoableState {
   selectedRole: 'latin' | 'base' | null;
   sampleText: string;
   familyName: string;
+  /** PostScript name (nameID 6). Auto-derived from familyName unless postScriptNameDirty. */
+  postScriptName: string;
+  /** True once the user has manually edited postScriptName — suppresses auto-sync. */
+  postScriptNameDirty: boolean;
+  /** Version string (nameID 5) — resets to the default when a new font is loaded. */
+  version: string;
   fontWeight: number;
   fontItalic: boolean;
   fontWidth: number;
-  designer: string;
+  manufacturer: string;
+  manufacturerURL: string;
   copyright: string;
+  trademark: string;
   upm: number;
 }
 
 export const DEFAULT_TEXT =
   '国LINE国Word国character国type国123国456国$1,789円国グーテンベルクが活版印刷術を発明したのは1440年代後半といわれています。それから約20年後の1465年、その新しい技術はアルプスを越え、イタリアに伝わりました。ドイツから来たSweynheimとPannartzという二人がローマの北にあるSubiacoという村の修道院に滞在し、そこでイタリア最初の印刷物をつくったのです。';
 
+const INITIAL_FAMILY_NAME = 'Untitled Font';
+const INITIAL_VERSION = '1.000';
+
 const INITIAL_UNDOABLE: UndoableState = {
   latinFont: null,
   baseFont: null,
   selectedRole: null,
   sampleText: DEFAULT_TEXT,
-  familyName: 'Untitled Font',
+  familyName: INITIAL_FAMILY_NAME,
+  postScriptName: sanitizePostScriptName(INITIAL_FAMILY_NAME),
+  postScriptNameDirty: false,
+  version: INITIAL_VERSION,
   fontWeight: 400,
   fontItalic: false,
   fontWidth: 5,
-  designer: '',
+  manufacturer: '',
+  manufacturerURL: '',
   copyright: '',
+  trademark: '',
   upm: 1000,
 };
 
@@ -71,11 +88,15 @@ interface MergeState extends UndoableState {
   ) => void;
   updateFontAxis: (role: 'latin' | 'base', tag: string, value: number) => void;
   setFamilyName: (name: string) => void;
+  setPostScriptName: (name: string) => void;
+  setVersion: (version: string) => void;
   setFontWeight: (weight: number) => void;
   setFontItalic: (italic: boolean) => void;
   setFontWidth: (width: number) => void;
-  setDesigner: (designer: string) => void;
+  setManufacturer: (manufacturer: string) => void;
+  setManufacturerURL: (url: string) => void;
   setCopyright: (copyright: string) => void;
+  setTrademark: (trademark: string) => void;
   setUpm: (upm: number) => void;
   setMergeProgress: (progress: MergeProgress | null) => void;
   setIsMerging: (merging: boolean) => void;
@@ -99,11 +120,16 @@ function extractUndoable(state: MergeState): UndoableState {
     selectedRole: state.selectedRole,
     sampleText: state.sampleText,
     familyName: state.familyName,
+    postScriptName: state.postScriptName,
+    postScriptNameDirty: state.postScriptNameDirty,
+    version: state.version,
     fontWeight: state.fontWeight,
     fontItalic: state.fontItalic,
     fontWidth: state.fontWidth,
-    designer: state.designer,
+    manufacturer: state.manufacturer,
+    manufacturerURL: state.manufacturerURL,
     copyright: state.copyright,
+    trademark: state.trademark,
     upm: state.upm,
   };
 }
@@ -139,6 +165,7 @@ export const useMergeStore = create<MergeState>()(
           fontWidth: INITIAL_UNDOABLE.fontWidth,
           upm: INITIAL_UNDOABLE.upm,
           fontItalic: INITIAL_UNDOABLE.fontItalic,
+          version: INITIAL_UNDOABLE.version,
         }));
         get().pushHistory();
       },
@@ -151,6 +178,7 @@ export const useMergeStore = create<MergeState>()(
           fontWidth: INITIAL_UNDOABLE.fontWidth,
           upm: INITIAL_UNDOABLE.upm,
           fontItalic: INITIAL_UNDOABLE.fontItalic,
+          version: INITIAL_UNDOABLE.version,
         }));
         get().pushHistory();
       },
@@ -184,7 +212,32 @@ export const useMergeStore = create<MergeState>()(
 
       // Text setters don't push history per keystroke — components call
       // pushHistory() on blur to record one snapshot per edit session.
-      setFamilyName: (name) => set({ familyName: name }),
+      setFamilyName: (name) => set((state) => {
+        // Clean family (no characters lost beyond spaces): reset dirty flag
+        // and auto-sync the PostScript name. This keeps the PS field in
+        // sync with the family name whenever it *can* be, and lets
+        // previously-dirty values be reclaimed once the conflict is gone.
+        if (!needsManualPostScriptName(name)) {
+          return {
+            familyName: name,
+            postScriptName: sanitizePostScriptName(name),
+            postScriptNameDirty: false,
+          };
+        }
+        // Family needs manual PS name. If the user has already edited
+        // the PS field, preserve their entry; otherwise auto-sync the
+        // (possibly partial) sanitized value as a starting point.
+        if (state.postScriptNameDirty) {
+          return { familyName: name };
+        }
+        return {
+          familyName: name,
+          postScriptName: sanitizePostScriptName(name),
+        };
+      }),
+      setPostScriptName: (name) =>
+        set({ postScriptName: name, postScriptNameDirty: true }),
+      setVersion: (version) => set({ version }),
       setFontWeight: (weight) => {
         set({ fontWeight: weight });
         get().pushHistory();
@@ -197,8 +250,10 @@ export const useMergeStore = create<MergeState>()(
         set({ fontWidth: width });
         get().pushHistory();
       },
-      setDesigner: (designer) => set({ designer: designer }),
+      setManufacturer: (manufacturer) => set({ manufacturer }),
+      setManufacturerURL: (url) => set({ manufacturerURL: url }),
       setCopyright: (copyright) => set({ copyright: copyright }),
+      setTrademark: (trademark) => set({ trademark }),
       setUpm: (upm) => set({ upm: upm }),
       setMergeProgress: (progress) => set({ mergeProgress: progress }),
       setIsMerging: (merging) => set({ isMerging: merging }),
@@ -257,17 +312,31 @@ export const useMergeStore = create<MergeState>()(
         sampleText: state.sampleText,
         previewFontSize: state.previewFontSize,
         familyName: state.familyName,
+        postScriptName: state.postScriptName,
+        postScriptNameDirty: state.postScriptNameDirty,
+        version: state.version,
         fontWeight: state.fontWeight,
         fontItalic: state.fontItalic,
         fontWidth: state.fontWidth,
-        designer: state.designer,
+        manufacturer: state.manufacturer,
+        manufacturerURL: state.manufacturerURL,
         copyright: state.copyright,
+        trademark: state.trademark,
         upm: state.upm,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
         if (state.baseFont) state.selectedRole = 'base';
         else if (state.latinFont) state.selectedRole = 'latin';
+        // Backfill postScriptName for stores persisted before the field existed.
+        if (!state.postScriptName) {
+          state.postScriptName = sanitizePostScriptName(state.familyName || '');
+          state.postScriptNameDirty = false;
+        }
+        // Backfill version for stores persisted before the field existed.
+        if (!state.version) {
+          state.version = INITIAL_VERSION;
+        }
         // Initialize history from rehydrated state
         const snapshot = extractUndoable(state);
         state._history = [snapshot];

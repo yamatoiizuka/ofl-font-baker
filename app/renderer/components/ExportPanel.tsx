@@ -10,6 +10,7 @@ import { ExportMetadataModal } from '@/renderer/components/ExportMetadataModal';
 import { ExportCompleteModal } from '@/renderer/components/ExportCompleteModal';
 import { ExportFailedModal } from '@/renderer/components/ExportFailedModal';
 import { cn } from '@/renderer/lib/utils';
+import { needsManualPostScriptName, validatePostScriptName } from '@/shared/postscript-name';
 import { WEIGHT_MAP, DONE_DISPLAY_MS } from '@/shared/constants';
 
 /**
@@ -21,6 +22,8 @@ export const ExportPanel: React.FC = () => {
     latinFont,
     baseFont,
     familyName,
+    postScriptName,
+    postScriptNameDirty,
     fontWeight,
     setFamilyName,
     setFontWeight,
@@ -45,7 +48,18 @@ export const ExportPanel: React.FC = () => {
   }
 
   const hasValidName = familyName.trim().length > 0;
-  const canMerge = baseFont && !isMerging && hasValidName;
+  // Red label when the PostScript name is invalid (empty or contains
+  // characters that cannot appear in nameID 6) — export is blocked.
+  // Yellow label when the family has non-ASCII characters but the PS
+  // name is still valid — export works but the user should review.
+  // Both are suppressed when Font Family itself is empty (that error
+  // already blocks export, so the PS message is redundant), and the
+  // warning is also suppressed once the user has manually edited the
+  // PS name (the point of the warning is to flag an auto-derived value).
+  const psError = hasValidName ? validatePostScriptName(postScriptName.trim()) : null;
+  const psWarning =
+    hasValidName && !psError && needsManualPostScriptName(familyName) && !postScriptNameDirty;
+  const canMerge = baseFont && !isMerging && hasValidName && !psError;
   const isDone = mergeProgress?.stage === 'done';
   const showProgress = mergeProgress && !isDone;
 
@@ -137,59 +151,85 @@ export const ExportPanel: React.FC = () => {
         {/* Weight */}
         <WeightSelect value={fontWeight} onChange={setFontWeight} disabled={isMerging} />
 
-        {/* Metadata... */}
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={!baseFont}
-          onClick={() => setMetadataOpen(true)}
-          className="text-xs text-muted-foreground hover:text-foreground h-[38px] px-3 shrink-0"
-        >
-          Metadata...
-        </Button>
-
-        {isMerging ? (
-          <Button
-            onClick={handleStop}
-            onMouseEnter={() => setIsHoveringStop(true)}
-            onMouseLeave={() => setIsHoveringStop(false)}
-            size="lg"
-            variant="secondary"
+        {/* Metadata... + Export grouped, with PostScript-name status label
+            spanning both (so the "required"/"check" text doesn't force a
+            cramped layout under Metadata alone). */}
+        <div className="shrink-0">
+          <label
             className={cn(
-              'rounded-md w-[100px] @[36rem]:w-[130px] h-[38px] shrink-0 text-base transition-none',
-              isHoveringStop && 'text-red-500',
+              'text-[11px] block mb-1',
+              psError
+                ? 'text-red-400'
+                : psWarning
+                  ? 'text-amber-500'
+                  : 'text-muted-foreground',
             )}
           >
-            {isHoveringStop ? (
-              'Stop'
-            ) : (
-              <svg
-                className="animate-spin h-5 w-5 text-muted-foreground"
-                viewBox="0 0 24 24"
-                fill="none"
+            {psError
+              ? 'PostScript Name is Required'
+              : psWarning
+                ? 'Check PostScript Name'
+                : '\u00A0'}
+          </label>
+          <div className="flex items-end gap-3">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!baseFont}
+              onClick={() => setMetadataOpen(true)}
+              className={cn(
+                'text-xs text-muted-foreground hover:text-foreground h-[38px] px-3 shrink-0',
+                psError && 'bg-red-100 hover:bg-red-150',
+                psWarning && 'bg-amber-100 hover:bg-amber-150',
+              )}
+            >
+              Metadata...
+            </Button>
+
+            {isMerging ? (
+              <Button
+                onClick={handleStop}
+                onMouseEnter={() => setIsHoveringStop(true)}
+                onMouseLeave={() => setIsHoveringStop(false)}
+                size="lg"
+                variant="secondary"
+                className={cn(
+                  'rounded-md w-[100px] @[36rem]:w-[130px] h-[38px] shrink-0 text-base transition-none',
+                  isHoveringStop && 'text-red-500',
+                )}
               >
-                <circle
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeDasharray="50 14"
-                />
-              </svg>
+                {isHoveringStop ? (
+                  'Stop'
+                ) : (
+                  <svg
+                    className="animate-spin h-5 w-5 text-muted-foreground"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                  >
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeDasharray="50 14"
+                    />
+                  </svg>
+                )}
+              </Button>
+            ) : (
+              <Button
+                onClick={handleExport}
+                disabled={!canMerge}
+                size="lg"
+                className="rounded-md w-[100px] @[36rem]:w-[130px] h-[38px] shrink-0 text-base"
+              >
+                Export
+              </Button>
             )}
-          </Button>
-        ) : (
-          <Button
-            onClick={handleExport}
-            disabled={!canMerge}
-            size="lg"
-            className="rounded-md w-[100px] @[36rem]:w-[130px] h-[38px] shrink-0 text-base"
-          >
-            Export
-          </Button>
-        )}
+          </div>
+        </div>
 
         <ExportMetadataModal open={metadataOpen} onOpenChange={setMetadataOpen} />
         <ExportCompleteModal open={completeOpen} onOpenChange={setCompleteOpen} />

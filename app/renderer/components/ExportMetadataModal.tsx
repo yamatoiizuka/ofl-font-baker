@@ -2,6 +2,7 @@ import React from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/renderer/components/ui/dialog';
 import { WEIGHT_MAP, WIDTH_MAP, computeStyleName } from '@/shared/constants';
 import { useMergeStore } from '@/renderer/stores/mergeStore';
+import { needsManualPostScriptName, sanitizePostScriptName } from '@/shared/postscript-name';
 import { cn } from '@/renderer/lib/utils';
 
 interface Props {
@@ -11,6 +12,7 @@ interface Props {
 
 interface SourceMeta {
   copyright: string;
+  trademark: string;
   designer: string;
   familyName: string;
 }
@@ -22,7 +24,6 @@ const OFL_LICENSE_TEXT =
 
 const OFL_LICENSE_URL = 'https://openfontlicense.org';
 
-
 /* ------------------------------------------------------------------ */
 /*  Shared UI                                                         */
 /* ------------------------------------------------------------------ */
@@ -32,7 +33,8 @@ const inputClass =
 
 const selectClassName = `${inputClass} appearance-none pr-8`;
 const selectArrowStyle = {
-  backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'10\' height=\'6\' viewBox=\'0 0 10 6\' fill=\'none\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cpath d=\'M1 1L5 5L9 1\' stroke=\'%23999\' stroke-width=\'1.2\' stroke-linecap=\'round\'/%3E%3C/svg%3E")',
+  backgroundImage:
+    "url(\"data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23999' stroke-width='1.2' stroke-linecap='round'/%3E%3C/svg%3E\")",
   backgroundRepeat: 'no-repeat',
   backgroundPosition: 'right 12px center',
   backgroundSize: '10px 6px',
@@ -49,7 +51,10 @@ const InfoRow: React.FC<{ label: string; value: React.ReactNode }> = ({ label, v
 };
 
 const SectionHeader: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div className="text-[15px] text-foreground mb-4 pt-5 mt-4 border-t border-border/50 first:mt-0" style={{ fontFamily: "'Source Serif 4', serif" }}>
+  <div
+    className="text-[15px] text-foreground mb-4 pt-5 mt-4 border-t border-border/50 first:mt-0"
+    style={{ fontFamily: "'Source Serif 4', serif" }}
+  >
     {children}
   </div>
 );
@@ -70,28 +75,60 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
     latinFont,
     baseFont,
     familyName,
+    postScriptName,
+    postScriptNameDirty,
+    version,
     fontWeight,
     fontItalic,
     fontWidth,
-    designer,
+    manufacturer,
+    manufacturerURL,
     copyright,
+    trademark,
     upm,
     isMerging,
     setFamilyName,
+    setPostScriptName,
+    setVersion,
     setFontWeight,
     setFontItalic,
     setFontWidth,
-    setDesigner,
+    setManufacturer,
+    setManufacturerURL,
     setCopyright,
+    setTrademark,
     setUpm,
   } = useMergeStore();
 
+  // PostScript name is auto-synced from family while it can be sanitized
+  // without losing information. If the family contains non-ASCII or
+  // disallowed characters, the input unlocks so the user can supply a
+  // valid name manually. The inline "English only" hint is suppressed
+  // once the user has committed their own value — at that point the
+  // constraint has clearly been understood.
+  const psNameNeedsManual = needsManualPostScriptName(familyName);
+  const showPsNameHint = psNameNeedsManual && !postScriptNameDirty;
+  // Flag when sanitization wipes the user's input to empty — nameID 6
+  // cannot be empty, so Export is blocked until they supply something.
+  const showPsNameError =
+    psNameNeedsManual && postScriptNameDirty && postScriptName.trim().length === 0;
+
   // Use cached metadata from FontSource (no re-parsing needed)
   const jpMeta: SourceMeta | null = baseFont
-    ? { copyright: baseFont.copyright || '', designer: baseFont.designer || '', familyName: baseFont.familyName }
+    ? {
+        copyright: baseFont.copyright || '',
+        trademark: baseFont.trademark || '',
+        designer: baseFont.designer || '',
+        familyName: baseFont.familyName,
+      }
     : null;
   const latMeta: SourceMeta | null = latinFont
-    ? { copyright: latinFont.copyright || '', designer: latinFont.designer || '', familyName: latinFont.familyName }
+    ? {
+        copyright: latinFont.copyright || '',
+        trademark: latinFont.trademark || '',
+        designer: latinFont.designer || '',
+        familyName: latinFont.familyName,
+      }
     : null;
   const loading = false;
 
@@ -99,12 +136,17 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
   const familyTitle = familyName || 'Export Metadata';
   const styleName = computeStyleName(fontWeight, fontItalic, fontWidth);
 
-
   // Source copyrights (read-only)
   const sourceCopyrights: string[] = [];
   if (jpMeta?.copyright) sourceCopyrights.push(jpMeta.copyright);
   if (latMeta?.copyright && latMeta.copyright !== jpMeta?.copyright)
     sourceCopyrights.push(latMeta.copyright);
+
+  // Source trademarks (read-only, preserved as acknowledgment per OFL 1.1 §4)
+  const sourceTrademarks: string[] = [];
+  if (jpMeta?.trademark) sourceTrademarks.push(jpMeta.trademark);
+  if (latMeta?.trademark && latMeta.trademark !== jpMeta?.trademark)
+    sourceTrademarks.push(latMeta.trademark);
 
   // Description with designer credit
   const descParts: string[] = [];
@@ -116,7 +158,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
   }
   const description =
     descParts.length > 0
-      ? `Based on ${descParts.join(' and ')}${latinFont ? '. Merged with OFL Font Baker.' : '. Baked with OFL Font Baker.'}`
+      ? `Based on ${descParts.join(' and ')}. Built with OFL Font Baker.`
       : '';
 
   const ready = !loading && (jpMeta || latMeta);
@@ -138,7 +180,7 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
             {/* ===== General ===== */}
             <SectionHeader>General</SectionHeader>
 
-            <FieldRow label="Family">
+            <FieldRow label="Font Family">
               <input
                 type="text"
                 defaultValue={familyName}
@@ -149,6 +191,40 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
                 disabled={isMerging}
                 className={cn(inputClass, isMerging && 'opacity-50 cursor-not-allowed')}
               />
+            </FieldRow>
+
+            <FieldRow label="PostScript Name">
+              <div>
+                {showPsNameHint && (
+                  <div className="text-[12px] text-amber-500 mb-1.5 flex items-center gap-1">
+                    <span>⚠</span>
+                    <span>English characters only</span>
+                  </div>
+                )}
+                {showPsNameError && (
+                  <div className="text-[12px] text-red-400 mb-1.5 flex items-center gap-1">
+                    <span>⚠</span>
+                    <span>PostScript Name is Required</span>
+                  </div>
+                )}
+                <input
+                  type="text"
+                  value={postScriptName}
+                  onChange={(e) => setPostScriptName(e.target.value)}
+                  onBlur={(e) => {
+                    // Strip disallowed chars on commit so non-ASCII typed
+                    // into the field cannot leak into nameID 6.
+                    const sanitized = sanitizePostScriptName(e.target.value);
+                    if (sanitized !== e.target.value) setPostScriptName(sanitized);
+                    useMergeStore.getState().pushHistory();
+                  }}
+                  disabled={isMerging || !psNameNeedsManual}
+                  className={cn(
+                    inputClass,
+                    (isMerging || !psNameNeedsManual) && 'opacity-50 cursor-not-allowed',
+                  )}
+                />
+              </div>
             </FieldRow>
 
             <FieldRow label="Weight">
@@ -201,7 +277,9 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
             </FieldRow>
 
             <div className="flex gap-[18px] py-[5px] text-[14px] pl-2 items-center">
-              <span className="text-muted-foreground/70 shrink-0 w-[90px] text-right leading-5">Italic</span>
+              <span className="text-muted-foreground/70 shrink-0 w-[90px] text-right leading-5">
+                Italic
+              </span>
               <button
                 onClick={() => !isMerging && setFontItalic(!fontItalic)}
                 disabled={isMerging}
@@ -221,16 +299,20 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
             </div>
 
             {/* ===== Author ===== */}
+            {/* Designer / Designer URL are intentionally omitted — the
+                merge operator attributes themselves through Manufacturer.
+                Designer stays with the original type designers and is
+                surfaced via the source credit in nameID 10. */}
             <SectionHeader>Author</SectionHeader>
 
-            <FieldRow label="Designer">
+            <FieldRow label="Manufacturer">
               <input
                 type="text"
-                value={designer}
-                onChange={(e) => setDesigner(e.target.value)}
+                value={manufacturer}
+                onChange={(e) => setManufacturer(e.target.value)}
                 onBlur={() => useMergeStore.getState().pushHistory()}
                 disabled={isMerging}
-                placeholder="Your name (optional)"
+                placeholder="Your name or organization (optional)"
                 className={cn(
                   inputClass,
                   'placeholder:text-foreground/30',
@@ -238,22 +320,53 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
                 )}
               />
             </FieldRow>
+
+            <FieldRow label="Manufacturer URL">
+              <input
+                type="text"
+                value={manufacturerURL}
+                onChange={(e) => setManufacturerURL(e.target.value)}
+                onBlur={() => useMergeStore.getState().pushHistory()}
+                disabled={isMerging}
+                placeholder="https://example.com (optional)"
+                className={cn(
+                  inputClass,
+                  'placeholder:text-foreground/30',
+                  isMerging && 'opacity-50 cursor-not-allowed',
+                )}
+              />
+            </FieldRow>
+
             <div className="pb-2" />
 
             {/* ===== Info ===== */}
-            {description && (
-              <>
-                <SectionHeader>Info</SectionHeader>
-                <InfoRow label="Description" value={description} />
-              </>
-            )}
+            <SectionHeader>Info</SectionHeader>
+
+            <FieldRow label="Version">
+              <input
+                type="text"
+                value={version}
+                onChange={(e) => setVersion(e.target.value)}
+                onBlur={() => useMergeStore.getState().pushHistory()}
+                disabled={isMerging}
+                placeholder="1.000"
+                className={cn(
+                  inputClass,
+                  'placeholder:text-foreground/30',
+                  isMerging && 'opacity-50 cursor-not-allowed',
+                )}
+              />
+            </FieldRow>
+
+            {description && <InfoRow label="Description" value={description} />}
 
             {/* ===== Legal ===== */}
             <SectionHeader>Legal</SectionHeader>
 
-            <InfoRow label="Copyright" value={
-              <div className="whitespace-pre-line">{sourceCopyrights.join('\n')}</div>
-            } />
+            <InfoRow
+              label="Copyright"
+              value={<div className="whitespace-pre-line">{sourceCopyrights.join('\n')}</div>}
+            />
 
             <FieldRow label="">
               <input
@@ -263,7 +376,33 @@ export const ExportMetadataModal: React.FC<Props> = ({ open, onOpenChange }) => 
                 onBlur={() => useMergeStore.getState().pushHistory()}
                 disabled={isMerging}
                 placeholder="Additional copyright (optional)"
-                className={cn(inputClass, 'placeholder:text-foreground/30', isMerging && 'opacity-50 cursor-not-allowed')}
+                className={cn(
+                  inputClass,
+                  'placeholder:text-foreground/30',
+                  isMerging && 'opacity-50 cursor-not-allowed',
+                )}
+              />
+            </FieldRow>
+            <div className="h-[10px]" />
+
+            <InfoRow
+              label="Trademark"
+              value={<div className="whitespace-pre-line">{sourceTrademarks.join('\n')}</div>}
+            />
+
+            <FieldRow label="">
+              <input
+                type="text"
+                value={trademark}
+                onChange={(e) => setTrademark(e.target.value)}
+                onBlur={() => useMergeStore.getState().pushHistory()}
+                disabled={isMerging}
+                placeholder="Additional trademark (optional)"
+                className={cn(
+                  inputClass,
+                  'placeholder:text-foreground/30',
+                  isMerging && 'opacity-50 cursor-not-allowed',
+                )}
               />
             </FieldRow>
             <div className="h-[10px]" />

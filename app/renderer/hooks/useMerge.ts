@@ -52,9 +52,10 @@ export function useMerge() {
    */
   async function startMerge(): Promise<MergeResult> {
     const {
-      latinFont, baseFont, familyName,
+      latinFont, baseFont, familyName, postScriptName, version,
       fontWeight, fontItalic, fontWidth,
-      designer, copyright, upm,
+      manufacturer, manufacturerURL,
+      copyright, trademark, upm,
     } = useMergeStore.getState();
 
     if (!baseFont) {
@@ -78,11 +79,15 @@ export function useMerge() {
       baseFont: baseFont!,
       output: {
         familyName,
+        postScriptName,
+        version,
         weight: fontWeight,
         italic: fontItalic,
         width: fontWidth,
-        designer,
+        manufacturer,
+        manufacturerURL,
         copyright,
+        trademark,
         upm,
       },
       export: {

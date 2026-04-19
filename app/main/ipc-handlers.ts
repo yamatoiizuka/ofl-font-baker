@@ -6,6 +6,7 @@ import { ipcMain, dialog, BrowserWindow, Menu, shell } from 'electron';
 import { IPC, MergeConfig } from '@/shared/types';
 import { runMerge, abortMerge } from '@/main/merge-engine';
 import { setExporting } from '@/main/export-state';
+import { validatePostScriptName } from '@/shared/postscript-name';
 import { readFileSync, existsSync } from 'fs';
 
 /**
@@ -69,6 +70,10 @@ export function registerIpcHandlers() {
     try {
       if (!config.output.familyName?.trim()) {
         return { success: false, error: 'Font Family is Required' };
+      }
+      const psError = validatePostScriptName((config.output.postScriptName || '').trim());
+      if (psError) {
+        return { success: false, error: `PostScript name: ${psError}` };
       }
 
       // PICK_OUTPUT uses showSaveDialog with showOverwriteConfirmation,

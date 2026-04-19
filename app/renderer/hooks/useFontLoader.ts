@@ -170,10 +170,16 @@ export function useFontLoader() {
           isVariable,
           axes,
           copyright: getStr(font.names.copyright),
+          trademark: getStr(font.names.trademark),
           designer: getStr(font.names.designer),
+          designerURL: getStr(font.names.designerURL),
+          manufacturer: getStr(font.names.manufacturer),
+          manufacturerURL: getStr(font.names.manufacturerURL),
           license: getStr(font.names.license),
           licenseURL: getStr(font.names.licenseURL),
           description: getStr(font.names.description),
+          version: getStr(font.names.version),
+          vendorID: (font as any).tables?.os2?.achVendID ?? '',
         };
 
         if (role === 'latin') {

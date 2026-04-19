@@ -78,7 +78,7 @@ function extractMeta(font: any, source: FontSource): FontMeta {
 
   return {
     familyName: getStr(names.fontFamily) || source.familyName,
-    styleName: source.isVariable ? 'Variable' : (getStr(names.fontSubfamily) || source.styleName),
+    styleName: source.isVariable ? 'Variable' : getStr(names.fontSubfamily) || source.styleName,
     version: getStr(names.version),
     copyright: getStr(names.copyright),
     trademark: getStr(names.trademark),
@@ -163,18 +163,18 @@ export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => 
   const meta: FontMeta = {
     familyName: font.familyName,
     styleName: font.styleName,
-    version: '',
+    version: font.version || '',
     copyright: font.copyright || '',
-    trademark: '',
+    trademark: font.trademark || '',
     designer: font.designer || '',
-    designerURL: '',
-    manufacturer: '',
-    manufacturerURL: '',
+    designerURL: font.designerURL || '',
+    manufacturer: font.manufacturer || '',
+    manufacturerURL: font.manufacturerURL || '',
     license: font.license || '',
     licenseURL: font.licenseURL || '',
     description: font.description || '',
     fsType: 0,
-    vendorID: '',
+    vendorID: font.vendorID || '',
     unitsPerEm: font.unitsPerEm,
     glyphCount: font.glyphCount,
     ascender: font.ascender,
@@ -200,7 +200,6 @@ export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => 
             <Section title="General">
               <InfoRow label="Family" value={meta.familyName} />
               <InfoRow label="Style" value={meta.styleName} />
-              <InfoRow label="Version" value={meta.version} />
               <InfoRow label="Glyphs" value={meta.glyphCount.toLocaleString()} />
               <InfoRow label="UPM" value={String(meta.unitsPerEm)} />
             </Section>
@@ -211,17 +210,23 @@ export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => 
               <InfoRow label="Line Gap" value={meta.lineGap !== 0 ? String(meta.lineGap) : null} />
             </Section>
 
-            {(meta.designer || meta.designerURL || meta.manufacturer || meta.manufacturerURL) && (
+            {(meta.designer ||
+              meta.designerURL ||
+              meta.manufacturer ||
+              meta.manufacturerURL ||
+              meta.vendorID.trim()) && (
               <Section title="Author">
                 <InfoRow label="Designer" value={meta.designer} />
                 <InfoRow label="Designer URL" value={urlValue(meta.designerURL)} />
                 <InfoRow label="Manufacturer" value={meta.manufacturer} />
-                <InfoRow label="Mfr. URL" value={urlValue(meta.manufacturerURL)} />
+                <InfoRow label="Manufacturer URL" value={urlValue(meta.manufacturerURL)} />
+                <InfoRow label="Vendor ID" value={meta.vendorID.trim() || null} />
               </Section>
             )}
 
-            {meta.description && (
+            {(meta.version || meta.description) && (
               <Section title="Info">
+                <InfoRow label="Version" value={meta.version} />
                 <InfoRow label="Description" value={meta.description} />
               </Section>
             )}
