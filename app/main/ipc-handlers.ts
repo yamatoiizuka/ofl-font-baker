@@ -7,7 +7,6 @@ import { IPC, MergeConfig } from '@/shared/types';
 import { runMerge, abortMerge } from '@/main/merge-engine';
 import { setExporting } from '@/main/export-state';
 import { readFileSync, existsSync } from 'fs';
-import path from 'path';
 
 /**
  * Registers all IPC handlers for font picking, file reading, output selection, and merge execution.
@@ -71,24 +70,12 @@ export function registerIpcHandlers() {
       if (!config.output.familyName?.trim()) {
         return { success: false, error: 'Font Family is Required' };
       }
-      const dirPath = config.export.package.dir;
-      const folderName = path.basename(dirPath);
 
-      // Check if folder already exists and confirm overwrite
-      let overwrite = false;
-      if (existsSync(dirPath)) {
-        const confirm = await dialog.showMessageBox({
-          type: 'warning',
-          message: `\u201C${folderName}\u201D already exists. Replace?`,
-          buttons: ['Replace', 'Cancel'],
-          defaultId: 0,
-          cancelId: 1,
-        });
-        if (confirm.response !== 0) {
-          return { success: false, error: 'Export cancelled' };
-        }
-        overwrite = true;
-      }
+      // PICK_OUTPUT uses showSaveDialog with showOverwriteConfirmation,
+      // so the OS has already asked the user to replace when the target
+      // exists. We just forward overwrite=true to Python when the folder
+      // is present so prepare_output_dir doesn't raise FileExistsError.
+      const overwrite = existsSync(config.export.package.dir);
 
       const mergeConfig: MergeConfig = {
         ...config,
