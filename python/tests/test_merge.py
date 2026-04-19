@@ -1530,6 +1530,13 @@ class TestCFFHintPreservation:
         name_copyright = m["name"].getDebugName(0)
         assert td.Notice == name_copyright
 
+    def test_cff_font_names_mirrors_postscript_name(self):
+        """CFF Name INDEX fontNames[0] mirrors nameID 6 (PostScript name)."""
+        m = _merge_cff_to_cff()
+        cff = m["CFF "].cff
+        assert cff.fontNames, "CFF Name INDEX is unexpectedly empty"
+        assert cff.fontNames[0] == m["name"].getDebugName(6)
+
 
 @pytest.mark.skipif(
     not os.path.exists(_JP_CID_HINT),

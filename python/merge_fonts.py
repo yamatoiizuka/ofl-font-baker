@@ -2061,7 +2061,8 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     # those directly, so derivatives would keep the base font's name
     # unless we mirror the name-table values here.
     if "CFF " in merged:
-        td = merged["CFF "].cff.topDictIndex[0]
+        cff = merged["CFF "].cff
+        td = cff.topDictIndex[0]
         td.FullName = f"{output_name} {style_name}".strip()
         td.FamilyName = output_name
         cff_copyright = _get_name(merged, 0)
@@ -2072,6 +2073,13 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
             td.Notice = cff_copyright
             if hasattr(td, "Copyright"):
                 td.Copyright = cff_copyright
+        # CFF Name INDEX — the PostScript name at the very top of the
+        # CFF binary. PDF embedders and some Adobe tools read it in
+        # preference to the name table / TopDict FullName, so leaving
+        # it at the base font's value would re-leak the source name.
+        ps_full = _get_name(merged, 6)
+        if ps_full and cff.fontNames:
+            cff.fontNames[0] = ps_full
 
     # --- Copy feature name records from Latin font ---
     lat_name = lat_font.get("name") if lat_font else None
