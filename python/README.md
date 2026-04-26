@@ -148,4 +148,6 @@ Test fonts live in `python/tests/fonts/`.
 
 The source code in this directory is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
+Test fonts under `tests/fonts/` follow each font's own license (OFL, etc.) and are not covered by the MIT notice.
+
 Other parts of the parent repository ([OFL Font Baker](https://github.com/yamatoiizuka/ofl-font-baker)) are licensed under AGPL-3.0-or-later and are not covered by this MIT notice.
