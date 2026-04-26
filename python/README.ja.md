@@ -139,10 +139,10 @@ cat config.json | python3 merge_fonts.py
 ## Tests
 
 ```bash
-python3 -m pytest python/tests/test_merge.py -v
+python3 -m pytest python/tests/ -v
 ```
 
-テスト用フォントはリポジトリルートの `testdata/fonts/` にあります。
+テスト用フォントは `python/tests/fonts/` にあります。
 
 ## License
 

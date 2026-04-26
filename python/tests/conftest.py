@@ -23,8 +23,7 @@ mf.progress = lambda *a: None
 # Paths
 # ---------------------------------------------------------------------------
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-FONTS = os.path.join(ROOT, "testdata", "fonts")
+FONTS = os.path.join(os.path.dirname(__file__), "fonts")
 
 # Latin sources. The "_FULL" variants are only needed by the few tests
 # that exercise large-coverage edge cases — see TestLargeCIDFont and

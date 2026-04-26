@@ -139,10 +139,10 @@ Creates a complete output directory. Always generates font, WOFF2, OFL.txt, and 
 ## Tests
 
 ```bash
-python3 -m pytest python/tests/test_merge.py -v
+python3 -m pytest python/tests/ -v
 ```
 
-Test fonts are in `testdata/fonts/` (repository root).
+Test fonts live in `python/tests/fonts/`.
 
 ## License
 

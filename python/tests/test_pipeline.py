@@ -183,7 +183,7 @@ class TestWOFF2Output:
 
 @pytest.mark.skipif(
     not os.path.exists(JP_OTF_FULL),
-    reason="NotoSansCJKjp-Regular.otf not in testdata/fonts/NotoSansCJKjp/",
+    reason="NotoSansCJKjp-Regular.otf not in python/tests/fonts/NotoSansCJKjp/",
 )
 class TestLargeCIDFont:
     """Verify merge of a 65535-glyph CID font with a Latin font."""

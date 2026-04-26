@@ -1,7 +1,7 @@
 """
 Regenerate the test-suite font subsets from their full counterparts.
 
-The full fonts in testdata/fonts/ are too large for fast tests:
+The full fonts in python/tests/fonts/ are too large for fast tests:
     InterVariable.ttf            ~880 KB
     Inter-Regular.otf            ~610 KB
     NotoSansJP-VariableFont.ttf  ~9.1 MB
@@ -26,8 +26,7 @@ from fontTools.subset import Options, Subsetter
 from fontTools.ttLib import TTFont
 
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-FONTS = os.path.join(ROOT, "testdata", "fonts")
+FONTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 
 # Curated coverage shared by all four subsets. Chosen for tests, not for
 # real-world rendering: a hand-picked slice of printable ASCII plus a few
@@ -91,8 +90,8 @@ def main() -> int:
         return 1
     for src, dst, drop_layout in SUBSETS:
         size, glyphs = _subset(src, dst, drop_layout)
-        rel = os.path.relpath(dst, ROOT)
-        print(f"  wrote {rel}  ({size:,} bytes, {glyphs} glyphs)")
+        rel = os.path.relpath(dst, FONTS)
+        print(f"  wrote fonts/{rel}  ({size:,} bytes, {glyphs} glyphs)")
     return 0
 
 
