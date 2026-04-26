@@ -1,6 +1,11 @@
 """Tests for OFL / nameID / version / OFL.txt / Settings.txt metadata."""
 
+import os
+import tempfile
+
 import pytest
+
+from fontTools.ttLib import TTFont
 
 from conftest import JP_VAR, _merge, _merge_with_meta
 
