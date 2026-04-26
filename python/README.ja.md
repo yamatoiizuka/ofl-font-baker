@@ -139,13 +139,15 @@ cat config.json | python3 merge_fonts.py
 ## Tests
 
 ```bash
-python3 -m pytest python/tests/test_merge.py -v
+python3 -m pytest python/tests/ -v
 ```
 
-テスト用フォントはリポジトリルートの `testdata/fonts/` にあります。
+テスト用フォントは `python/tests/fonts/` にあります。
 
 ## License
 
 このディレクトリ内のソースコードは MIT License の下で提供されています。詳細は [LICENSE](LICENSE) を参照してください。
+
+`tests/fonts/` 配下のテスト用フォントは、それぞれのフォント自身のライセンス（OFL など）に従い、MIT 表記の対象外です。
 
 親リポジトリ（[OFL Font Baker](https://github.com/yamatoiizuka/ofl-font-baker)）のその他の部分は AGPL-3.0-or-later でライセンスされており、この MIT 表記の対象外です。
