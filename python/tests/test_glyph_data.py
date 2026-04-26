@@ -1,81 +1,20 @@
-"""
-Tests for the composite font merge engine.
+"""Tests for outlines, metrics, hint info, and layout features after merge."""
 
-Uses subset test fonts in testdata/fonts/ for fast execution.
-Run: python3 -m pytest python/tests/test_merge.py -v
-"""
-
-import json
 import os
-import sys
 import tempfile
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-from fontTools.ttLib import TTFont
 from fontTools.pens.boundsPen import BoundsPen
+from fontTools.ttLib import TTFont
+
+from conftest import (
+    EN_CFF, EN_FULL, EN_VAR, JP_FULL_VAR, JP_OTF, JP_STATIC, JP_VAR,
+    KAISEI, PLAYWRITE,
+    _cid_glyph_for_codepoint, _get_bounds, _merge, _merge_cff_to_cff,
+)
 
 import merge_fonts as mf
-
-# Silence progress output during tests
-mf.progress = lambda *a: None
-
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-FONTS = os.path.join(ROOT, "testdata", "fonts")
-EN_VAR = os.path.join(FONTS, "Inter-4.1", "Inter-subset.ttf")
-JP_VAR = os.path.join(FONTS, "Noto_Sans_JP", "NotoSansJP-subset.ttf")
-PLAYWRITE = os.path.join(FONTS, "Playwrite_IE", "PlaywriteIE-VariableFont_wght.ttf")
-KAISEI = os.path.join(FONTS, "Kaisei_Decol", "KaiseiDecol-Regular.ttf")
-JP_FULL_VAR = os.path.join(FONTS, "Noto_Sans_JP", "NotoSansJP-VariableFont_wght.ttf")
-
-
-def _merge(lat_scale=1.0, lat_baseline=0, jp_scale=1.0, jp_baseline=0,
-           lat_wght=400, lat_opsz=14, jp_wght=400, output_weight=None,
-           output_upm=None):
-    """Run merge and return the merged TTFont."""
-    out = tempfile.mktemp(suffix=".ttf")
-    output = {"familyName": "Test"}
-    if output_weight is not None:
-        output["weight"] = output_weight
-    if output_upm is not None:
-        output["upm"] = output_upm
-    config = {
-        "subFont": {
-            "path": EN_VAR,
-            "scale": lat_scale,
-            "baselineOffset": lat_baseline,
-            "axes": [
-                {"tag": "opsz", "currentValue": lat_opsz},
-                {"tag": "wght", "currentValue": lat_wght},
-            ],
-        },
-        "baseFont": {
-            "path": JP_VAR,
-            "scale": jp_scale,
-            "baselineOffset": jp_baseline,
-            "axes": [{"tag": "wght", "currentValue": jp_wght}],
-        },
-        "output": output,
-        "export": {"path": {"font": out}},
-    }
-    mf.merge_fonts(config)
-    font = TTFont(out)
-    os.remove(out)
-    return font
-
-
-def _get_bounds(font, glyph_name):
-    """Get effective bounds (works for both simple and composite glyphs)."""
-    gs = font.getGlyphSet()
-    bp = BoundsPen(gs)
-    gs[glyph_name].draw(bp)
-    return bp.bounds  # (xMin, yMin, xMax, yMax)
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +70,7 @@ class TestVariableInstantiation:
         assert "gvar" not in font
 
 
+
 # ---------------------------------------------------------------------------
 # Baseline offset
 # ---------------------------------------------------------------------------
@@ -176,6 +116,7 @@ class TestBaselineOffset:
         assert abs(dy) <= 1, f"Japanese glyph shifted by {dy} when only Latin baseline changed"
 
 
+
 # ---------------------------------------------------------------------------
 # Scale
 # ---------------------------------------------------------------------------
@@ -205,6 +146,7 @@ class TestScale:
         aw2 = m2["hmtx"].metrics["H"][0]
         ratio = aw2 / aw1
         assert 1.9 < ratio < 2.1, f"H advance width ratio={ratio:.2f}, expected ~2.0"
+
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +185,7 @@ class TestUPMNormalization:
         # Inter's sTypoAscender is 1984 (2048 UPM) → ~969 (1000 UPM)
         assert os2.sTypoAscender < 1100, \
             f"sTypoAscender={os2.sTypoAscender}, should be <1100 (not raw 2048-UPM value)"
+
 
 
 # ---------------------------------------------------------------------------
@@ -331,8 +274,9 @@ class TestGPOSScaling:
         assert kern < 0, f"T+o kern should be negative (tight), got {kern}"
 
 
+
 # ---------------------------------------------------------------------------
-# Feature preservation
+# Feature preservation (GSUB / GPOS)
 # ---------------------------------------------------------------------------
 
 class TestFeaturePreservation:
@@ -556,457 +500,9 @@ class TestFeaturePreservation:
                                             "in Latin script's liga feature")
 
 
-# ---------------------------------------------------------------------------
-# Output weight
-# ---------------------------------------------------------------------------
-
-class TestOutputWeight:
-    """Verify that outputWeight is correctly reflected in font metadata."""
-
-    def test_weight_class_overrides_base(self):
-        """outputWeight=500 overrides JP Thin(100) to usWeightClass=500."""
-        m = _merge(lat_wght=100, jp_wght=100, output_weight=500)
-        assert m["OS/2"].usWeightClass == 500
-
-    def test_name_id_2_matches_weight(self):
-        """nameID 2 (Subfamily) matches the outputWeight style name."""
-        m = _merge(lat_wght=100, jp_wght=100, output_weight=500)
-        name2 = m["name"].getDebugName(2)
-        assert name2 == "Medium", f"Expected 'Medium', got '{name2}'"
-
-    def test_name_id_17_matches_weight(self):
-        """nameID 17 (Typographic Subfamily) also follows outputWeight."""
-        m = _merge(lat_wght=100, jp_wght=100, output_weight=500)
-        name17 = m["name"].getDebugName(17)
-        if name17 is not None:
-            assert name17 == "Medium", \
-                f"nameID 17 should be 'Medium', got '{name17}'"
-
-    def test_name_id_4_includes_weight(self):
-        """nameID 4 (Full Name) includes the style name."""
-        m = _merge(lat_wght=100, jp_wght=100, output_weight=700)
-        name4 = m["name"].getDebugName(4)
-        assert "Bold" in name4, f"Expected 'Bold' in nameID 4, got '{name4}'"
-
 
 # ---------------------------------------------------------------------------
-# Metadata (name table) correctness
-# ---------------------------------------------------------------------------
-
-def _merge_with_meta(output_family="TestMeta", output_copyright="",
-                     output_ps_name=None, output_version=None, app_version=None,
-                     output_manufacturer=None, output_manufacturer_url=None,
-                     output_trademark=None):
-    """Run merge with metadata options and return TTFont + cleanup paths."""
-    out = tempfile.mktemp(suffix=".ttf")
-    output = {
-        "familyName": output_family,
-        "copyright": output_copyright,
-    }
-    if output_manufacturer is not None:
-        output["manufacturer"] = output_manufacturer
-    if output_manufacturer_url is not None:
-        output["manufacturerURL"] = output_manufacturer_url
-    if output_trademark is not None:
-        output["trademark"] = output_trademark
-    if output_ps_name is not None:
-        output["postScriptName"] = output_ps_name
-    if output_version is not None:
-        output["version"] = output_version
-    config = {
-        "subFont": {
-            "path": EN_VAR,
-            "scale": 1.0,
-            "baselineOffset": 0,
-            "axes": [
-                {"tag": "opsz", "currentValue": 14},
-                {"tag": "wght", "currentValue": 400},
-            ],
-        },
-        "baseFont": {
-            "path": JP_VAR,
-            "scale": 1.0,
-            "baselineOffset": 0,
-            "axes": [{"tag": "wght", "currentValue": 400}],
-        },
-        "output": output,
-        "export": {"path": {"font": out}},
-    }
-    if app_version is not None:
-        config["appVersion"] = app_version
-    mf.merge_fonts(config)
-    font = TTFont(out)
-    for f in (out, out.replace(".ttf", ".woff2")):
-        if os.path.exists(f):
-            os.remove(f)
-    return font
-
-
-class TestSanitizePostScriptName:
-    """Unit tests for sanitize_postscript_name()."""
-
-    def test_ascii_only_unchanged(self):
-        assert mf.sanitize_postscript_name("NotoSans") == "NotoSans"
-
-    def test_spaces_stripped(self):
-        assert mf.sanitize_postscript_name("Noto Sans") == "NotoSans"
-
-    def test_japanese_becomes_empty(self):
-        assert mf.sanitize_postscript_name("\u5927\u548c\u660e\u671d") == ""
-
-    def test_mixed_keeps_ascii_drops_japanese(self):
-        assert mf.sanitize_postscript_name("Yamato \u660e\u671d") == "Yamato"
-
-    def test_forbidden_chars_stripped(self):
-        assert mf.sanitize_postscript_name("Noto/Sans") == "NotoSans"
-        assert mf.sanitize_postscript_name("Foo(Bar)") == "FooBar"
-        assert mf.sanitize_postscript_name("[Foo]{Bar}") == "FooBar"
-        assert mf.sanitize_postscript_name("<Foo>") == "Foo"
-        assert mf.sanitize_postscript_name("50%Off") == "50Off"
-
-    def test_all_forbidden_becomes_empty(self):
-        assert mf.sanitize_postscript_name("[](){}<>/%") == ""
-
-    def test_allowed_punctuation_preserved(self):
-        for n in ("Foo-Bar", "Foo.Bar", "Foo_Bar", "Foo+Bar", "Foo:Bar", "Foo#Bar"):
-            assert mf.sanitize_postscript_name(n) == n
-
-    def test_truncation_past_63(self):
-        assert mf.sanitize_postscript_name("A" * 64) == "A" * 63
-        assert mf.sanitize_postscript_name("A" * 100) == "A" * 63
-
-    def test_exact_63_not_truncated(self):
-        assert mf.sanitize_postscript_name("A" * 63) == "A" * 63
-
-    def test_control_chars_stripped(self):
-        assert mf.sanitize_postscript_name("Noto\tSans") == "NotoSans"
-        assert mf.sanitize_postscript_name("Noto\nSans") == "NotoSans"
-
-    def test_empty_input(self):
-        assert mf.sanitize_postscript_name("") == ""
-
-
-class TestValidatePostScriptName:
-    """Unit tests for validate_postscript_name()."""
-
-    def test_valid_names_pass(self):
-        for n in ("NotoSans-Regular", "Yamato", "Foo.Bar_Baz+Qux", "A" * 63):
-            mf.validate_postscript_name(n)
-
-    def test_empty_raises(self):
-        with pytest.raises(ValueError, match="empty"):
-            mf.validate_postscript_name("")
-
-    def test_multibyte_raises(self):
-        with pytest.raises(ValueError, match="invalid character"):
-            mf.validate_postscript_name("\u5927\u548c")
-
-    def test_forbidden_char_raises(self):
-        with pytest.raises(ValueError, match="invalid character"):
-            mf.validate_postscript_name("Foo/Bar")
-
-    def test_space_raises(self):
-        with pytest.raises(ValueError, match="invalid character"):
-            mf.validate_postscript_name("Foo Bar")
-
-    def test_too_long_raises(self):
-        with pytest.raises(ValueError, match="exceeds"):
-            mf.validate_postscript_name("A" * 64)
-
-
-class TestMetadataCorrectness:
-    """Verify that the merged name table matches the configuration."""
-
-    def test_family_name_matches_config(self):
-        """nameID 1 matches outputFamilyName."""
-        m = _merge_with_meta(output_family="MyCustomFont")
-        assert m["name"].getDebugName(1) == "MyCustomFont"
-
-    def test_full_name_includes_family(self):
-        """nameID 4 (Full Name) includes outputFamilyName."""
-        m = _merge_with_meta(output_family="MyCustomFont")
-        name4 = m["name"].getDebugName(4)
-        assert "MyCustomFont" in name4
-
-    def test_postscript_name_no_spaces(self):
-        """nameID 6 (PostScript Name) contains no spaces."""
-        m = _merge_with_meta(output_family="My Custom Font")
-        name6 = m["name"].getDebugName(6)
-        assert " " not in name6
-        assert "MyCustomFont" in name6
-
-    def test_postscript_name_derived_sanitizes_family(self):
-        """When postScriptName is absent, nameID 6 is sanitized from familyName."""
-        m = _merge_with_meta(output_family="Foo/Bar(Baz)")
-        name6 = m["name"].getDebugName(6)
-        for ch in "()[]{}<>/%":
-            assert ch not in name6, f"Forbidden char {ch!r} found in nameID 6: {name6!r}"
-        assert name6.startswith("FooBarBaz")
-
-    def test_postscript_name_explicit_override(self):
-        """Explicit postScriptName is used as the PS base name in nameID 6."""
-        m = _merge_with_meta(output_family="\u5927\u548c\u660e\u671d",
-                             output_ps_name="YamatoMincho")
-        name6 = m["name"].getDebugName(6)
-        assert name6.startswith("YamatoMincho"), f"Unexpected nameID 6: {name6!r}"
-
-    def test_postscript_name_invalid_raises(self):
-        """Invalid explicit postScriptName raises ValueError."""
-        with pytest.raises(ValueError, match="invalid character"):
-            _merge_with_meta(output_family="Foo", output_ps_name="Bad/Name")
-
-    def test_postscript_name_empty_family_raises(self):
-        """Family with only non-ASCII and no explicit PS name raises."""
-        with pytest.raises(ValueError, match="empty"):
-            _merge_with_meta(output_family="\u5927\u548c\u660e\u671d")
-
-    def test_version_defaults_to_1000(self):
-        """nameID 5 defaults to 'Version 1.000' when not supplied."""
-        m = _merge_with_meta()
-        v = m["name"].getDebugName(5)
-        assert v == "Version 1.000", f"Unexpected nameID 5: {v!r}"
-
-    def test_version_custom_value(self):
-        """Explicit version is written as 'Version X' in nameID 5."""
-        m = _merge_with_meta(output_version="2.5")
-        v = m["name"].getDebugName(5)
-        assert v == "Version 2.5", f"Unexpected nameID 5: {v!r}"
-
-    def test_version_with_explicit_prefix(self):
-        """If the value already starts with 'Version ', it is not doubled."""
-        m = _merge_with_meta(output_version="Version 3.0-beta")
-        v = m["name"].getDebugName(5)
-        assert v == "Version 3.0-beta", f"Unexpected nameID 5: {v!r}"
-
-    def test_version_empty_falls_back_to_default(self):
-        """Empty/whitespace version falls back to the 1.000 default."""
-        m = _merge_with_meta(output_version="  ")
-        v = m["name"].getDebugName(5)
-        assert v == "Version 1.000", f"Unexpected nameID 5: {v!r}"
-
-    def test_version_appends_app_version(self):
-        """appVersion is appended to nameID 5 as ';ofl-font-baker X.Y.Z'."""
-        m = _merge_with_meta(output_version="1.000", app_version="1.0.0")
-        v = m["name"].getDebugName(5)
-        assert v == "Version 1.000;ofl-font-baker 1.0.0", f"Unexpected nameID 5: {v!r}"
-
-    def test_version_no_app_version_suffix_when_missing(self):
-        """Missing appVersion produces no suffix."""
-        m = _merge_with_meta(output_version="1.000")
-        v = m["name"].getDebugName(5)
-        assert ";ofl-font-baker" not in v, f"Unexpected nameID 5 suffix: {v!r}"
-
-    def test_license_is_ofl(self):
-        """nameID 13 contains the OFL license text."""
-        m = _merge_with_meta()
-        lic = m["name"].getDebugName(13)
-        assert "Open Font License" in lic
-
-    def test_license_url(self):
-        """nameID 14 is the OFL URL."""
-        m = _merge_with_meta()
-        url = m["name"].getDebugName(14)
-        assert "openfontlicense.org" in url
-
-    def test_copyright_preserves_sources(self):
-        """nameID 0 includes source font copyrights."""
-        m = _merge_with_meta()
-        cr = m["name"].getDebugName(0)
-        assert cr is not None and len(cr) > 0
-
-    def test_copyright_includes_user_addition(self):
-        """outputCopyright is appended to nameID 0."""
-        m = _merge_with_meta(output_copyright="Copyright 2026 TestUser")
-        cr = m["name"].getDebugName(0)
-        assert "Copyright 2026 TestUser" in cr
-
-    def test_copyright_without_user(self):
-        """Source copyrights are preserved even when outputCopyright is empty."""
-        m = _merge_with_meta(output_copyright="")
-        cr = m["name"].getDebugName(0)
-        assert cr is not None and len(cr) > 0
-
-    def test_designer_always_cleared(self):
-        """nameID 9 is always cleared — Designer belongs to the source authors."""
-        m = _merge_with_meta()
-        d = m["name"].getDebugName(9)
-        assert d is None or d == "", f"Expected cleared designer, got '{d}'"
-
-    def test_designer_url_always_cleared(self):
-        """nameID 12 is always cleared — Designer URL is not set on the derivative."""
-        m = _merge_with_meta()
-        url = m["name"].getDebugName(12)
-        assert url is None or url == "", f"Expected cleared designer URL, got '{url}'"
-
-    def test_manufacturer_set_when_provided(self):
-        """outputManufacturer is written to nameID 8."""
-        m = _merge_with_meta(output_manufacturer="Acme Foundry")
-        assert m["name"].getDebugName(8) == "Acme Foundry"
-
-    def test_manufacturer_empty_clears(self):
-        """Missing outputManufacturer clears nameID 8."""
-        m = _merge_with_meta(output_manufacturer="")
-        v = m["name"].getDebugName(8)
-        assert v is None or v == "", f"Expected empty manufacturer, got '{v}'"
-
-    def test_manufacturer_url_set_when_provided(self):
-        """outputManufacturerURL is written to nameID 11."""
-        m = _merge_with_meta(output_manufacturer_url="https://acme.example")
-        assert m["name"].getDebugName(11) == "https://acme.example"
-
-    def test_manufacturer_url_empty_clears(self):
-        """Missing outputManufacturerURL clears nameID 11."""
-        m = _merge_with_meta(output_manufacturer_url="")
-        url = m["name"].getDebugName(11)
-        assert url is None or url == "", f"Expected empty manufacturer URL, got '{url}'"
-
-    def test_vendor_id_always_four_spaces(self):
-        """OS/2 achVendID is fixed to 4 spaces (unknown vendor)."""
-        m = _merge_with_meta()
-        assert m["OS/2"].achVendID == "    "
-
-    def test_unique_id_is_version_and_ps_name(self):
-        """nameID 3 = '{version};{PS-full-name}'."""
-        m = _merge_with_meta(output_family="TestUID", output_version="2.500")
-        assert m["name"].getDebugName(3) == "2.500;TestUID-Regular"
-
-    def test_unique_id_strips_version_prefix(self):
-        """'Version ' prefix is dropped from the uniqueID version segment."""
-        m = _merge_with_meta(output_family="TestUID",
-                             output_version="Version 3.0")
-        assert m["name"].getDebugName(3) == "3.0;TestUID-Regular"
-
-    def test_description_mentions_sources(self):
-        """nameID 10 mentions source font names."""
-        m = _merge_with_meta()
-        desc = m["name"].getDebugName(10)
-        assert desc is not None
-        assert "Based on" in desc
-
-    def test_variations_ps_name_prefix_removed(self):
-        """nameID 25 is dropped from the output (no variable instances)."""
-        m = _merge_with_meta()
-        assert m["name"].getDebugName(25) is None
-
-    def test_head_created_is_fresh(self):
-        """head.created is refreshed at merge time, not inherited from the base."""
-        from fontTools.misc.timeTools import timestampNow
-        before = timestampNow()
-        m = _merge_with_meta()
-        after = timestampNow()
-        assert before <= m["head"].created <= after + 60
-        assert before <= m["head"].modified <= after + 60
-
-    def test_head_created_and_modified_match(self):
-        """head.created and head.modified are pinned to the same instant."""
-        m = _merge_with_meta()
-        assert m["head"].created == m["head"].modified
-
-    def test_head_font_revision_matches_default(self):
-        """head.fontRevision defaults to 1.0 when no version is supplied."""
-        m = _merge_with_meta()
-        assert m["head"].fontRevision == 1.0
-
-    def test_head_font_revision_matches_version(self):
-        """head.fontRevision tracks output.version numerically."""
-        m = _merge_with_meta(output_version="2.5")
-        assert m["head"].fontRevision == 2.5
-
-    def test_head_font_revision_strips_version_prefix(self):
-        """'Version ' prefix is dropped before parsing fontRevision."""
-        m = _merge_with_meta(output_version="Version 3.25")
-        assert m["head"].fontRevision == 3.25
-
-    def test_head_font_revision_strips_suffix(self):
-        """Non-numeric suffixes like '-beta' are dropped before parsing."""
-        m = _merge_with_meta(output_version="1.500-beta")
-        assert m["head"].fontRevision == 1.5
-
-    def test_head_font_revision_falls_back_on_garbage(self):
-        """Unparseable version values fall back to 1.0."""
-        m = _merge_with_meta(output_version="pre-release")
-        assert m["head"].fontRevision == 1.0
-
-    def test_trademark_includes_user_addition(self):
-        """outputTrademark is appended to nameID 7."""
-        m = _merge_with_meta(output_trademark="Acme is a trademark of Acme Foundry")
-        tm = m["name"].getDebugName(7)
-        assert tm is not None
-        assert "Acme is a trademark of Acme Foundry" in tm
-
-    def test_trademark_preserves_sources(self):
-        """Source trademarks (if any) survive into nameID 7."""
-        # Inter and Noto Sans JP test subsets carry trademark text in
-        # their name tables; the combined output should retain at least
-        # one source trademark when the user addition is empty.
-        m = _merge_with_meta(output_trademark="")
-        tm = m["name"].getDebugName(7)
-        # Not guaranteed that subsets include trademark, but if either
-        # source had one, it must survive — we just assert non-failure
-        # here and rely on the user-addition test for positive coverage.
-        assert tm is None or isinstance(tm, str)
-
-    def test_description_mentions_built_with(self):
-        """Two-font merge includes 'Built with OFL Font Baker' in nameID 10."""
-        m = _merge_with_meta()
-        desc = m["name"].getDebugName(10)
-        assert "Built with OFL Font Baker" in desc
-
-
-class TestMetadataBaseOnly:
-    """Metadata for base-font-only merge (no Latin font)."""
-
-    def _merge_base_only_meta(self, output_copyright=""):
-        out = tempfile.mktemp(suffix=".ttf")
-        config = {
-            "baseFont": {
-                "path": JP_VAR,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [{"tag": "wght", "currentValue": 400}],
-            },
-            "output": {
-                "familyName": "BaseOnlyMeta",
-                "copyright": output_copyright,
-            },
-            "export": {"path": {"font": out}},
-        }
-        mf.merge_fonts(config)
-        font = TTFont(out)
-        for f in (out, out.replace(".ttf", ".woff2")):
-            if os.path.exists(f):
-                os.remove(f)
-        return font
-
-    def test_family_name(self):
-        m = self._merge_base_only_meta()
-        assert m["name"].getDebugName(1) == "BaseOnlyMeta"
-
-    def test_license_is_ofl(self):
-        m = self._merge_base_only_meta()
-        lic = m["name"].getDebugName(13)
-        assert "Open Font License" in lic
-
-    def test_copyright_preserved(self):
-        m = self._merge_base_only_meta()
-        cr = m["name"].getDebugName(0)
-        assert cr is not None and len(cr) > 0
-
-    def test_designer_cleared(self):
-        """Base-only merges also clear nameID 9 — Designer is never set on the output."""
-        m = self._merge_base_only_meta()
-        d = m["name"].getDebugName(9)
-        assert d is None or d == "", f"Expected cleared designer, got '{d}'"
-
-    def test_description_mentions_built_with(self):
-        """Base-only also uses 'Built with OFL Font Baker' in nameID 10."""
-        m = self._merge_base_only_meta()
-        desc = m["name"].getDebugName(10) or ""
-        assert "Built with OFL Font Baker" in desc
-
-
-# ---------------------------------------------------------------------------
-# Glyph name preservation
+# Glyph names and composite glyphs
 # ---------------------------------------------------------------------------
 
 class TestGlyphNamePreservation:
@@ -1062,88 +558,9 @@ class TestCompositeGlyphs:
         assert len(missing) == 0, f"Glyphs missing from hmtx: {missing[:10]}"
 
 
-# ---------------------------------------------------------------------------
-# TT-to-CFF conversion (JP font is OTF)
-# ---------------------------------------------------------------------------
-
-JP_OTF = os.path.join(FONTS, "NotoSansCJKjp", "NotoSansCJKjp-subset.otf")
-JP_OTF_FULL = os.path.join(FONTS, "NotoSansCJKjp", "NotoSansCJKjp-Regular.otf")
-
-def _merge_otf_jp(**kwargs):
-    """Run merge with CFF-based JP font and return the merged TTFont."""
-    if not os.path.exists(JP_OTF):
-        pytest.skip("NotoSansCJKjp-subset.otf not found")
-    out = tempfile.mktemp(suffix=".otf")
-    config = {
-        "subFont": {
-            "path": EN_CFF,
-            "scale": kwargs.get("lat_scale", 1.0),
-            "baselineOffset": kwargs.get("lat_baseline", 0),
-            "axes": [],
-        },
-        "baseFont": {
-            "path": JP_OTF,
-            "scale": kwargs.get("jp_scale", 1.0),
-            "baselineOffset": kwargs.get("jp_baseline", 0),
-            "axes": [],
-        },
-        "output": {"familyName": "TestOTF"},
-        "export": {"path": {"font": out}},
-    }
-    mf.merge_fonts(config)
-    font = TTFont(out)
-    os.remove(out)
-    return font
-
-
-class TestCIDJapaneseFont:
-    """Merge tests with CID-keyed CFF (JP OTF) base font."""
-
-    def test_merge_succeeds(self):
-        """Merge with CID-keyed JP font completes without error."""
-        m = _merge_otf_jp()
-        # CFF base stays CFF after merge; TT base stays TT. Either outline
-        # table is acceptable as long as one is present.
-        assert "CFF " in m or "glyf" in m
-        assert m.sfntVersion in ("OTTO", "\x00\x01\x00\x00"), \
-            f"sfntVersion should be CFF or TrueType, got {repr(m.sfntVersion)}"
-
-    def test_latin_glyph_has_outline(self):
-        """Latin glyph (U+0041 = A) has a valid outline."""
-        m = _merge_otf_jp()
-        cmap = m.getBestCmap()
-        a_glyph = cmap.get(0x0041)  # A
-        assert a_glyph is not None, "U+0041 (A) not in cmap"
-        gs = m.getGlyphSet()
-        bp = BoundsPen(gs)
-        gs[a_glyph].draw(bp)
-        bounds = bp.bounds
-        assert bounds is not None, "Latin glyph for U+0041 has no outline"
-        assert bounds[2] > bounds[0], "Latin glyph for U+0041 has zero width"
-
-    def test_japanese_glyph_has_outline(self):
-        """Japanese glyph has a valid outline in the merged font."""
-        m = _merge_otf_jp()
-        cmap = m.getBestCmap()
-        a_glyph = cmap.get(0x3042)  # あ
-        assert a_glyph is not None, "U+3042 (あ) not in cmap"
-        gs = m.getGlyphSet()
-        bp = BoundsPen(gs)
-        gs[a_glyph].draw(bp)
-        bounds = bp.bounds
-        assert bounds is not None, "Glyph あ has no outline in the merged font"
-
-    def test_hmtx_complete_otf(self):
-        """All glyphs have hmtx metrics."""
-        m = _merge_otf_jp()
-        hmtx = m["hmtx"]
-        order = m.getGlyphOrder()
-        missing = [g for g in order if g not in hmtx.metrics]
-        assert len(missing) == 0, f"Glyphs missing from hmtx: {missing[:10]}"
-
 
 # ---------------------------------------------------------------------------
-# Metrics preservation
+# Metrics preservation and output UPM
 # ---------------------------------------------------------------------------
 
 class TestMetricsPreservation:
@@ -1282,8 +699,9 @@ class TestOutputUpm:
         assert m["head"].unitsPerEm == 1500
 
 
+
 # ---------------------------------------------------------------------------
-# Hinting preservation
+# TrueType hinting preservation
 # ---------------------------------------------------------------------------
 
 class TestHintingPreservation:
@@ -1400,69 +818,13 @@ class TestHintingPreservation:
         assert hasattr(maxp, "maxSizeOfInstructions"), "maxp missing maxSizeOfInstructions"
 
 
+
 # ---------------------------------------------------------------------------
-# CFF hint preservation (Inter CFF -> Noto CJK CFF, output CFF)
+# CFF hinting / coincidence / FontBBox
 # ---------------------------------------------------------------------------
-
-EN_CFF = os.path.join(FONTS, "Inter-4.1", "Inter-subset.otf")
-EN_CFF_FULL = os.path.join(FONTS, "Inter-4.1", "Inter-Regular.otf")
-_JP_CID_HINT = JP_OTF
-
-
-_MERGE_CFF_CACHE = {}
-
-
-def _merge_cff_to_cff(lat_scale=1.0, lat_baseline=0):
-    """Merge Inter (CFF) into Noto CJK (CFF base) — CFF→CFF all the way.
-
-    The 65K-glyph CID merge is expensive (~30-60s per call), so the
-    resulting TTFont is memoised by (lat_scale, lat_baseline) across the
-    whole test session. Tests should treat the returned font as read-only.
-    """
-    key = (lat_scale, lat_baseline)
-    if key in _MERGE_CFF_CACHE:
-        return _MERGE_CFF_CACHE[key]
-    out = tempfile.mktemp(suffix=".otf")
-    config = {
-        "subFont": {
-            "path": EN_CFF,
-            "scale": lat_scale,
-            "baselineOffset": lat_baseline,
-            "axes": [],
-        },
-        "baseFont": {
-            "path": _JP_CID_HINT,
-            "scale": 1.0,
-            "baselineOffset": 0,
-            "axes": [],
-        },
-        "output": {"familyName": "TestHint"},
-        "export": {"path": {"font": out}},
-    }
-    mf.merge_fonts(config)
-    # Load into memory, then drop the on-disk artefacts.
-    with open(out, "rb") as _f:
-        _data = _f.read()
-    os.remove(out)
-    woff2 = out.replace(".otf", ".woff2")
-    if os.path.exists(woff2):
-        os.remove(woff2)
-    import io
-    font = TTFont(io.BytesIO(_data))
-    _MERGE_CFF_CACHE[key] = font
-    return font
-
-
-def _cid_glyph_for_codepoint(font, codepoint):
-    """Look up a CID glyph name from the cmap (CID fonts use cid#####)."""
-    for table in font["cmap"].tables:
-        if codepoint in table.cmap:
-            return table.cmap[codepoint]
-    raise KeyError(f"U+{codepoint:04X} not found in cmap")
-
 
 @pytest.mark.skipif(
-    not os.path.exists(_JP_CID_HINT),
+    not os.path.exists(JP_OTF),
     reason="NotoSansCJKjp-subset.otf not present",
 )
 class TestCFFHintPreservation:
@@ -1539,7 +901,7 @@ class TestCFFHintPreservation:
 
 
 @pytest.mark.skipif(
-    not os.path.exists(_JP_CID_HINT),
+    not os.path.exists(JP_OTF),
     reason="NotoSansCJKjp-subset.otf not present",
 )
 class TestCFFCoincidenceSnap:
@@ -1604,7 +966,7 @@ class TestCFFCoincidenceSnap:
 
 
 @pytest.mark.skipif(
-    not os.path.exists(_JP_CID_HINT),
+    not os.path.exists(JP_OTF),
     reason="NotoSansCJKjp-subset.otf not present",
 )
 class TestCFFFontBBox:
@@ -1631,204 +993,9 @@ class TestCFFFontBBox:
             assert ymax <= fb[3] + 1, f"{gname} yMax {ymax} > FontBBox {fb}"
 
 
-# ---------------------------------------------------------------------------
-# Base-only merge (no Latin font)
-# ---------------------------------------------------------------------------
-
-class TestBaseOnly:
-    """Verify that base-font-only merge (no Latin) works correctly."""
-
-    def _merge_base_only(self):
-        out = tempfile.mktemp(suffix=".ttf")
-        config = {
-            "baseFont": {
-                "path": JP_VAR,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [{"tag": "wght", "currentValue": 400}],
-            },
-            "output": {"familyName": "BaseOnly"},
-            "export": {"path": {"font": out}},
-        }
-        mf.merge_fonts(config)
-        return out
-
-    def test_merge_succeeds(self):
-        """Base-font-only merge completes without error."""
-        out = self._merge_base_only()
-        try:
-            font = TTFont(out)
-            assert len(font.getGlyphOrder()) > 1
-        finally:
-            for f in (out, out.replace(".ttf", ".woff2")):
-                if os.path.exists(f):
-                    os.remove(f)
-
-    def test_japanese_glyph_present(self):
-        """Japanese glyphs are present in the output."""
-        out = self._merge_base_only()
-        try:
-            font = TTFont(out)
-            cmap = font.getBestCmap()
-            assert 0x3042 in cmap  # あ
-        finally:
-            for f in (out, out.replace(".ttf", ".woff2")):
-                if os.path.exists(f):
-                    os.remove(f)
-
 
 # ---------------------------------------------------------------------------
-# WOFF2 output
-# ---------------------------------------------------------------------------
-
-class TestWOFF2Output:
-    """Verify that WOFF2 output is correctly generated."""
-
-    def test_woff2_generated(self):
-        """A .woff2 file is generated alongside the main output."""
-        out = tempfile.mktemp(suffix=".ttf")
-        woff2_path = out.replace(".ttf", ".woff2")
-        config = {
-            "subFont": {
-                "path": EN_VAR,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [
-                    {"tag": "opsz", "currentValue": 14},
-                    {"tag": "wght", "currentValue": 400},
-                ],
-            },
-            "baseFont": {
-                "path": JP_VAR,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [{"tag": "wght", "currentValue": 400}],
-            },
-            "output": {"familyName": "TestWoff2"},
-            "export": {"path": {"font": out, "woff2": woff2_path}},
-        }
-        mf.merge_fonts(config)
-        try:
-            assert os.path.exists(woff2_path), "WOFF2 output missing"
-            woff2_font = TTFont(woff2_path)
-            assert woff2_font.flavor == "woff2"
-            assert len(woff2_font.getGlyphOrder()) > 1
-        finally:
-            for f in (out, woff2_path):
-                if os.path.exists(f):
-                    os.remove(f)
-
-    def test_woff2_base_only(self):
-        """WOFF2 is also generated for base-font-only merge."""
-        out = tempfile.mktemp(suffix=".otf")
-        woff2_path = out.replace(".otf", ".woff2")
-        config = {
-            "baseFont": {
-                "path": JP_VAR,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [{"tag": "wght", "currentValue": 400}],
-            },
-            "output": {"familyName": "BaseOnlyWoff2"},
-            "export": {"path": {"font": out, "woff2": woff2_path}},
-        }
-        mf.merge_fonts(config)
-        try:
-            assert os.path.exists(woff2_path), "WOFF2 output missing for base-only"
-        finally:
-            for f in (out, woff2_path):
-                if os.path.exists(f):
-                    os.remove(f)
-
-
-# ---------------------------------------------------------------------------
-# Large CID font (65535 glyphs) — run with: pytest -k LargeCID
-# ---------------------------------------------------------------------------
-
-JP_CID = JP_OTF_FULL
-
-
-@pytest.mark.skipif(
-    not os.path.exists(JP_CID),
-    reason="NotoSansCJKjp-Regular.otf not in testdata/fonts/NotoSansCJKjp/",
-)
-class TestLargeCIDFont:
-    """Verify merge of a 65535-glyph CID font with a Latin font."""
-
-    def _merge_large(self):
-        out = tempfile.mktemp(suffix=".otf")
-        config = {
-            "subFont": {
-                "path": EN_VAR,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [],
-            },
-            "baseFont": {
-                "path": JP_CID,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [],
-            },
-            "output": {"familyName": "LargeCIDTest"},
-            "export": {"path": {"font": out}},
-        }
-        mf.merge_fonts(config)
-        return out
-
-    def test_merge_succeeds(self):
-        """65535-glyph CID font merges without error."""
-        out = self._merge_large()
-        try:
-            font = TTFont(out)
-            assert len(font.getGlyphOrder()) <= 65535
-        finally:
-            for f in (out, out.replace(".otf", ".woff2")):
-                if os.path.exists(f):
-                    os.remove(f)
-
-    def test_glyph_count_not_exceed_limit(self):
-        """Merged glyph count does not exceed 65535."""
-        out = self._merge_large()
-        try:
-            font = TTFont(out)
-            assert len(font.getGlyphOrder()) == 65535
-        finally:
-            for f in (out, out.replace(".otf", ".woff2")):
-                if os.path.exists(f):
-                    os.remove(f)
-
-    def test_latin_glyph_replaced_via_cmap(self):
-        """Latin glyphs are replaced via cmap."""
-        out = self._merge_large()
-        try:
-            font = TTFont(out)
-            cmap = font.getBestCmap()
-            assert 0x0041 in cmap, "U+0041 (A) not in merged cmap"
-            gs = font.getGlyphSet()
-            gname = cmap[0x0041]
-            bp = BoundsPen(gs)
-            gs[gname].draw(bp)
-            assert bp.bounds is not None, "Latin A has no outline in merged font"
-        finally:
-            for f in (out, out.replace(".otf", ".woff2")):
-                if os.path.exists(f):
-                    os.remove(f)
-
-    def test_post_format_3(self):
-        """Large fonts use post format 3.0."""
-        out = self._merge_large()
-        try:
-            font = TTFont(out)
-            assert font["post"].formatType == 3.0
-        finally:
-            for f in (out, out.replace(".otf", ".woff2")):
-                if os.path.exists(f):
-                    os.remove(f)
-
-
-# ---------------------------------------------------------------------------
-# Latin cmap-variant collision (Playwrite IE has both `e` and `e.mod`)
+# Latin cmap variant collision
 # ---------------------------------------------------------------------------
 
 class TestLatinCmapVariantCollision:
@@ -1874,13 +1041,10 @@ class TestLatinCmapVariantCollision:
         assert b_mod != b_base
 
 
+
 # ---------------------------------------------------------------------------
 # Shared-glyph collateral damage (U+2027 / U+30FB middle dot)
 # ---------------------------------------------------------------------------
-
-EN_FULL = os.path.join(FONTS, "Inter-4.1", "InterVariable.ttf")
-JP_STATIC = os.path.join(FONTS, "Noto_Sans_JP", "NotoSansJP-Regular.ttf")
-
 
 class TestSharedGlyphCollateral:
     """
@@ -1951,325 +1115,3 @@ class TestSharedGlyphCollateral:
         assert bounds is not None, "U+30FB has no outline"
 
 
-# ---------------------------------------------------------------------------
-# Export artifacts (OFL.txt, Settings.txt, export_fonts)
-# ---------------------------------------------------------------------------
-
-class TestBuildOflText:
-
-    def test_collects_source_copyrights(self):
-        config = {
-            "baseFont": {"copyright": "Copyright Base"},
-            "subFont": {"copyright": "Copyright Latin"},
-            "output": {"familyName": "Test"},
-        }
-        text = mf.build_ofl_text(config)
-        assert "Copyright Base" in text
-        assert "Copyright Latin" in text
-        assert "SIL OPEN FONT LICENSE" in text
-
-    def test_user_copyright_appended(self):
-        config = {
-            "baseFont": {"copyright": "Copyright Base"},
-            "output": {"copyright": "Copyright User", "familyName": "Test"},
-        }
-        text = mf.build_ofl_text(config)
-        assert "Copyright User" in text
-
-    def test_fallback_copyright(self):
-        config = {
-            "baseFont": {},
-            "output": {"familyName": "MyFont"},
-        }
-        text = mf.build_ofl_text(config)
-        assert "MyFont Authors" in text
-
-    def test_dedup_copyrights(self):
-        config = {
-            "baseFont": {"copyright": "Same"},
-            "subFont": {"copyright": "Same"},
-            "output": {"familyName": "Test"},
-        }
-        text = mf.build_ofl_text(config)
-        assert text.count("Same") == 1
-
-
-class TestBuildSettingsText:
-
-    def test_header_includes_family_and_style(self):
-        config = {
-            "baseFont": {"familyName": "Noto", "styleName": "Regular",
-                         "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
-            "output": {"familyName": "MyFont", "weight": 700,
-                       "italic": True, "width": 5},
-        }
-        text = mf.build_settings_text(config)
-        assert "MyFont Bold Italic" in text
-
-    def test_base_only_shows_built_with(self):
-        config = {
-            "baseFont": {"familyName": "Noto", "styleName": "Regular",
-                         "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
-            "output": {"familyName": "MyFont", "weight": 400},
-        }
-        text = mf.build_settings_text(config)
-        assert "Built with OFL Font Baker" in text
-
-    def test_with_latin_shows_sub_font(self):
-        config = {
-            "baseFont": {"familyName": "Noto", "styleName": "Regular",
-                         "scale": 1.0, "baselineOffset": 0, "path": "/fonts/noto.otf"},
-            "subFont": {"familyName": "Inter", "styleName": "Regular",
-                        "scale": 0.95, "baselineOffset": 5, "path": "/fonts/inter.ttf"},
-            "output": {"familyName": "MyFont", "weight": 400},
-        }
-        text = mf.build_settings_text(config)
-        assert "Built with OFL Font Baker" in text
-        assert "[Sub Font]" in text
-
-
-class TestDetectSfntExt:
-
-    def test_ttf_font(self):
-        assert mf.detect_sfnt_ext(EN_VAR) == "ttf"
-
-    def test_fallback_by_extension(self):
-        assert mf.detect_sfnt_ext("/nonexistent/font.otf") == "otf"
-        assert mf.detect_sfnt_ext("/nonexistent/font.ttf") == "ttf"
-
-
-class TestComputeStyleName:
-
-    def test_regular(self):
-        assert mf.compute_style_name(400, False, 5) == "Regular"
-
-    def test_bold_italic(self):
-        assert mf.compute_style_name(700, True, 5) == "Bold Italic"
-
-    def test_condensed_semibold(self):
-        assert mf.compute_style_name(600, False, 3) == "Condensed SemiBold"
-
-
-class TestPrepareOutputDir:
-
-    def test_creates_directory(self):
-        with tempfile.TemporaryDirectory() as d:
-            target = os.path.join(d, "TestFont")
-            result = mf.prepare_output_dir(target, overwrite=False)
-            assert os.path.isdir(result)
-            assert result == target
-
-    def test_overwrite_false_raises(self):
-        with tempfile.TemporaryDirectory() as d:
-            existing = os.path.join(d, "Existing")
-            os.makedirs(existing)
-            with pytest.raises(FileExistsError):
-                mf.prepare_output_dir(existing, overwrite=False)
-
-    def test_overwrite_true_replaces(self):
-        with tempfile.TemporaryDirectory() as d:
-            existing = os.path.join(d, "Existing")
-            os.makedirs(existing)
-            marker = os.path.join(existing, "old.txt")
-            open(marker, "w").close()
-            result = mf.prepare_output_dir(existing, overwrite=True)
-            assert os.path.isdir(result)
-            assert not os.path.exists(marker)
-
-
-class TestPackageFonts:
-
-    def _export(self, overwrite=False):
-        d = tempfile.mkdtemp()
-        config = {
-            "subFont": {
-                "path": EN_VAR,
-                "familyName": "Inter",
-                "styleName": "Regular",
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [
-                    {"tag": "opsz", "currentValue": 14},
-                    {"tag": "wght", "currentValue": 400},
-                ],
-            },
-            "baseFont": {
-                "path": JP_VAR,
-                "familyName": "Noto Sans JP",
-                "styleName": "Regular",
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [{"tag": "wght", "currentValue": 400}],
-            },
-            "output": {
-                "familyName": "TestFont",
-                "weight": 400,
-                "italic": False,
-                "width": 5,
-            },
-            "export": {
-                "package": {
-                    "dir": os.path.join(d, "TestFont-Regular"),
-                    "overwrite": overwrite,
-                },
-            },
-        }
-        manifest = mf.package_fonts(config)
-        return d, manifest
-
-    def test_manifest_keys(self):
-        d, manifest = self._export()
-        assert set(manifest.keys()) == {
-            "outputDir", "fontPath", "woff2Path", "oflPath",
-            "settingsPath", "configPath", "files",
-        }
-        import shutil
-        shutil.rmtree(d)
-
-    def test_font_file_exists(self):
-        d, manifest = self._export()
-        assert os.path.isfile(manifest["fontPath"])
-        assert manifest["fontPath"].endswith(".ttf")
-        import shutil
-        shutil.rmtree(d)
-
-    def test_woff2_exists(self):
-        d, manifest = self._export()
-        assert os.path.isfile(manifest["woff2Path"])
-        assert manifest["woff2Path"].endswith(".woff2")
-        import shutil
-        shutil.rmtree(d)
-
-    def test_ofl_txt_exists(self):
-        d, manifest = self._export()
-        assert os.path.isfile(manifest["oflPath"])
-        with open(manifest["oflPath"]) as f:
-            assert "SIL OPEN FONT LICENSE" in f.read()
-        import shutil
-        shutil.rmtree(d)
-
-    def test_settings_txt_exists(self):
-        d, manifest = self._export()
-        assert os.path.isfile(manifest["settingsPath"])
-        with open(manifest["settingsPath"]) as f:
-            content = f.read()
-            assert "TestFont" in content
-            assert "Built with OFL Font Baker" in content
-        import shutil
-        shutil.rmtree(d)
-
-    def test_overwrite_false_blocks_duplicate(self):
-        d, _ = self._export()
-        with pytest.raises(FileExistsError):
-            config = {
-                "subFont": {
-                    "path": EN_VAR, "scale": 1.0, "baselineOffset": 0,
-                    "axes": [{"tag": "opsz", "currentValue": 14}, {"tag": "wght", "currentValue": 400}],
-                },
-                "baseFont": {
-                    "path": JP_VAR, "scale": 1.0, "baselineOffset": 0,
-                    "axes": [{"tag": "wght", "currentValue": 400}],
-                },
-                "output": {"familyName": "TestFont"},
-                "export": {
-                    "package": {
-                        "dir": os.path.join(d, "TestFont-Regular"),
-                        "overwrite": False,
-                    },
-                },
-            }
-            mf.package_fonts(config)
-        import shutil
-        shutil.rmtree(d)
-
-    def test_overwrite_true_succeeds(self):
-        d, _ = self._export()
-        _, manifest2 = self._export(overwrite=True)
-        assert os.path.isfile(manifest2["fontPath"])
-        import shutil
-        shutil.rmtree(d)
-
-    def test_manifest_has_files_array(self):
-        d, manifest = self._export()
-        assert "files" in manifest
-        assert manifest["fontPath"] in manifest["files"]
-        assert manifest["oflPath"] in manifest["files"]
-        assert manifest["settingsPath"] in manifest["files"]
-        import shutil
-        shutil.rmtree(d)
-
-    def test_config_path_null_by_default(self):
-        d, manifest = self._export()
-        assert manifest["configPath"] is None
-        import shutil
-        shutil.rmtree(d)
-
-
-class TestPackageOptions:
-
-    def _base_config(self, tmpdir):
-        return {
-            "subFont": {
-                "path": EN_VAR,
-                "familyName": "Inter",
-                "styleName": "Regular",
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [
-                    {"tag": "opsz", "currentValue": 14},
-                    {"tag": "wght", "currentValue": 400},
-                ],
-            },
-            "baseFont": {
-                "path": JP_VAR,
-                "familyName": "Noto Sans JP",
-                "styleName": "Regular",
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [{"tag": "wght", "currentValue": 400}],
-            },
-            "output": {
-                "familyName": "TestFont",
-                "weight": 400,
-                "italic": False,
-                "width": 5,
-            },
-            "export": {
-                "package": {
-                    "dir": os.path.join(tmpdir, "TestFont-Regular"),
-                    "overwrite": False,
-                },
-            },
-        }
-
-    def test_bundle_input_fonts(self):
-        import shutil
-        d = tempfile.mkdtemp()
-        config = self._base_config(d)
-        config["export"]["package"]["bundleInputFonts"] = True
-        manifest = mf.package_fonts(config)
-        pkg_dir = os.path.join(d, "TestFont-Regular")
-        source_dir = os.path.join(pkg_dir, "source")
-        assert os.path.isdir(source_dir)
-        assert os.path.isfile(os.path.join(source_dir, os.path.basename(EN_VAR)))
-        assert os.path.isfile(os.path.join(source_dir, os.path.basename(JP_VAR)))
-        with open(manifest["configPath"]) as f:
-            export_cfg = json.load(f)
-        assert export_cfg["baseFont"]["path"].startswith("./source/")
-        assert export_cfg["subFont"]["path"].startswith("./source/")
-        shutil.rmtree(d)
-
-    def test_default_options(self):
-        opts = mf.resolve_package_options({})
-        assert opts == {
-            "overwrite": False,
-            "bundleInputFonts": False,
-        }
-
-    def test_font_format_auto_uses_base_ext(self):
-        import shutil
-        d = tempfile.mkdtemp()
-        config = self._base_config(d)
-        manifest = mf.package_fonts(config)
-        assert manifest["fontPath"].endswith(".ttf")
-        shutil.rmtree(d)
