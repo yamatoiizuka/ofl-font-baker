@@ -1066,22 +1066,20 @@ class TestCompositeGlyphs:
 # TT-to-CFF conversion (JP font is OTF)
 # ---------------------------------------------------------------------------
 
-JP_OTF = os.path.join(FONTS, "NotoSansCJKjp", "NotoSansCJKjp-Regular.otf")
+JP_OTF = os.path.join(FONTS, "NotoSansCJKjp", "NotoSansCJKjp-subset.otf")
+JP_OTF_FULL = os.path.join(FONTS, "NotoSansCJKjp", "NotoSansCJKjp-Regular.otf")
 
 def _merge_otf_jp(**kwargs):
     """Run merge with CFF-based JP font and return the merged TTFont."""
     if not os.path.exists(JP_OTF):
-        pytest.skip("NotoSansCJKjp-Regular.otf not found")
+        pytest.skip("NotoSansCJKjp-subset.otf not found")
     out = tempfile.mktemp(suffix=".otf")
     config = {
         "subFont": {
-            "path": EN_VAR,
+            "path": EN_CFF,
             "scale": kwargs.get("lat_scale", 1.0),
             "baselineOffset": kwargs.get("lat_baseline", 0),
-            "axes": [
-                {"tag": "opsz", "currentValue": 14},
-                {"tag": "wght", "currentValue": 400},
-            ],
+            "axes": [],
         },
         "baseFont": {
             "path": JP_OTF,
@@ -1406,7 +1404,8 @@ class TestHintingPreservation:
 # CFF hint preservation (Inter CFF -> Noto CJK CFF, output CFF)
 # ---------------------------------------------------------------------------
 
-EN_CFF = os.path.join(FONTS, "Inter-4.1", "Inter-Regular.otf")
+EN_CFF = os.path.join(FONTS, "Inter-4.1", "Inter-subset.otf")
+EN_CFF_FULL = os.path.join(FONTS, "Inter-4.1", "Inter-Regular.otf")
 _JP_CID_HINT = JP_OTF
 
 
@@ -1464,7 +1463,7 @@ def _cid_glyph_for_codepoint(font, codepoint):
 
 @pytest.mark.skipif(
     not os.path.exists(_JP_CID_HINT),
-    reason="NotoSansCJKjp-Regular.otf not present",
+    reason="NotoSansCJKjp-subset.otf not present",
 )
 class TestCFFHintPreservation:
     """Verify CFF hint info (stems, BlueValues) survives CFF→CFF merge."""
@@ -1541,7 +1540,7 @@ class TestCFFHintPreservation:
 
 @pytest.mark.skipif(
     not os.path.exists(_JP_CID_HINT),
-    reason="NotoSansCJKjp-Regular.otf not present",
+    reason="NotoSansCJKjp-subset.otf not present",
 )
 class TestCFFCoincidenceSnap:
     """Verify that points originally at the same absolute (x, y) remain
@@ -1606,7 +1605,7 @@ class TestCFFCoincidenceSnap:
 
 @pytest.mark.skipif(
     not os.path.exists(_JP_CID_HINT),
-    reason="NotoSansCJKjp-Regular.otf not present",
+    reason="NotoSansCJKjp-subset.otf not present",
 )
 class TestCFFFontBBox:
     """CFF has no per-glyph bbox; FontBBox must envelope all CharStrings."""
@@ -1746,12 +1745,12 @@ class TestWOFF2Output:
 # Large CID font (65535 glyphs) — run with: pytest -k LargeCID
 # ---------------------------------------------------------------------------
 
-JP_CID = JP_OTF
+JP_CID = JP_OTF_FULL
 
 
 @pytest.mark.skipif(
     not os.path.exists(JP_CID),
-    reason="NotoSansCJKjp-Regular.otf not in python/tests/NotoSansCJKjp/",
+    reason="NotoSansCJKjp-Regular.otf not in testdata/fonts/NotoSansCJKjp/",
 )
 class TestLargeCIDFont:
     """Verify merge of a 65535-glyph CID font with a Latin font."""
@@ -2055,15 +2054,17 @@ class TestPrepareOutputDir:
 
     def test_creates_directory(self):
         with tempfile.TemporaryDirectory() as d:
-            result = mf.prepare_output_dir(d, "TestFont", overwrite=False)
+            target = os.path.join(d, "TestFont")
+            result = mf.prepare_output_dir(target, overwrite=False)
             assert os.path.isdir(result)
-            assert result == os.path.join(d, "TestFont")
+            assert result == target
 
     def test_overwrite_false_raises(self):
         with tempfile.TemporaryDirectory() as d:
-            os.makedirs(os.path.join(d, "Existing"))
+            existing = os.path.join(d, "Existing")
+            os.makedirs(existing)
             with pytest.raises(FileExistsError):
-                mf.prepare_output_dir(d, "Existing", overwrite=False)
+                mf.prepare_output_dir(existing, overwrite=False)
 
     def test_overwrite_true_replaces(self):
         with tempfile.TemporaryDirectory() as d:
@@ -2071,7 +2072,7 @@ class TestPrepareOutputDir:
             os.makedirs(existing)
             marker = os.path.join(existing, "old.txt")
             open(marker, "w").close()
-            result = mf.prepare_output_dir(d, "Existing", overwrite=True)
+            result = mf.prepare_output_dir(existing, overwrite=True)
             assert os.path.isdir(result)
             assert not os.path.exists(marker)
 
