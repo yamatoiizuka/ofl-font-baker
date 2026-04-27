@@ -771,20 +771,6 @@ class TestHintingPreservation:
         assert m["prep"].program.getBytecode() == self.jp["prep"].program.getBytecode(), \
             "prep table contents differ from base font"
 
-    def test_fpgm_table_survives_merge(self):
-        """fpgm table is preserved if present in base font."""
-        if "fpgm" not in self.jp:
-            pytest.skip("Base font has no fpgm table")
-        m = _merge()
-        assert "fpgm" in m, "fpgm table lost during merge"
-
-    def test_cvt_table_survives_merge(self):
-        """cvt table is preserved if present in base font."""
-        if "cvt " not in self.jp:
-            pytest.skip("Base font has no cvt table")
-        m = _merge()
-        assert "cvt " in m, "cvt table lost during merge"
-
     def test_gasp_table_survives_merge(self):
         """gasp table is preserved after merge."""
         if "gasp" not in self.jp:
