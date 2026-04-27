@@ -1,4 +1,5 @@
-"""Helper-level tests for `_filter_subordinate_lookups` / `_reindex_table`.
+"""Helper-level tests for `_filter_subordinate_lookups` / `_reindex_table`
+and the OT-table glyph-rename helper.
 
 Calling the helpers directly avoids downstream merge stages that mask the
 bugs by rebuilding tables from scratch (e.g. _merge_ot_table_v2 builds a
@@ -7,6 +8,7 @@ fresh ScriptList, which hides ScriptList-remap bugs in `_reindex_table`).
 Covers Issue #2:
   #1 chaining cross-lookup references not remapped after `_reindex_table`
   #2 ScriptList LangSys.FeatureIndex not remapped after `_reindex_table`
+  #5 Context Format 1 rules not renamed by `_rename_glyphs_in_ot_table`
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ import merge_fonts as mf
 FONTS_DIR = os.path.join(os.path.dirname(__file__), "fonts")
 SHIPPORI = os.path.join(FONTS_DIR, "Shippori_Mincho", "ShipporiMincho-Regular.ttf")
 NOTOCJK = os.path.join(FONTS_DIR, "NotoSansCJKjp", "NotoSansCJKjp-Regular.otf")
+LATEEF = os.path.join(FONTS_DIR, "Lateef", "Lateef-Regular.ttf")
 
 
 def _require(path):
@@ -335,4 +338,99 @@ def test_bug1_cross_refs_preserve_lookup_identity(monkeypatch):
         f"{len(drifted)} chaining cross-ref(s) point to a lookup with "
         f"mismatched identity after _reindex_table; the index was not "
         f"remapped through _transform_lookup_references."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bug #5 — Context Format 1 rule glyph-name rename
+# ---------------------------------------------------------------------------
+
+
+def _format1_rule_glyph_names(table):
+    """Yield every glyph name found in Context/ChainContext Format 1
+    rule sets (Input / Backtrack / LookAhead arrays)."""
+    if not table.LookupList:
+        return
+    for lookup in table.LookupList.Lookup:
+        if lookup.LookupType not in (5, 6, 7, 8):
+            continue
+        for st in lookup.SubTable:
+            actual = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+            if getattr(actual, "Format", None) != 1:
+                continue
+            for rs_attr in ("SubRuleSet", "ChainSubRuleSet",
+                            "PosRuleSet", "ChainPosRuleSet"):
+                ruleset_list = getattr(actual, rs_attr, None) or []
+                for ruleset in ruleset_list:
+                    if not ruleset:
+                        continue
+                    for r_attr in ("SubRule", "ChainSubRule",
+                                   "PosRule", "ChainPosRule"):
+                        for rule in (getattr(ruleset, r_attr, None) or []):
+                            for seq_attr in ("Input", "Backtrack", "LookAhead"):
+                                for gname in (getattr(rule, seq_attr, None) or []):
+                                    yield gname
+
+
+def test_bug5_format1_rules_get_renamed():
+    """`_rename_glyphs_in_ot_table` rewrites glyph names inside Context /
+    ChainContext Format 1 rule sets, not just Coverage / ClassDef."""
+    _require(LATEEF)
+    f = TTFont(LATEEF)
+    gsub = f["GSUB"]
+    pre = sorted(set(_format1_rule_glyph_names(gsub.table)))
+    assert pre, "Lateef should expose at least one Format 1 rule glyph"
+
+    # Synthetic name map: rename a handful of names to a CID-style name.
+    name_map = {g: f"cid{idx:05d}" for idx, g in enumerate(pre)}
+    mf._rename_glyphs_in_ot_table(gsub.table, name_map)
+
+    post = list(_format1_rule_glyph_names(gsub.table))
+    stale = [g for g in post if g in name_map]
+    assert not stale, (
+        f"{len(stale)} Format 1 rule reference(s) still point to pre-rename "
+        f"names. Examples: {stale[:5]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bug #4 — _collect_lookup_glyphs must handle Coverage as a list (Format 3)
+# ---------------------------------------------------------------------------
+
+CHARIS = os.path.join(FONTS_DIR, "Charis_SIL", "CharisSIL-Regular.ttf")
+
+
+def test_bug4_collect_lookup_glyphs_handles_type5_format3():
+    """_collect_lookup_glyphs returns the Coverage glyphs of a GSUB Type 5
+    ContextSubst Format 3 lookup. The Format 3 subtable stores Coverage as
+    a list, which the helper used to mishandle (the AttributeError was
+    swallowed by a blanket except, leaving the lookup silently empty)."""
+    _require(CHARIS)
+    f = TTFont(CHARIS)
+    gsub = f["GSUB"]
+
+    target = None
+    for lookup in gsub.table.LookupList.Lookup:
+        if lookup.LookupType not in (5, 6):
+            continue
+        for st in lookup.SubTable:
+            actual = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+            if (lookup.LookupType == 5 and getattr(actual, "Format", None) == 3
+                    or lookup.LookupType == 7 and getattr(actual, "Format", None) == 3):
+                target = lookup
+                break
+            if (hasattr(actual, "Coverage")
+                    and isinstance(actual.Coverage, list)):
+                target = lookup
+                break
+        if target:
+            break
+    if target is None:
+        pytest.skip("Charis SIL has no Format 3 lookup with list-shaped Coverage")
+
+    glyphs = mf._collect_lookup_glyphs(target)
+    assert glyphs, (
+        "_collect_lookup_glyphs returned 0 glyphs for a Format 3 contextual "
+        "lookup with list-shaped Coverage; the AttributeError on "
+        "list.glyphs was likely being swallowed."
     )

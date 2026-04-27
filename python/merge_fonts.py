@@ -1296,10 +1296,15 @@ def _rename_glyphs_in_ot_table(ot_table, name_map: dict):
                     for cov in covs:
                         if cov and hasattr(cov, 'glyphs'):
                             cov.glyphs = [rename(g) for g in cov.glyphs]
-            # Rename ClassDef glyphs
-            for attr in ('ClassDef1', 'ClassDef2', 'ClassDef', 'MarkCoverage',
-                         'Mark1Coverage', 'Mark2Coverage', 'BaseCoverage',
-                         'LigatureCoverage'):
+            # Rename ClassDef glyphs. Chaining contextual Format 2 lookups
+            # (GSUB type 6 / GPOS type 8) split their classification across
+            # three ClassDefs — Backtrack/Input/LookAhead — and missing any
+            # of them leaves stale glyph names that crash CFF compile when a
+            # cmap-based rename has remapped the original name.
+            for attr in ('ClassDef1', 'ClassDef2', 'ClassDef',
+                         'BacktrackClassDef', 'InputClassDef', 'LookAheadClassDef',
+                         'MarkCoverage', 'Mark1Coverage', 'Mark2Coverage',
+                         'BaseCoverage', 'LigatureCoverage'):
                 cd = getattr(real_st, attr, None)
                 if cd and hasattr(cd, 'classDefs'):
                     cd.classDefs = {rename(g): v for g, v in cd.classDefs.items()}
@@ -1340,6 +1345,30 @@ def _rename_glyphs_in_ot_table(ot_table, name_map: dict):
                     else:
                         new_mapping[rename(g)] = alts
                 real_st.mapping = new_mapping
+            # Rename glyph names inside Context / ChainContext Format 1 rule
+            # sets (Issue #2 #5). Format 1 rules carry raw glyph names in
+            # their Input / Backtrack / LookAhead arrays; if these are not
+            # renamed alongside Coverage / ClassDef the rules silently
+            # reference the pre-merge name and the lookup misfires.
+            for rs_attr in ('SubRuleSet', 'ChainSubRuleSet',
+                            'PosRuleSet', 'ChainPosRuleSet'):
+                ruleset_list = getattr(real_st, rs_attr, None)
+                if not ruleset_list:
+                    continue
+                for ruleset in ruleset_list:
+                    if not ruleset:
+                        continue
+                    for r_attr in ('SubRule', 'ChainSubRule',
+                                   'PosRule', 'ChainPosRule'):
+                        rules = getattr(ruleset, r_attr, None)
+                        if not rules:
+                            continue
+                        for rule in rules:
+                            for seq_attr in ('Input', 'Backtrack', 'LookAhead'):
+                                seq = getattr(rule, seq_attr, None)
+                                if seq:
+                                    setattr(rule, seq_attr,
+                                            [rename(g) for g in seq])
 
 
 def merge_feature_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont,
