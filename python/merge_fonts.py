@@ -1544,18 +1544,17 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag,
             for old_idx in lat_lang_sys.FeatureIndex:
                 if old_idx in lat_feat_index_map:
                     feat_indices.append(lat_feat_index_map[old_idx])
-        # Also add JP features that don't conflict with EN, or that
-        # provide separate lookups (e.g. CJK kern alongside Latin kern).
+        # Also add JP features. When a tag is shared with the Latin font
+        # (e.g. both define `dlig` or `aalt`), keep BOTH feature records
+        # under the Latin script's LangSys: the JP-side lookups operate on
+        # JP glyphs that the Latin lookups never touch, so dropping them
+        # silently strips functionality from CJK punctuation and similar
+        # cases (Issue #2 #6). OpenType allows multiple feature records to
+        # share a tag in a single LangSys; the shaper applies all of them.
         if jp_lang_sys and jp_lang_sys.FeatureIndex:
             for old_idx in jp_lang_sys.FeatureIndex:
                 if old_idx in jp_feat_index_map:
-                    tag = jp_feature_records[old_idx].FeatureTag
-                    if tag not in lat_tag_to_indices:
-                        feat_indices.append(jp_feat_index_map[old_idx])
-                    elif tag in ('kern', 'mark', 'mkmk'):
-                        # Positional features can have separate lookups
-                        # for different scripts — include both
-                        feat_indices.append(jp_feat_index_map[old_idx])
+                    feat_indices.append(jp_feat_index_map[old_idx])
     else:
         # Unknown script: include both
         if jp_lang_sys and jp_lang_sys.FeatureIndex:
