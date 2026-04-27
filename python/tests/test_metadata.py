@@ -7,7 +7,7 @@ import pytest
 
 from fontTools.ttLib import TTFont
 
-from conftest import JP_VAR, _merge, _merge_with_meta
+from conftest import EN_CFF_FULL, JP_VAR, _merge, _merge_with_meta
 
 import merge_fonts as mf
 
@@ -494,3 +494,186 @@ class TestBuildSettingsText:
         assert "[Sub Font]" in text
 
 
+
+
+# ---------------------------------------------------------------------------
+# UINameID collision (Issue #2 #7)
+# ---------------------------------------------------------------------------
+
+
+class TestUINameIDCollision:
+    """When a Latin FeatureParams UINameID collides with a base-font name
+    record, the merge engine must remap the Latin nameID so the feature
+    label keeps its original text instead of inheriting the base string."""
+
+    def test_inter_ss02_label_preserved_against_jp_nameid_257(self):
+        """Inter Regular.otf uses UINameID 257 for `ss02` ("Disambiguation").
+        NotoSansJP also has a name record at nameID 257 ("Weight"). After
+        merge the merged ss02 must still resolve to Inter's text, not JP's.
+        """
+        en = TTFont(EN_CFF_FULL)
+        inter_text = next(
+            (r.toUnicode() for r in en["name"].names if r.nameID == 257),
+            None,
+        )
+        if inter_text is None:
+            pytest.skip("Inter has no nameID 257 record")
+        jp = TTFont(JP_VAR)
+        jp_text = next(
+            (r.toUnicode() for r in jp["name"].names if r.nameID == 257),
+            None,
+        )
+        if jp_text is None or jp_text == inter_text:
+            pytest.skip("No natural collision between Inter and JP nameID 257")
+
+        out = tempfile.mktemp(suffix=".otf")
+        config = {
+            "subFont": {"path": EN_CFF_FULL, "scale": 1.0,
+                        "baselineOffset": 0, "axes": []},
+            "baseFont": {"path": JP_VAR, "scale": 1.0,
+                         "baselineOffset": 0, "axes": []},
+            "output": {"familyName": "TestUI"},
+            "export": {"path": {"font": out}},
+        }
+        try:
+            mf.merge_fonts(config)
+            m = TTFont(out)
+            ss02_uinameid = None
+            for fr in m["GSUB"].table.FeatureList.FeatureRecord:
+                if fr.FeatureTag != "ss02":
+                    continue
+                fp = fr.Feature.FeatureParams
+                if fp and hasattr(fp, "UINameID"):
+                    ss02_uinameid = fp.UINameID
+                    break
+            assert ss02_uinameid is not None, "Merged font lost ss02 UINameID"
+            label = next(
+                (r.toUnicode() for r in m["name"].names
+                 if r.nameID == ss02_uinameid),
+                None,
+            )
+            assert label == inter_text, (
+                f"Merged ss02 label is {label!r}; expected Inter's "
+                f"{inter_text!r}, not JP's {jp_text!r}. UINameID collision "
+                f"was not remapped."
+            )
+        finally:
+            for p in (out, out.replace(".otf", ".woff2")):
+                if os.path.exists(p):
+                    os.remove(p)
+
+
+# ---------------------------------------------------------------------------
+# Character Variant labels (cvXX) — regression for Codex review of #7
+# ---------------------------------------------------------------------------
+
+
+CHARIS = os.path.join(os.path.dirname(__file__), "fonts",
+                      "Charis_SIL", "CharisSIL-Regular.ttf")
+PLAYWRITE = os.path.join(os.path.dirname(__file__), "fonts",
+                         "Playwrite_IE", "PlaywriteIE-VariableFont_wght.ttf")
+
+
+class TestCharacterVariantLabels:
+    """The Latin-side cvXX labels (FeatUILabelNameID, FirstParamUILabelNameID)
+    must be carried over and remapped on collision, just like ssXX UINameID.
+    """
+
+    def test_charis_cv13_label_preserved_when_charis_is_sub(self):
+        """Charis SIL `cv13` carries FeatUILabelNameID=256 for "Capital B
+        hook". After merging Charis (sub) into NotoSansJP (base), the merged
+        cv13 must still resolve to "Capital B hook"."""
+        if not os.path.exists(CHARIS):
+            pytest.skip("Charis SIL not available")
+        charis = TTFont(CHARIS)
+        expected = next(
+            (r.toUnicode() for r in charis["name"].names if r.nameID == 256),
+            None,
+        )
+        if expected is None:
+            pytest.skip("Charis has no nameID 256 record")
+
+        out = tempfile.mktemp(suffix=".ttf")
+        config = {
+            "subFont": {"path": CHARIS, "scale": 1.0,
+                        "baselineOffset": 0, "axes": []},
+            "baseFont": {"path": JP_VAR, "scale": 1.0,
+                         "baselineOffset": 0, "axes": []},
+            "output": {"familyName": "TestCV"},
+            "export": {"path": {"font": out}},
+        }
+        try:
+            mf.merge_fonts(config)
+            m = TTFont(out)
+            for fr in m["GSUB"].table.FeatureList.FeatureRecord:
+                if fr.FeatureTag != "cv13":
+                    continue
+                fp = fr.Feature.FeatureParams
+                nid = getattr(fp, "FeatUILabelNameID", None)
+                assert nid is not None, "Merged cv13 lost FeatUILabelNameID"
+                label = next(
+                    (r.toUnicode() for r in m["name"].names
+                     if r.nameID == nid),
+                    None,
+                )
+                assert label == expected, (
+                    f"Merged cv13 label is {label!r}; expected {expected!r}. "
+                    f"Latin cvXX label was dropped or clobbered."
+                )
+                break
+            else:
+                pytest.fail("Merged font lost cv13 feature")
+        finally:
+            for p in (out, out.replace(".ttf", ".woff2")):
+                if os.path.exists(p):
+                    os.remove(p)
+
+    def test_base_cv_label_not_clobbered_by_sub_collision(self):
+        """When the Latin sub's UINameID collides with a base nameID, the
+        base font's own FeatureParams must keep pointing at its untouched
+        record. Charis (base) cv13 → FeatUILabelNameID=256; Playwrite (sub)
+        UINameID values are remapped to free IDs without dragging Charis's
+        cv13 along."""
+        if not (os.path.exists(CHARIS) and os.path.exists(PLAYWRITE)):
+            pytest.skip("Charis SIL or Playwrite not available")
+        charis = TTFont(CHARIS)
+        expected = next(
+            (r.toUnicode() for r in charis["name"].names if r.nameID == 256),
+            None,
+        )
+        if expected is None:
+            pytest.skip("Charis has no nameID 256 record")
+
+        out = tempfile.mktemp(suffix=".ttf")
+        config = {
+            "subFont": {"path": PLAYWRITE, "scale": 1.0,
+                        "baselineOffset": 0, "axes": []},
+            "baseFont": {"path": CHARIS, "scale": 1.0,
+                         "baselineOffset": 0, "axes": []},
+            "output": {"familyName": "TestCVBase"},
+            "export": {"path": {"font": out}},
+        }
+        try:
+            mf.merge_fonts(config)
+            m = TTFont(out)
+            for fr in m["GSUB"].table.FeatureList.FeatureRecord:
+                if fr.FeatureTag != "cv13":
+                    continue
+                fp = fr.Feature.FeatureParams
+                nid = getattr(fp, "FeatUILabelNameID", None)
+                label = next(
+                    (r.toUnicode() for r in m["name"].names
+                     if r.nameID == nid),
+                    None,
+                )
+                assert label == expected, (
+                    f"Base cv13 label became {label!r}; expected {expected!r}. "
+                    f"The UINameID-collision remap leaked into base FeatureParams."
+                )
+                break
+            else:
+                pytest.fail("Merged font lost base cv13 feature")
+        finally:
+            for p in (out, out.replace(".ttf", ".woff2")):
+                if os.path.exists(p):
+                    os.remove(p)

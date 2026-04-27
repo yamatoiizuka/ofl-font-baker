@@ -1656,6 +1656,10 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
                 i + lat_offset for i in new_feat.Feature.LookupListIndex
             ]
             new_feat.Feature.LookupCount = len(new_feat.Feature.LookupListIndex)
+            # Mark this record so the later UINameID-collision remap in
+            # reconcile_tables only touches Latin-derived FeatureParams,
+            # not the base font's ones that happen to share a nameID value.
+            new_feat._lat_origin = True
             new_merged_idx = len(jp_features) + len(lat_features)
             lat_feat_index_map[old_idx] = new_merged_idx
             lat_features.append((feat_rec.FeatureTag, new_feat, 'en'))
@@ -2173,6 +2177,33 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     # --- Copy feature name records from Latin font ---
     lat_name = lat_font.get("name") if lat_font else None
     if lat_name:
+        # Stylistic Sets (`ssXX`) hang their UI label off `UINameID`;
+        # Character Variants (`cvXX`) use `FeatUILabelNameID` /
+        # `FeatUITooltipTextNameID` / `SampleTextNameID` and a contiguous
+        # block of per-variant labels at
+        # `FirstParamUILabelNameID .. FirstParamUILabelNameID + NumNamedParameters - 1`.
+        # Older fontTools versions also expose `NamedParameters`. The
+        # collector has to walk all of these so cvXX labels survive merge
+        # (Issue #2 #7).
+        SCALAR_ATTRS = ('UINameID', 'FeatUILabelNameID',
+                        'FeatUITooltipTextNameID', 'SampleTextNameID')
+
+        def _collect_feat_param_nameids(fp):
+            ids = set()
+            if not fp:
+                return ids
+            for attr in SCALAR_ATTRS:
+                nid = getattr(fp, attr, None)
+                if nid:
+                    ids.add(nid)
+            num = (getattr(fp, 'NumNamedParameters', None)
+                   or getattr(fp, 'NamedParameters', None))
+            first = getattr(fp, 'FirstParamUILabelNameID', None)
+            if num and first:
+                for nid in range(first, first + num):
+                    ids.add(nid)
+            return ids
+
         # Collect name IDs used by Latin font's feature params
         lat_feat_name_ids = set()
         for tag in ('GSUB', 'GPOS'):
@@ -2183,30 +2214,51 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
             if not ot.FeatureList:
                 continue
             for feat_rec in ot.FeatureList.FeatureRecord:
-                fp = feat_rec.Feature.FeatureParams
-                if fp and hasattr(fp, 'UINameID') and fp.UINameID:
-                    lat_feat_name_ids.add(fp.UINameID)
-                    # cv features may have additional name IDs
-                    for attr in ('FeatUILabelNameID', 'FeatUITooltipTextNameID',
-                                 'SampleTextNameID'):
-                        nid = getattr(fp, attr, None)
-                        if nid:
-                            lat_feat_name_ids.add(nid)
-                    # Character variants may list name IDs for each variant
-                    if hasattr(fp, 'NamedParameters') and fp.NamedParameters:
-                        for nid in range(fp.UINameID + 1,
-                                         fp.UINameID + 1 + fp.NamedParameters):
-                            lat_feat_name_ids.add(nid)
+                lat_feat_name_ids |= _collect_feat_param_nameids(
+                    feat_rec.Feature.FeatureParams)
 
-        # Copy those name records into merged font
-        existing_ids = {(r.nameID, r.platformID, r.platEncID, r.langID)
-                        for r in name_table.names}
+        # Copy those name records into the merged font, remapping any nameID
+        # that the merged name table is already using to a fresh ID. Without
+        # this, a Latin label that happens to clash with a base-font name
+        # record would silently inherit the base's text (Issue #2 #7).
+        existing_nameids = {r.nameID for r in name_table.names}
+        next_free = max(existing_nameids | {255}) + 1
+        nameid_remap: dict[int, int] = {}
+        for old_id in sorted(lat_feat_name_ids):
+            if old_id in existing_nameids:
+                nameid_remap[old_id] = next_free
+                next_free += 1
+
         for record in lat_name.names:
-            if record.nameID in lat_feat_name_ids:
-                key = (record.nameID, record.platformID, record.platEncID, record.langID)
-                if key not in existing_ids:
-                    name_table.names.append(record)
-                    existing_ids.add(key)
+            if record.nameID not in lat_feat_name_ids:
+                continue
+            new_record = copy.deepcopy(record)
+            new_record.nameID = nameid_remap.get(record.nameID, record.nameID)
+            name_table.names.append(new_record)
+
+        # Rewrite FeatureParams to point at the newly assigned nameIDs.
+        # Restrict the rewrite to FeatureRecords copied from the Latin font
+        # (marked with `_lat_origin` in `_merge_ot_table_v2`); base-font
+        # records that happen to share a numeric nameID with a Latin
+        # collision must keep pointing at their own (untouched) name
+        # records.
+        if nameid_remap:
+            for tag in ('GSUB', 'GPOS'):
+                merged_ot = merged.get(tag)
+                if not merged_ot or not getattr(merged_ot, 'table', None):
+                    continue
+                if not merged_ot.table.FeatureList:
+                    continue
+                for feat_rec in merged_ot.table.FeatureList.FeatureRecord:
+                    if not getattr(feat_rec, '_lat_origin', False):
+                        continue
+                    fp = feat_rec.Feature.FeatureParams
+                    if not fp:
+                        continue
+                    for attr in SCALAR_ATTRS + ('FirstParamUILabelNameID',):
+                        nid = getattr(fp, attr, None)
+                        if nid in nameid_remap:
+                            setattr(fp, attr, nameid_remap[nid])
 
     # --- OS/2 ---
     if not lat_font:
