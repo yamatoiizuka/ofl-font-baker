@@ -3061,6 +3061,79 @@ def merge_fonts(config: dict) -> str:
         _n = len(_td.CharStrings) if hasattr(_td, "CharStrings") else 0
         if _n < 60000:
             recalc_cff_font_bbox(merged)
+    # Recompute maxp sub-fields for TrueType output. fontTools' save()
+    # refreshes numGlyphs but does not walk glyf to refresh the per-glyph
+    # maxima, so adding new Latin glyphs would otherwise leave maxp
+    # pointing at the base font's old values (Issue #2 #8). We avoid
+    # maxp.recalc() because fontTools' implementation reads g.xMin which
+    # empty glyphs may not carry; walking glyf ourselves keeps the merge
+    # robust on every fixture.
+    if "maxp" in merged and "glyf" in merged:
+        _maxp = merged["maxp"]
+        _glyf = merged["glyf"]
+        max_pts = max_contours = 0
+        max_comp_pts = max_comp_contours = 0
+        max_comp_elems = max_comp_depth = 0
+
+        # Memoised flatten of each glyph to (points, contours, depth).
+        _flat_cache: dict = {}
+
+        def _flat_stats(name):
+            if name in _flat_cache:
+                return _flat_cache[name]
+            try:
+                g = _glyf[name]
+            except KeyError:
+                _flat_cache[name] = (0, 0, 0)
+                return _flat_cache[name]
+            if g.numberOfContours == 0:
+                _flat_cache[name] = (0, 0, 0)
+            elif g.isComposite():
+                pts = contours = 0
+                depth = 0
+                for c in g.components:
+                    sub_pts, sub_contours, sub_depth = _flat_stats(c.glyphName)
+                    pts += sub_pts
+                    contours += sub_contours
+                    depth = max(depth, sub_depth + 1)
+                _flat_cache[name] = (pts, contours, depth)
+            else:
+                pts = (len(g.coordinates)
+                       if hasattr(g, "coordinates") and g.coordinates else 0)
+                contours = g.numberOfContours if g.numberOfContours > 0 else 0
+                _flat_cache[name] = (pts, contours, 0)
+            return _flat_cache[name]
+
+        for _g in merged.getGlyphOrder():
+            try:
+                g = _glyf[_g]
+            except KeyError:
+                continue
+            if g.numberOfContours == 0:
+                continue
+            if g.isComposite():
+                if g.components:
+                    max_comp_elems = max(max_comp_elems, len(g.components))
+                pts, contours, depth = _flat_stats(_g)
+                max_comp_pts = max(max_comp_pts, pts)
+                max_comp_contours = max(max_comp_contours, contours)
+                max_comp_depth = max(max_comp_depth, depth)
+            else:
+                if hasattr(g, "coordinates") and g.coordinates is not None:
+                    max_pts = max(max_pts, len(g.coordinates))
+                if g.numberOfContours > 0:
+                    max_contours = max(max_contours, g.numberOfContours)
+
+        for attr, value in (
+            ("maxPoints", max_pts),
+            ("maxContours", max_contours),
+            ("maxCompositePoints", max_comp_pts),
+            ("maxCompositeContours", max_comp_contours),
+            ("maxComponentElements", max_comp_elems),
+            ("maxComponentDepth", max_comp_depth),
+        ):
+            if hasattr(_maxp, attr):
+                setattr(_maxp, attr, max(getattr(_maxp, attr, 0), value))
     # Ensure parent directory exists for all path-mode outputs
     for p in (output_path, paths.get("woff2"), paths.get("ofl"),
               paths.get("settings"), paths.get("config")):

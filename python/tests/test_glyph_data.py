@@ -1158,3 +1158,136 @@ class TestSharedGlyphCollateral:
         assert bounds is not None, "U+30FB has no outline"
 
 
+
+
+# ---------------------------------------------------------------------------
+# Same-tag features merge under Latin scripts (Issue #2 #6)
+# ---------------------------------------------------------------------------
+
+
+class TestSameTagFeatures:
+    """`_build_lang_sys` must surface JP-side feature lookups under Latin
+    scripts even when the tag is also defined on the Latin side."""
+
+    @staticmethod
+    def _coverage_for_tag(font, tag):
+        glyphs = set()
+        if "GSUB" not in font:
+            return glyphs
+        t = font["GSUB"].table
+        for fr in t.FeatureList.FeatureRecord:
+            if fr.FeatureTag != tag:
+                continue
+            for li in fr.Feature.LookupListIndex:
+                glyphs.update(mf._collect_lookup_glyphs(t.LookupList.Lookup[li]))
+        return glyphs
+
+    @staticmethod
+    def _latin_langsys(font):
+        if "GSUB" not in font:
+            return []
+        out = []
+        for sr in font["GSUB"].table.ScriptList.ScriptRecord:
+            if sr.ScriptTag in ("latn", "DFLT"):
+                if sr.Script.DefaultLangSys:
+                    out.append(sr.Script.DefaultLangSys)
+                for lsr in (sr.Script.LangSysRecord or []):
+                    out.append(lsr.LangSys)
+        return out
+
+    def test_jp_aalt_lookups_reachable_from_latin_langsys(self):
+        """JP-side `aalt` lookups (which target JP glyphs) must remain
+        reachable from the merged Latin script's LangSys instead of being
+        silently dropped because Latin also defines `aalt`."""
+        en_aalt = self._coverage_for_tag(TTFont(EN_VAR), "aalt")
+        jp_aalt = self._coverage_for_tag(TTFont(JP_VAR), "aalt")
+        jp_only = jp_aalt - en_aalt
+        if not jp_only:
+            pytest.skip("Fixture has no JP-only aalt glyphs to check")
+
+        m = _merge()
+        gsub = m["GSUB"].table
+        feat_list = gsub.FeatureList.FeatureRecord
+        lookup_list = gsub.LookupList.Lookup
+        reach_lookups = set()
+        for ls in self._latin_langsys(m):
+            for fi in (ls.FeatureIndex or []):
+                if feat_list[fi].FeatureTag == "aalt":
+                    reach_lookups.update(feat_list[fi].Feature.LookupListIndex)
+        reach_glyphs = set()
+        for li in reach_lookups:
+            reach_glyphs.update(mf._collect_lookup_glyphs(lookup_list[li]))
+
+        seen_jp_only = reach_glyphs & jp_only
+        assert seen_jp_only, (
+            f"None of {len(jp_only)} JP-only aalt glyphs are reachable from "
+            f"the Latin LangSys; the JP `aalt` feature was dropped instead "
+            f"of being merged in alongside the Latin one."
+        )
+
+
+# ---------------------------------------------------------------------------
+# maxp recalc after merge (Issue #2 #8)
+# ---------------------------------------------------------------------------
+
+
+class TestMaxpRecalc:
+    """The merge engine must refresh maxp sub-fields so they reflect the
+    glyphs added by the Latin sub. fontTools' save() refreshes numGlyphs
+    but not the per-glyph maxima."""
+
+    LATEEF = os.path.join(os.path.dirname(EN_VAR), "..", "Lateef",
+                          "Lateef-Regular.ttf")
+
+    def test_maxp_reflects_added_latin_glyphs(self):
+        """Every maxp sub-field — including the composite-walking ones
+        (`maxCompositePoints` / `maxCompositeContours`) — must reflect
+        Lateef's glyphs after merge. Captured pre-save via TTFont.save
+        patch so the test catches in-memory staleness even when fontTools'
+        own save would have masked it on disk."""
+        if not os.path.exists(self.LATEEF):
+            pytest.skip("Lateef not available")
+        captured = {}
+        orig_save = TTFont.save
+
+        def patched(self, *args, **kwargs):
+            if "maxp" in self and "glyf" in self and not captured:
+                for attr in ("maxPoints", "maxContours",
+                             "maxCompositePoints", "maxCompositeContours",
+                             "maxComponentElements", "maxComponentDepth"):
+                    captured[attr] = getattr(self["maxp"], attr, None)
+            return orig_save(self, *args, **kwargs)
+
+        out = tempfile.mktemp(suffix=".ttf")
+        config = {
+            "subFont": {"path": self.LATEEF, "scale": 1.0,
+                        "baselineOffset": 0, "axes": []},
+            "baseFont": {"path": JP_VAR, "scale": 1.0,
+                         "baselineOffset": 0, "axes": []},
+            "output": {"familyName": "TestMaxp"},
+            "export": {"path": {"font": out}},
+        }
+        TTFont.save = patched
+        try:
+            mf.merge_fonts(config)
+            assert captured.get("maxPoints", 0) >= 1000, (
+                f"maxPoints={captured.get('maxPoints')}, expected >=1000"
+            )
+            assert captured.get("maxContours", 0) >= 50, (
+                f"maxContours={captured.get('maxContours')}, expected >=50"
+            )
+            assert captured.get("maxCompositePoints", 0) > 0, (
+                f"maxCompositePoints={captured.get('maxCompositePoints')}, "
+                f"expected >0 (composites in Lateef should populate this)"
+            )
+            assert captured.get("maxCompositeContours", 0) > 0, (
+                f"maxCompositeContours={captured.get('maxCompositeContours')}"
+            )
+            assert captured.get("maxComponentElements", 0) >= 5, (
+                f"maxComponentElements={captured.get('maxComponentElements')}"
+            )
+        finally:
+            TTFont.save = orig_save
+            for p in (out, out.replace(".ttf", ".woff2")):
+                if os.path.exists(p):
+                    os.remove(p)
