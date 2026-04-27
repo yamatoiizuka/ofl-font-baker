@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ofl-font-baker"
-version = "0.3.1"
+version = "0.3.2"
 description = "Font merge engine — combine two font files into one via cmap-based glyph replacement"
 readme = "README.md"
 license = "MIT"
