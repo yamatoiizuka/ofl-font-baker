@@ -200,29 +200,59 @@ Electron inter-process communication between renderer and main. The renderer can
 ## Tests
 
 ```bash
-npm test                                                       # Standard tests (~3 min)
-python3 -m pytest python/tests/test_merge.py -k LargeCID -v   # 65535-glyph test (~20 min)
+npm test                                                # Full pytest suite (~18 min)
+python3 -m pytest python/tests/ -k LargeCID -v         # 65535-glyph CID test only (~10 min)
 ```
+
+Test code is split across four files under `python/tests/`:
+
+- `test_filter_subordinate_lookups.py` — helper-level coverage of
+  `_reindex_table`, `_remap_lookup_references`, `_collect_lookup_glyphs`,
+  and `_rename_glyphs_in_ot_table` (Issue #2 helpers)
+- `test_metadata.py` — name table, OFL text, PostScript name,
+  Version / Manufacturer / Trademark, UINameID collision, character
+  variant labels
+- `test_glyph_data.py` — outlines, metrics, hinting, GSUB/GPOS feature
+  preservation, CFF hint / coincidence / FontBBox
+- `test_pipeline.py` — CID Japanese, base-only, WOFF2, packaging,
+  output dir, large-CID stress test
 
 | Category | Count | Verifies |
 |---|---|---|
+| Filter subordinate lookups | 7 | Helper-level: ScriptList & cross-lookup remap, Format 1 rule rename, Type 5 F3 collector |
 | Variable instantiation | 4 | wght bake, JP weight, fvar removal, default axes |
-| Baseline offset | 3 | Simple shift, composite double-shift prevention, JP unaffected |
+| Baseline offset | 4 | Simple shift, Latin & JP composite double-shift prevention, JP unaffected |
 | Scale | 2 | Glyph size, advance width |
 | UPM normalization | 3 | 2048→1000 conversion, OS/2 metrics |
+| Output UPM | 5 | UPM scaling on hmtx / glyph / OS/2, base-only |
 | GPOS scaling | 3 | Kern scale, baseline unaffected, T+o pair kerning |
-| Feature preservation | 8 | calt/case/frac/ss01, subordinate Latin removal, chaining remap |
-| Metadata correctness | 12 | familyName, copyright concat, designer, OFL license, description |
-| Metadata (base only) | 5 | familyName, OFL, copyright, designer, "Built with" |
-| Output weight | 4 | usWeightClass, nameID 2/4/17 |
+| Feature preservation | 9 | calt / case / frac / ss01 / liga, subordinate Latin removal, chaining remap |
+| Same-tag features | 1 | JP-side `aalt` reachable from Latin LangSys |
 | Glyph names | 2 | post format 2.0, alternate glyph names |
 | Composite integrity | 2 | Reference completeness, hmtx completeness |
-| CID Japanese font | 4 | CID-keyed CFF merge, Latin/JP outlines, hmtx |
 | Metrics preservation | 10 | UPM, OS/2, hhea, scale/baseline unaffected |
-| Hinting preservation | 9 | prep/gasp/maxp, instructions cleared on scale |
+| TT hinting preservation | 7 | prep / gasp / maxp, instructions cleared on scale |
+| Maxp recalc | 1 | maxp sub-fields refreshed after merge |
+| CFF hint preservation | 8 | hstem / vstem / BlueValues survive CFF→CFF, TopDict mirrors nameIDs |
+| CFF coincidence snap | 3 | Coincident vertices preserved through scale |
+| CFF FontBBox | 1 | TopDict.FontBBox envelopes all CharStrings |
+| Latin cmap variant collision | 3 | Distinct cmap-target variants survive |
+| Shared glyph collateral | 4 | U+2027 / U+30FB middle-dot duplication |
+| PostScript name (sanitize / validate) | 17 | Helper unit tests for nameID 6 sanitization & validation |
+| Metadata correctness | 39 | familyName / copyright / version / Manufacturer / Trademark / nameID hygiene |
+| Metadata (base only) | 5 | familyName, OFL, copyright, designer, "Built with" |
+| Output weight | 4 | usWeightClass, nameID 2 / 4 / 17 |
+| UINameID collision | 1 | Inter `ss02` UINameID 257 vs NotoSansJP nameID 257 remap |
+| Character variant labels | 2 | Charis `cv13` label preserved as sub & as base |
+| Build OFL text | 4 | source copyright concat, user addition, fallback |
+| Build settings text | 3 | summary line, sources line, dimensions |
+| CID Japanese font | 4 | CID-keyed CFF merge, Latin / JP outlines, hmtx |
+| ChainContext ClassDef rename | 1 | Inter Variable + Shippori `i.numr` no-crash |
 | Base-only merge | 2 | Merge without Latin, JP glyphs preserved |
 | WOFF2 output | 2 | WOFF2 generation, base-only WOFF2 |
 | Large CID font | 4 | 65535 glyphs, glyph count limit, cmap replacement, post format 3.0 |
+| Helpers (sfnt / style / outdir) | 8 | `detect_sfnt_ext`, `compute_style_name`, `prepare_output_dir` |
+| Package output | 12 | Manifest, font / woff2 / ofl / settings, overwrite, options |
 
 ## Commands
 
