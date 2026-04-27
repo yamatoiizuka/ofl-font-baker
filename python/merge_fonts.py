@@ -1158,24 +1158,21 @@ def _collect_lookup_glyphs(lookup) -> set:
                     glyph_names.update(cov.glyphs)
             if hasattr(st, 'ligatures') and st.ligatures:
                 glyph_names.update(st.ligatures.keys())
-                # Type 4 ligatures stash the trailing input glyphs in
-                # `Component` and the output in `LigGlyph`. Walk them too:
-                # the keys (= first glyph) alone would let `_classify_lookup`
-                # mark a JP `f i → fi` ligature as `latin` (because `f` lives
-                # in Latin), which then strips JP-side ligatures from the
-                # merged font.
+                # Type 4 ligatures stash the trailing INPUT glyphs in
+                # `Component`. Walk them too so `_classify_lookup` sees the
+                # full input set. We deliberately do NOT add `LigGlyph`
+                # (the output): including the output would let a JP-designed
+                # `f i → JP-fi` ligature look like a `mixed` lookup just
+                # because the output glyph is JP-side, even though every
+                # input is Latin. That is the textbook "subordinate Latin
+                # liga" the merge engine wants to drop.
                 for lig_list in st.ligatures.values():
                     if not lig_list:
                         continue
                     for lig in lig_list:
-                        for attr in ('Component', 'LigGlyph'):
-                            val = getattr(lig, attr, None)
-                            if val is None:
-                                continue
-                            if isinstance(val, (list, tuple)):
-                                glyph_names.update(val)
-                            else:
-                                glyph_names.add(val)
+                        comp = getattr(lig, 'Component', None)
+                        if comp:
+                            glyph_names.update(comp)
             if hasattr(st, 'mapping') and st.mapping:
                 glyph_names.update(st.mapping.keys())
             if hasattr(st, 'alternates') and st.alternates:
