@@ -1138,7 +1138,15 @@ def _collect_lookup_glyphs(lookup) -> set:
             if hasattr(st, 'ExtSubTable'):
                 st = st.ExtSubTable
             if hasattr(st, 'Coverage') and st.Coverage:
-                glyph_names.update(st.Coverage.glyphs)
+                # ContextSubst / ContextPos Format 3 store Coverage as a
+                # list of Coverage objects (one per input position), not a
+                # single object. Treat both shapes uniformly so Format 3
+                # lookups don't silently come back as "no glyphs" (Issue #2 #4).
+                cov = st.Coverage
+                cov_list = cov if isinstance(cov, list) else [cov]
+                for c in cov_list:
+                    if c and hasattr(c, 'glyphs'):
+                        glyph_names.update(c.glyphs)
             if hasattr(st, 'BacktrackCoverage'):
                 for cov in (st.BacktrackCoverage or []):
                     glyph_names.update(cov.glyphs)
