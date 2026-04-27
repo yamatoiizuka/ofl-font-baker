@@ -14,7 +14,7 @@
     "start": "rm -f python/dist/merge_fonts && npm run build && electron .",
     "start:screenshot": "WINDOW_WIDTH=${WINDOW_WIDTH:-1000} WINDOW_HEIGHT=${WINDOW_HEIGHT:-900} npm start",
     "dev": "rm -f python/dist/merge_fonts && npm run build:preload && npm run build:main && concurrently -k \"npm run dev:renderer\" \"npm run dev:main\" \"npm run dev:preload\" \"while ! curl -s http://localhost:5173 > /dev/null 2>&1; do sleep 0.3; done && VITE_DEV_SERVER_URL=http://localhost:5173 electron .\"",
-    "test": "python3 -m pytest python/tests/test_merge.py -v",
+    "test": "python3 -m pytest python/tests/ -v",
     "python:setup": "pip3 install -r python/requirements.txt pyinstaller",
     "python:build": "python3 -m PyInstaller --onefile --name merge_fonts --distpath python/dist --workpath python/build --specpath python --hidden-import fontTools.varLib.instancer --hidden-import fontTools.pens.cu2quPen --hidden-import fontTools.pens.transformPen --hidden-import fontTools.pens.ttGlyphPen --hidden-import fontTools.pens.recordingPen --hidden-import fontTools.pens.pointPen python/merge_fonts.py",
     "pack": "npm run build && npm run python:build && electron-builder --dir",

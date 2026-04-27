@@ -1100,7 +1100,13 @@ def transform_tt_glyph_inplace(font: TTFont, glyph_name: str,
         for component in glyph.components:
             if hasattr(component, 'x') and hasattr(component, 'y'):
                 component.x = int(round(component.x * scale))
-                component.y = int(round(component.y * scale + dy))
+                # `dy` is intentionally not added here: the base glyph that
+                # this component points to is processed separately in the
+                # same loop and gets its contours shifted by `dy`. Adding
+                # `dy` to the component offset on top of that double-shifts
+                # the composite render. Mirrors copy_glyph_tt's composite
+                # branch, which has the same design.
+                component.y = int(round(component.y * scale))
     elif glyph.numberOfContours > 0 and glyph.coordinates:
         coords = []
         for x, y in glyph.coordinates:
@@ -1132,7 +1138,15 @@ def _collect_lookup_glyphs(lookup) -> set:
             if hasattr(st, 'ExtSubTable'):
                 st = st.ExtSubTable
             if hasattr(st, 'Coverage') and st.Coverage:
-                glyph_names.update(st.Coverage.glyphs)
+                # ContextSubst / ContextPos Format 3 store Coverage as a
+                # list of Coverage objects (one per input position), not a
+                # single object. Treat both shapes uniformly so Format 3
+                # lookups don't silently come back as "no glyphs" (Issue #2 #4).
+                cov = st.Coverage
+                cov_list = cov if isinstance(cov, list) else [cov]
+                for c in cov_list:
+                    if c and hasattr(c, 'glyphs'):
+                        glyph_names.update(c.glyphs)
             if hasattr(st, 'BacktrackCoverage'):
                 for cov in (st.BacktrackCoverage or []):
                     glyph_names.update(cov.glyphs)
@@ -1144,6 +1158,24 @@ def _collect_lookup_glyphs(lookup) -> set:
                     glyph_names.update(cov.glyphs)
             if hasattr(st, 'ligatures') and st.ligatures:
                 glyph_names.update(st.ligatures.keys())
+                # Type 4 ligatures stash the trailing input glyphs in
+                # `Component` and the output in `LigGlyph`. Walk them too:
+                # the keys (= first glyph) alone would let `_classify_lookup`
+                # mark a JP `f i → fi` ligature as `latin` (because `f` lives
+                # in Latin), which then strips JP-side ligatures from the
+                # merged font.
+                for lig_list in st.ligatures.values():
+                    if not lig_list:
+                        continue
+                    for lig in lig_list:
+                        for attr in ('Component', 'LigGlyph'):
+                            val = getattr(lig, attr, None)
+                            if val is None:
+                                continue
+                            if isinstance(val, (list, tuple)):
+                                glyph_names.update(val)
+                            else:
+                                glyph_names.add(val)
             if hasattr(st, 'mapping') and st.mapping:
                 glyph_names.update(st.mapping.keys())
             if hasattr(st, 'alternates') and st.alternates:
@@ -1188,24 +1220,39 @@ def _classify_lookup(lookup, lat_glyph_names: set) -> str:
 
 
 def _transform_lookup_references(lookup, transform):
-    """Apply *transform* (a callable: old_index → new_index) to every
+    """Apply *transform* (a callable: old_index → new_index | None) to every
     internal lookup reference inside chaining / context lookups.
+
+    When *transform* returns ``None`` the record itself is dropped from its
+    parent list. This is how callers signal "the target lookup no longer
+    exists, so this reference must die" rather than letting a stale index
+    silently land on a different lookup.
 
     Works for both GSUB (types 5/6) and GPOS (types 7/8), including
     extension wrappers and nested rule sets (Format 1/2/3).
     """
+    def _rewrite(records):
+        if not records:
+            return records
+        kept = []
+        for rec in records:
+            new_idx = transform(rec.LookupListIndex)
+            if new_idx is None:
+                continue
+            rec.LookupListIndex = new_idx
+            kept.append(rec)
+        return kept
+
     for subtable in lookup.SubTable:
         st = subtable
         if hasattr(st, 'ExtSubTable'):
             st = st.ExtSubTable
         # GSUB: ChainContextSubst (type 6), ContextSubst (type 5)
         if hasattr(st, 'SubstLookupRecord') and st.SubstLookupRecord:
-            for slr in st.SubstLookupRecord:
-                slr.LookupListIndex = transform(slr.LookupListIndex)
+            st.SubstLookupRecord = _rewrite(st.SubstLookupRecord)
         # GPOS: ChainContextPos (type 8), ContextPos (type 7)
         if hasattr(st, 'PosLookupRecord') and st.PosLookupRecord:
-            for plr in st.PosLookupRecord:
-                plr.LookupListIndex = transform(plr.LookupListIndex)
+            st.PosLookupRecord = _rewrite(st.PosLookupRecord)
         # Nested rule sets (Format 1/2)
         for attr in ('SubRuleSet', 'SubClassSet', 'ChainSubRuleSet', 'ChainSubClassSet',
                       'PosRuleSet', 'PosClassSet', 'ChainPosRuleSet', 'ChainPosClassSet'):
@@ -1222,11 +1269,9 @@ def _transform_lookup_references(lookup, transform):
                         continue
                     for rule in rules:
                         if hasattr(rule, 'SubstLookupRecord') and rule.SubstLookupRecord:
-                            for slr in rule.SubstLookupRecord:
-                                slr.LookupListIndex = transform(slr.LookupListIndex)
+                            rule.SubstLookupRecord = _rewrite(rule.SubstLookupRecord)
                         if hasattr(rule, 'PosLookupRecord') and rule.PosLookupRecord:
-                            for plr in rule.PosLookupRecord:
-                                plr.LookupListIndex = transform(plr.LookupListIndex)
+                            rule.PosLookupRecord = _rewrite(rule.PosLookupRecord)
 
 
 def _offset_lookup_references(lookup, offset: int):
@@ -1237,10 +1282,11 @@ def _offset_lookup_references(lookup, offset: int):
 def _remap_lookup_references(lookup, remap: dict):
     """Remap internal lookup references using an old→new index mapping.
 
-    References to removed lookups are left unchanged (they will point to
-    a different lookup, but this is the safest fallback for edge cases).
+    References to lookups that are not in *remap* (because the target
+    lookup has been removed) are dropped from their parent record list,
+    rather than being left to silently land on a different lookup.
     """
-    _transform_lookup_references(lookup, lambda idx: remap.get(idx, idx))
+    _transform_lookup_references(lookup, lambda idx: remap.get(idx))
 
 
 def _rename_glyphs_in_ot_table(ot_table, name_map: dict):
@@ -1268,10 +1314,15 @@ def _rename_glyphs_in_ot_table(ot_table, name_map: dict):
                     for cov in covs:
                         if cov and hasattr(cov, 'glyphs'):
                             cov.glyphs = [rename(g) for g in cov.glyphs]
-            # Rename ClassDef glyphs
-            for attr in ('ClassDef1', 'ClassDef2', 'ClassDef', 'MarkCoverage',
-                         'Mark1Coverage', 'Mark2Coverage', 'BaseCoverage',
-                         'LigatureCoverage'):
+            # Rename ClassDef glyphs. Chaining contextual Format 2 lookups
+            # (GSUB type 6 / GPOS type 8) split their classification across
+            # three ClassDefs — Backtrack/Input/LookAhead — and missing any
+            # of them leaves stale glyph names that crash CFF compile when a
+            # cmap-based rename has remapped the original name.
+            for attr in ('ClassDef1', 'ClassDef2', 'ClassDef',
+                         'BacktrackClassDef', 'InputClassDef', 'LookAheadClassDef',
+                         'MarkCoverage', 'Mark1Coverage', 'Mark2Coverage',
+                         'BaseCoverage', 'LigatureCoverage'):
                 cd = getattr(real_st, attr, None)
                 if cd and hasattr(cd, 'classDefs'):
                     cd.classDefs = {rename(g): v for g, v in cd.classDefs.items()}
@@ -1312,6 +1363,30 @@ def _rename_glyphs_in_ot_table(ot_table, name_map: dict):
                     else:
                         new_mapping[rename(g)] = alts
                 real_st.mapping = new_mapping
+            # Rename glyph names inside Context / ChainContext Format 1 rule
+            # sets (Issue #2 #5). Format 1 rules carry raw glyph names in
+            # their Input / Backtrack / LookAhead arrays; if these are not
+            # renamed alongside Coverage / ClassDef the rules silently
+            # reference the pre-merge name and the lookup misfires.
+            for rs_attr in ('SubRuleSet', 'ChainSubRuleSet',
+                            'PosRuleSet', 'ChainPosRuleSet'):
+                ruleset_list = getattr(real_st, rs_attr, None)
+                if not ruleset_list:
+                    continue
+                for ruleset in ruleset_list:
+                    if not ruleset:
+                        continue
+                    for r_attr in ('SubRule', 'ChainSubRule',
+                                   'PosRule', 'ChainPosRule'):
+                        rules = getattr(ruleset, r_attr, None)
+                        if not rules:
+                            continue
+                        for rule in rules:
+                            for seq_attr in ('Input', 'Backtrack', 'LookAhead'):
+                                seq = getattr(rule, seq_attr, None)
+                                if seq:
+                                    setattr(rule, seq_attr,
+                                            [rename(g) for g in seq])
 
 
 def merge_feature_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont,
@@ -1383,32 +1458,65 @@ def _filter_subordinate_lookups(table, lat_glyph_names: set):
 
 
 def _reindex_table(ot, kept_lookup_indices: list):
-    """Reindex a table after removing lookups."""
-    remap = {old: new for new, old in enumerate(kept_lookup_indices)}
+    """Reindex a GSUB/GPOS table after removing lookups.
 
-    # Update FeatureList
+    Updates four things in order:
+      1. Cross-lookup references inside surviving chaining/context lookups —
+         remapped or dropped via _remap_lookup_references.
+      2. FeatureList — drop features whose every lookup was removed; build
+         an old-feature-index → new-feature-index mapping for step 3.
+      3. ScriptList — every LangSys.FeatureIndex (and ReqFeatureIndex)
+         rewritten through the feature mapping; references to removed
+         features are dropped.
+      4. LookupList — trimmed to the kept indices.
+    """
+    lookup_remap = {old: new for new, old in enumerate(kept_lookup_indices)}
+
+    # 1. Remap (and drop) cross-lookup references in surviving lookups.
+    #    Done before LookupList is trimmed so the indices still address
+    #    the original positions while we walk.
+    for old_idx in kept_lookup_indices:
+        _remap_lookup_references(ot.LookupList.Lookup[old_idx], lookup_remap)
+
+    # 2. Rebuild FeatureList and track old→new feature index mapping.
+    feat_remap: dict[int, int] = {}
     if ot.FeatureList:
         new_features = []
-        for feat_rec in ot.FeatureList.FeatureRecord:
+        for old_idx, feat_rec in enumerate(ot.FeatureList.FeatureRecord):
             feat = feat_rec.Feature
-            new_indices = [remap[i] for i in feat.LookupListIndex if i in remap]
-            if new_indices:
-                feat.LookupListIndex = new_indices
-                feat.LookupCount = len(new_indices)
-                new_features.append(feat_rec)
+            new_indices = [lookup_remap[i] for i in feat.LookupListIndex
+                           if i in lookup_remap]
+            if not new_indices:
+                continue  # feature has no surviving lookups → drop
+            feat.LookupListIndex = new_indices
+            feat.LookupCount = len(new_indices)
+            feat_remap[old_idx] = len(new_features)
+            new_features.append(feat_rec)
         ot.FeatureList.FeatureRecord = new_features
         ot.FeatureList.FeatureCount = len(new_features)
 
-        # Reindex feature references in ScriptList
-        if ot.ScriptList:
-            # Build old feature index → new feature index mapping
-            # (some features may have been removed entirely)
-            old_feat_list = list(range(len(new_features) + len(ot.FeatureList.FeatureRecord)))
-            # Actually, new_features are already the correct final list
-            # We need to track which original indices map to which new indices
-            # This is complex — simpler to just rebuild references below
+    # 3. Rewrite ScriptList LangSys feature references.
+    if ot.ScriptList:
+        for sr in ot.ScriptList.ScriptRecord:
+            lang_systems = []
+            if sr.Script.DefaultLangSys is not None:
+                lang_systems.append(sr.Script.DefaultLangSys)
+            for lsr in (sr.Script.LangSysRecord or []):
+                if lsr.LangSys is not None:
+                    lang_systems.append(lsr.LangSys)
+            for ls in lang_systems:
+                ls.FeatureIndex = [
+                    feat_remap[fi]
+                    for fi in (ls.FeatureIndex or [])
+                    if fi in feat_remap
+                ]
+                # ReqFeatureIndex: 0xFFFF means "none"; otherwise remap or
+                # drop (collapse to 0xFFFF) when the required feature is gone.
+                req = getattr(ls, 'ReqFeatureIndex', 0xFFFF)
+                if req != 0xFFFF:
+                    ls.ReqFeatureIndex = feat_remap.get(req, 0xFFFF)
 
-    # Update LookupList
+    # 4. Trim the LookupList itself.
     ot.LookupList.Lookup = [ot.LookupList.Lookup[i] for i in kept_lookup_indices]
     ot.LookupList.LookupCount = len(ot.LookupList.Lookup)
 
@@ -1454,18 +1562,17 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag,
             for old_idx in lat_lang_sys.FeatureIndex:
                 if old_idx in lat_feat_index_map:
                     feat_indices.append(lat_feat_index_map[old_idx])
-        # Also add JP features that don't conflict with EN, or that
-        # provide separate lookups (e.g. CJK kern alongside Latin kern).
+        # Also add JP features. When a tag is shared with the Latin font
+        # (e.g. both define `dlig` or `aalt`), keep BOTH feature records
+        # under the Latin script's LangSys: the JP-side lookups operate on
+        # JP glyphs that the Latin lookups never touch, so dropping them
+        # silently strips functionality from CJK punctuation and similar
+        # cases (Issue #2 #6). OpenType allows multiple feature records to
+        # share a tag in a single LangSys; the shaper applies all of them.
         if jp_lang_sys and jp_lang_sys.FeatureIndex:
             for old_idx in jp_lang_sys.FeatureIndex:
                 if old_idx in jp_feat_index_map:
-                    tag = jp_feature_records[old_idx].FeatureTag
-                    if tag not in lat_tag_to_indices:
-                        feat_indices.append(jp_feat_index_map[old_idx])
-                    elif tag in ('kern', 'mark', 'mkmk'):
-                        # Positional features can have separate lookups
-                        # for different scripts — include both
-                        feat_indices.append(jp_feat_index_map[old_idx])
+                    feat_indices.append(jp_feat_index_map[old_idx])
     else:
         # Unknown script: include both
         if jp_lang_sys and jp_lang_sys.FeatureIndex:
@@ -1567,6 +1674,10 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
                 i + lat_offset for i in new_feat.Feature.LookupListIndex
             ]
             new_feat.Feature.LookupCount = len(new_feat.Feature.LookupListIndex)
+            # Mark this record so the later UINameID-collision remap in
+            # reconcile_tables only touches Latin-derived FeatureParams,
+            # not the base font's ones that happen to share a nameID value.
+            new_feat._lat_origin = True
             new_merged_idx = len(jp_features) + len(lat_features)
             lat_feat_index_map[old_idx] = new_merged_idx
             lat_features.append((feat_rec.FeatureTag, new_feat, 'en'))
@@ -2084,6 +2195,33 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     # --- Copy feature name records from Latin font ---
     lat_name = lat_font.get("name") if lat_font else None
     if lat_name:
+        # Stylistic Sets (`ssXX`) hang their UI label off `UINameID`;
+        # Character Variants (`cvXX`) use `FeatUILabelNameID` /
+        # `FeatUITooltipTextNameID` / `SampleTextNameID` and a contiguous
+        # block of per-variant labels at
+        # `FirstParamUILabelNameID .. FirstParamUILabelNameID + NumNamedParameters - 1`.
+        # Older fontTools versions also expose `NamedParameters`. The
+        # collector has to walk all of these so cvXX labels survive merge
+        # (Issue #2 #7).
+        SCALAR_ATTRS = ('UINameID', 'FeatUILabelNameID',
+                        'FeatUITooltipTextNameID', 'SampleTextNameID')
+
+        def _collect_feat_param_nameids(fp):
+            ids = set()
+            if not fp:
+                return ids
+            for attr in SCALAR_ATTRS:
+                nid = getattr(fp, attr, None)
+                if nid:
+                    ids.add(nid)
+            num = (getattr(fp, 'NumNamedParameters', None)
+                   or getattr(fp, 'NamedParameters', None))
+            first = getattr(fp, 'FirstParamUILabelNameID', None)
+            if num and first:
+                for nid in range(first, first + num):
+                    ids.add(nid)
+            return ids
+
         # Collect name IDs used by Latin font's feature params
         lat_feat_name_ids = set()
         for tag in ('GSUB', 'GPOS'):
@@ -2094,30 +2232,51 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
             if not ot.FeatureList:
                 continue
             for feat_rec in ot.FeatureList.FeatureRecord:
-                fp = feat_rec.Feature.FeatureParams
-                if fp and hasattr(fp, 'UINameID') and fp.UINameID:
-                    lat_feat_name_ids.add(fp.UINameID)
-                    # cv features may have additional name IDs
-                    for attr in ('FeatUILabelNameID', 'FeatUITooltipTextNameID',
-                                 'SampleTextNameID'):
-                        nid = getattr(fp, attr, None)
-                        if nid:
-                            lat_feat_name_ids.add(nid)
-                    # Character variants may list name IDs for each variant
-                    if hasattr(fp, 'NamedParameters') and fp.NamedParameters:
-                        for nid in range(fp.UINameID + 1,
-                                         fp.UINameID + 1 + fp.NamedParameters):
-                            lat_feat_name_ids.add(nid)
+                lat_feat_name_ids |= _collect_feat_param_nameids(
+                    feat_rec.Feature.FeatureParams)
 
-        # Copy those name records into merged font
-        existing_ids = {(r.nameID, r.platformID, r.platEncID, r.langID)
-                        for r in name_table.names}
+        # Copy those name records into the merged font, remapping any nameID
+        # that the merged name table is already using to a fresh ID. Without
+        # this, a Latin label that happens to clash with a base-font name
+        # record would silently inherit the base's text (Issue #2 #7).
+        existing_nameids = {r.nameID for r in name_table.names}
+        next_free = max(existing_nameids | {255}) + 1
+        nameid_remap: dict[int, int] = {}
+        for old_id in sorted(lat_feat_name_ids):
+            if old_id in existing_nameids:
+                nameid_remap[old_id] = next_free
+                next_free += 1
+
         for record in lat_name.names:
-            if record.nameID in lat_feat_name_ids:
-                key = (record.nameID, record.platformID, record.platEncID, record.langID)
-                if key not in existing_ids:
-                    name_table.names.append(record)
-                    existing_ids.add(key)
+            if record.nameID not in lat_feat_name_ids:
+                continue
+            new_record = copy.deepcopy(record)
+            new_record.nameID = nameid_remap.get(record.nameID, record.nameID)
+            name_table.names.append(new_record)
+
+        # Rewrite FeatureParams to point at the newly assigned nameIDs.
+        # Restrict the rewrite to FeatureRecords copied from the Latin font
+        # (marked with `_lat_origin` in `_merge_ot_table_v2`); base-font
+        # records that happen to share a numeric nameID with a Latin
+        # collision must keep pointing at their own (untouched) name
+        # records.
+        if nameid_remap:
+            for tag in ('GSUB', 'GPOS'):
+                merged_ot = merged.get(tag)
+                if not merged_ot or not getattr(merged_ot, 'table', None):
+                    continue
+                if not merged_ot.table.FeatureList:
+                    continue
+                for feat_rec in merged_ot.table.FeatureList.FeatureRecord:
+                    if not getattr(feat_rec, '_lat_origin', False):
+                        continue
+                    fp = feat_rec.Feature.FeatureParams
+                    if not fp:
+                        continue
+                    for attr in SCALAR_ATTRS + ('FirstParamUILabelNameID',):
+                        nid = getattr(fp, attr, None)
+                        if nid in nameid_remap:
+                            setattr(fp, attr, nameid_remap[nid])
 
     # --- OS/2 ---
     if not lat_font:
@@ -2920,6 +3079,79 @@ def merge_fonts(config: dict) -> str:
         _n = len(_td.CharStrings) if hasattr(_td, "CharStrings") else 0
         if _n < 60000:
             recalc_cff_font_bbox(merged)
+    # Recompute maxp sub-fields for TrueType output. fontTools' save()
+    # refreshes numGlyphs but does not walk glyf to refresh the per-glyph
+    # maxima, so adding new Latin glyphs would otherwise leave maxp
+    # pointing at the base font's old values (Issue #2 #8). We avoid
+    # maxp.recalc() because fontTools' implementation reads g.xMin which
+    # empty glyphs may not carry; walking glyf ourselves keeps the merge
+    # robust on every fixture.
+    if "maxp" in merged and "glyf" in merged:
+        _maxp = merged["maxp"]
+        _glyf = merged["glyf"]
+        max_pts = max_contours = 0
+        max_comp_pts = max_comp_contours = 0
+        max_comp_elems = max_comp_depth = 0
+
+        # Memoised flatten of each glyph to (points, contours, depth).
+        _flat_cache: dict = {}
+
+        def _flat_stats(name):
+            if name in _flat_cache:
+                return _flat_cache[name]
+            try:
+                g = _glyf[name]
+            except KeyError:
+                _flat_cache[name] = (0, 0, 0)
+                return _flat_cache[name]
+            if g.numberOfContours == 0:
+                _flat_cache[name] = (0, 0, 0)
+            elif g.isComposite():
+                pts = contours = 0
+                depth = 0
+                for c in g.components:
+                    sub_pts, sub_contours, sub_depth = _flat_stats(c.glyphName)
+                    pts += sub_pts
+                    contours += sub_contours
+                    depth = max(depth, sub_depth + 1)
+                _flat_cache[name] = (pts, contours, depth)
+            else:
+                pts = (len(g.coordinates)
+                       if hasattr(g, "coordinates") and g.coordinates else 0)
+                contours = g.numberOfContours if g.numberOfContours > 0 else 0
+                _flat_cache[name] = (pts, contours, 0)
+            return _flat_cache[name]
+
+        for _g in merged.getGlyphOrder():
+            try:
+                g = _glyf[_g]
+            except KeyError:
+                continue
+            if g.numberOfContours == 0:
+                continue
+            if g.isComposite():
+                if g.components:
+                    max_comp_elems = max(max_comp_elems, len(g.components))
+                pts, contours, depth = _flat_stats(_g)
+                max_comp_pts = max(max_comp_pts, pts)
+                max_comp_contours = max(max_comp_contours, contours)
+                max_comp_depth = max(max_comp_depth, depth)
+            else:
+                if hasattr(g, "coordinates") and g.coordinates is not None:
+                    max_pts = max(max_pts, len(g.coordinates))
+                if g.numberOfContours > 0:
+                    max_contours = max(max_contours, g.numberOfContours)
+
+        for attr, value in (
+            ("maxPoints", max_pts),
+            ("maxContours", max_contours),
+            ("maxCompositePoints", max_comp_pts),
+            ("maxCompositeContours", max_comp_contours),
+            ("maxComponentElements", max_comp_elems),
+            ("maxComponentDepth", max_comp_depth),
+        ):
+            if hasattr(_maxp, attr):
+                setattr(_maxp, attr, max(getattr(_maxp, attr, 0), value))
     # Ensure parent directory exists for all path-mode outputs
     for p in (output_path, paths.get("woff2"), paths.get("ofl"),
               paths.get("settings"), paths.get("config")):

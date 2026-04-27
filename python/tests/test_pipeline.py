@@ -9,9 +9,12 @@ import pytest
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 
-from conftest import EN_VAR, JP_OTF_FULL, JP_VAR, _merge_otf_jp
+from conftest import EN_FULL, EN_VAR, FONTS, JP_OTF_FULL, JP_VAR, _merge_otf_jp
 
 import merge_fonts as mf
+
+
+SHIPPORI = os.path.join(FONTS, "Shippori_Mincho", "ShipporiMincho-Regular.ttf")
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +66,44 @@ class TestCIDJapaneseFont:
         missing = [g for g in order if g not in hmtx.metrics]
         assert len(missing) == 0, f"Glyphs missing from hmtx: {missing[:10]}"
 
+
+
+# ---------------------------------------------------------------------------
+# ChainContext Format 2 ClassDef rename (Issue #8 — i.numr crash)
+# ---------------------------------------------------------------------------
+
+class TestChainContextClassDefRename:
+    """Regression for the i.numr crash. When a Latin glyph is renamed via
+    cmap-based remap (e.g. Inter `i.numr` → Shippori `uniE0A5`), every
+    place that references the old name in GSUB/GPOS must be rewritten —
+    including the BacktrackClassDef / InputClassDef / LookAheadClassDef
+    triple inside ChainContextSubst Format 2 lookups.
+    """
+
+    def test_inter_full_into_shippori_does_not_crash(self):
+        """Inter Variable + Shippori Mincho merge round-trips through save."""
+        if not os.path.exists(SHIPPORI):
+            pytest.skip("Shippori Mincho not available")
+        out = tempfile.mktemp(suffix=".ttf")
+        config = {
+            "subFont": {"path": EN_FULL, "scale": 1.0,
+                        "baselineOffset": 0,
+                        "axes": [{"tag": "opsz", "currentValue": 14},
+                                 {"tag": "wght", "currentValue": 400}]},
+            "baseFont": {"path": SHIPPORI, "scale": 1.0,
+                         "baselineOffset": 0, "axes": []},
+            "output": {"familyName": "TestChain"},
+            "export": {"path": {"font": out}},
+        }
+        try:
+            mf.merge_fonts(config)
+            assert os.path.exists(out)
+            # Reload to verify the saved font is parseable too.
+            TTFont(out)
+        finally:
+            for p in (out, out.replace(".ttf", ".woff2")):
+                if os.path.exists(p):
+                    os.remove(p)
 
 
 # ---------------------------------------------------------------------------
