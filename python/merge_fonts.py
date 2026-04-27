@@ -1100,7 +1100,13 @@ def transform_tt_glyph_inplace(font: TTFont, glyph_name: str,
         for component in glyph.components:
             if hasattr(component, 'x') and hasattr(component, 'y'):
                 component.x = int(round(component.x * scale))
-                component.y = int(round(component.y * scale + dy))
+                # `dy` is intentionally not added here: the base glyph that
+                # this component points to is processed separately in the
+                # same loop and gets its contours shifted by `dy`. Adding
+                # `dy` to the component offset on top of that double-shifts
+                # the composite render. Mirrors copy_glyph_tt's composite
+                # branch, which has the same design.
+                component.y = int(round(component.y * scale))
     elif glyph.numberOfContours > 0 and glyph.coordinates:
         coords = []
         for x, y in glyph.coordinates:

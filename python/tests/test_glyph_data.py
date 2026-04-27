@@ -115,6 +115,49 @@ class TestBaselineOffset:
         dy = round(b200[1] - b0[1])
         assert abs(dy) <= 1, f"Japanese glyph shifted by {dy} when only Latin baseline changed"
 
+    def test_jp_composite_not_double_shifted(self):
+        """JP composite glyphs (Kaisei `acute`, `dieresis`) shift by exactly
+        jp_baseline, not double. Regression for Issue #2 #3 — the actual fault
+        was in `transform_tt_glyph_inplace`, not `copy_glyph_tt` as the issue
+        suggested: `transform_tt_glyph_inplace` was adding `dy` to composite
+        component.y on top of the base-glyph contour shift, double-shifting
+        the composite render.
+        """
+        import tempfile
+
+        def _merge_kaisei(jp_baseline):
+            out = tempfile.mktemp(suffix=".ttf")
+            config = {
+                "subFont": {"path": EN_VAR, "scale": 1.0,
+                            "baselineOffset": 0, "axes": []},
+                "baseFont": {"path": KAISEI, "scale": 1.0,
+                             "baselineOffset": jp_baseline, "axes": []},
+                "output": {"familyName": "TestKaisei"},
+                "export": {"path": {"font": out}},
+            }
+            mf.merge_fonts(config)
+            font = TTFont(out)
+            os.remove(out)
+            woff2 = out.replace(".ttf", ".woff2")
+            if os.path.exists(woff2):
+                os.remove(woff2)
+            return font
+
+        m0 = _merge_kaisei(0)
+        m100 = _merge_kaisei(-100)
+        for gname in ("acute", "dieresis"):
+            if gname not in m0.getGlyphOrder():
+                continue
+            b0 = _get_bounds(m0, gname)
+            b100 = _get_bounds(m100, gname)
+            if b0 is None or b100 is None:
+                continue
+            dy = round(b100[1] - b0[1])
+            assert abs(dy - (-100)) <= 2, (
+                f"{gname} (JP composite) shift={dy}, expected -100 "
+                f"(double-shift bug at ~-200)"
+            )
+
 
 
 # ---------------------------------------------------------------------------
