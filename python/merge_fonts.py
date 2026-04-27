@@ -1188,24 +1188,39 @@ def _classify_lookup(lookup, lat_glyph_names: set) -> str:
 
 
 def _transform_lookup_references(lookup, transform):
-    """Apply *transform* (a callable: old_index → new_index) to every
+    """Apply *transform* (a callable: old_index → new_index | None) to every
     internal lookup reference inside chaining / context lookups.
+
+    When *transform* returns ``None`` the record itself is dropped from its
+    parent list. This is how callers signal "the target lookup no longer
+    exists, so this reference must die" rather than letting a stale index
+    silently land on a different lookup.
 
     Works for both GSUB (types 5/6) and GPOS (types 7/8), including
     extension wrappers and nested rule sets (Format 1/2/3).
     """
+    def _rewrite(records):
+        if not records:
+            return records
+        kept = []
+        for rec in records:
+            new_idx = transform(rec.LookupListIndex)
+            if new_idx is None:
+                continue
+            rec.LookupListIndex = new_idx
+            kept.append(rec)
+        return kept
+
     for subtable in lookup.SubTable:
         st = subtable
         if hasattr(st, 'ExtSubTable'):
             st = st.ExtSubTable
         # GSUB: ChainContextSubst (type 6), ContextSubst (type 5)
         if hasattr(st, 'SubstLookupRecord') and st.SubstLookupRecord:
-            for slr in st.SubstLookupRecord:
-                slr.LookupListIndex = transform(slr.LookupListIndex)
+            st.SubstLookupRecord = _rewrite(st.SubstLookupRecord)
         # GPOS: ChainContextPos (type 8), ContextPos (type 7)
         if hasattr(st, 'PosLookupRecord') and st.PosLookupRecord:
-            for plr in st.PosLookupRecord:
-                plr.LookupListIndex = transform(plr.LookupListIndex)
+            st.PosLookupRecord = _rewrite(st.PosLookupRecord)
         # Nested rule sets (Format 1/2)
         for attr in ('SubRuleSet', 'SubClassSet', 'ChainSubRuleSet', 'ChainSubClassSet',
                       'PosRuleSet', 'PosClassSet', 'ChainPosRuleSet', 'ChainPosClassSet'):
@@ -1222,11 +1237,9 @@ def _transform_lookup_references(lookup, transform):
                         continue
                     for rule in rules:
                         if hasattr(rule, 'SubstLookupRecord') and rule.SubstLookupRecord:
-                            for slr in rule.SubstLookupRecord:
-                                slr.LookupListIndex = transform(slr.LookupListIndex)
+                            rule.SubstLookupRecord = _rewrite(rule.SubstLookupRecord)
                         if hasattr(rule, 'PosLookupRecord') and rule.PosLookupRecord:
-                            for plr in rule.PosLookupRecord:
-                                plr.LookupListIndex = transform(plr.LookupListIndex)
+                            rule.PosLookupRecord = _rewrite(rule.PosLookupRecord)
 
 
 def _offset_lookup_references(lookup, offset: int):
@@ -1237,10 +1250,11 @@ def _offset_lookup_references(lookup, offset: int):
 def _remap_lookup_references(lookup, remap: dict):
     """Remap internal lookup references using an old→new index mapping.
 
-    References to removed lookups are left unchanged (they will point to
-    a different lookup, but this is the safest fallback for edge cases).
+    References to lookups that are not in *remap* (because the target
+    lookup has been removed) are dropped from their parent record list,
+    rather than being left to silently land on a different lookup.
     """
-    _transform_lookup_references(lookup, lambda idx: remap.get(idx, idx))
+    _transform_lookup_references(lookup, lambda idx: remap.get(idx))
 
 
 def _rename_glyphs_in_ot_table(ot_table, name_map: dict):
@@ -1383,32 +1397,65 @@ def _filter_subordinate_lookups(table, lat_glyph_names: set):
 
 
 def _reindex_table(ot, kept_lookup_indices: list):
-    """Reindex a table after removing lookups."""
-    remap = {old: new for new, old in enumerate(kept_lookup_indices)}
+    """Reindex a GSUB/GPOS table after removing lookups.
 
-    # Update FeatureList
+    Updates four things in order:
+      1. Cross-lookup references inside surviving chaining/context lookups —
+         remapped or dropped via _remap_lookup_references.
+      2. FeatureList — drop features whose every lookup was removed; build
+         an old-feature-index → new-feature-index mapping for step 3.
+      3. ScriptList — every LangSys.FeatureIndex (and ReqFeatureIndex)
+         rewritten through the feature mapping; references to removed
+         features are dropped.
+      4. LookupList — trimmed to the kept indices.
+    """
+    lookup_remap = {old: new for new, old in enumerate(kept_lookup_indices)}
+
+    # 1. Remap (and drop) cross-lookup references in surviving lookups.
+    #    Done before LookupList is trimmed so the indices still address
+    #    the original positions while we walk.
+    for old_idx in kept_lookup_indices:
+        _remap_lookup_references(ot.LookupList.Lookup[old_idx], lookup_remap)
+
+    # 2. Rebuild FeatureList and track old→new feature index mapping.
+    feat_remap: dict[int, int] = {}
     if ot.FeatureList:
         new_features = []
-        for feat_rec in ot.FeatureList.FeatureRecord:
+        for old_idx, feat_rec in enumerate(ot.FeatureList.FeatureRecord):
             feat = feat_rec.Feature
-            new_indices = [remap[i] for i in feat.LookupListIndex if i in remap]
-            if new_indices:
-                feat.LookupListIndex = new_indices
-                feat.LookupCount = len(new_indices)
-                new_features.append(feat_rec)
+            new_indices = [lookup_remap[i] for i in feat.LookupListIndex
+                           if i in lookup_remap]
+            if not new_indices:
+                continue  # feature has no surviving lookups → drop
+            feat.LookupListIndex = new_indices
+            feat.LookupCount = len(new_indices)
+            feat_remap[old_idx] = len(new_features)
+            new_features.append(feat_rec)
         ot.FeatureList.FeatureRecord = new_features
         ot.FeatureList.FeatureCount = len(new_features)
 
-        # Reindex feature references in ScriptList
-        if ot.ScriptList:
-            # Build old feature index → new feature index mapping
-            # (some features may have been removed entirely)
-            old_feat_list = list(range(len(new_features) + len(ot.FeatureList.FeatureRecord)))
-            # Actually, new_features are already the correct final list
-            # We need to track which original indices map to which new indices
-            # This is complex — simpler to just rebuild references below
+    # 3. Rewrite ScriptList LangSys feature references.
+    if ot.ScriptList:
+        for sr in ot.ScriptList.ScriptRecord:
+            lang_systems = []
+            if sr.Script.DefaultLangSys is not None:
+                lang_systems.append(sr.Script.DefaultLangSys)
+            for lsr in (sr.Script.LangSysRecord or []):
+                if lsr.LangSys is not None:
+                    lang_systems.append(lsr.LangSys)
+            for ls in lang_systems:
+                ls.FeatureIndex = [
+                    feat_remap[fi]
+                    for fi in (ls.FeatureIndex or [])
+                    if fi in feat_remap
+                ]
+                # ReqFeatureIndex: 0xFFFF means "none"; otherwise remap or
+                # drop (collapse to 0xFFFF) when the required feature is gone.
+                req = getattr(ls, 'ReqFeatureIndex', 0xFFFF)
+                if req != 0xFFFF:
+                    ls.ReqFeatureIndex = feat_remap.get(req, 0xFFFF)
 
-    # Update LookupList
+    # 4. Trim the LookupList itself.
     ot.LookupList.Lookup = [ot.LookupList.Lookup[i] for i in kept_lookup_indices]
     ot.LookupList.LookupCount = len(ot.LookupList.Lookup)
 

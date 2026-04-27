@@ -117,8 +117,6 @@ def test_filter_actually_removes_lookups_in_shippori():
     )
 
 
-@pytest.mark.xfail(reason="Issue #2 #2: _reindex_table doesn't remap ScriptList",
-                   strict=True)
 def test_bug2_scriptlist_indices_in_range_after_filter():
     """`_reindex_table` must keep all ScriptList LangSys.FeatureIndex values
     within `len(FeatureList.FeatureRecord)`."""
@@ -220,9 +218,6 @@ def _find_chaining_lookup_with_refs(table):
     return None
 
 
-@pytest.mark.xfail(reason="Issue #2 #1: _reindex_table doesn't call "
-                          "_transform_lookup_references on kept lookups",
-                   strict=True)
 def test_bug1_cross_refs_stay_in_range_after_reindex(monkeypatch):
     """Force a non-chaining lookup to be removed; verify chaining lookup's
     cross-refs are still in range afterwards."""
