@@ -650,6 +650,43 @@ class TestLatinLigaturePreservation:
             f"dlig on {text!r}: merged={merged} vs Latin solo={solo}"
         )
 
+    def test_latn_ccmp_matches_latin_solo(self, merged_font_path):
+        """`ccmp` substitutions on Latin combining marks must reach the
+        Latin font's `.case` rules.
+
+        Pan-CJK fonts ship their own `ccmp` lookup under `latn`, and
+        HarfBuzz lets the first duplicate-tag record win for `ccmp`
+        the same way it does for `kern` (verified via `hb-shape`
+        --trace). Without dedupe, `gravecomb -> gravecomb.case` and
+        similar Latin-side rules never fire and case-sensitive
+        combining marks regress to their default form.
+        """
+        for text in ("M̀", "Ê̄", "À̂",
+                     "İ", "T́"):
+            merged = self._shape(merged_font_path, text)
+            solo = self._shape(TIKTOK_SANS, text)
+            assert merged == solo, (
+                f"ccmp shaping for {text!r} differs: "
+                f"merged={merged}, solo={solo}"
+            )
+
+    def test_latn_script_has_single_ccmp_feature(self, merged_font_path):
+        """`latn` should expose exactly one `ccmp` feature record."""
+        merged = TTFont(merged_font_path)
+        gsub = merged["GSUB"].table
+        for sr in gsub.ScriptList.ScriptRecord:
+            if sr.ScriptTag != "latn" or not sr.Script.DefaultLangSys:
+                continue
+            ccmp = [
+                fi for fi in sr.Script.DefaultLangSys.FeatureIndex
+                if gsub.FeatureList.FeatureRecord[fi].FeatureTag == "ccmp"
+            ]
+            assert len(ccmp) == 1, (
+                f"latn DefaultLangSys ccmp records: {ccmp}"
+            )
+            return
+        pytest.fail("merged font has no latn script in GSUB")
+
     def test_jp_dlig_lookup_no_latin_only_entry(self, merged_font_path):
         """Structurally: no surviving GSUB ligature subtable should hold
         an entry whose every input glyph is in the Latin font."""

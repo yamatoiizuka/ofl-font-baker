@@ -1704,6 +1704,17 @@ EXPLICIT_LATIN_SCRIPTS = LATIN_SCRIPTS - {'DFLT'}
 # CJK scripts use JP features
 CJK_SCRIPTS = {'kana', 'hani', 'hang', 'bopo', 'yi  '}
 
+# GSUB feature tags whose JP-side record shadows the Latin-side record
+# under explicit Latin scripts in HarfBuzz, mirroring the GPOS dedupe
+# (`kern` / `mark` / `mkmk`). Verified for `ccmp` — JP `ccmp` lookup #2
+# fires first under `latn` and keeps Latin's `gravecomb → gravecomb.case`
+# / `uni0304 → uni0304.case` rules from running. Other GSUB tags (e.g.
+# `aalt`, `liga`, `dlig`) intentionally still keep both records: JP-side
+# `aalt` for CJK glyphs needs to remain reachable under `latn` (Issue
+# #2 #6), and `liga` / `dlig` are handled by per-entry stripping in
+# `_strip_latin_only_ligatures`.
+GSUB_LATN_DEDUPE_TAGS = frozenset({'ccmp'})
+
 
 def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
                     jp_feat_index_map, lat_feat_index_map,
@@ -1744,27 +1755,31 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
         # Also add JP features. When a tag is shared with the Latin font
         # (e.g. both define `dlig` or `aalt`), we generally keep both
         # feature records under the Latin script's LangSys so JP-side
-        # lookups on JP glyphs remain reachable. GPOS auto-features are the
-        # exception: HarfBuzz effectively lets the first duplicate tag win
-        # under explicit Latin scripts, so a JP `kern` / `mark` / `mkmk`
-        # would shadow the Latin one.
+        # lookups on JP glyphs remain reachable (Issue #2 #6). The
+        # exception is shadowing tags: HarfBuzz effectively lets the first
+        # duplicate tag win under explicit Latin scripts, so for those the
+        # JP-side record has to be dropped or the Latin one becomes
+        # unreachable. Verified shadowing tags so far: every GPOS tag and
+        # GSUB `ccmp`.
         if jp_lang_sys and jp_lang_sys.FeatureIndex:
             for old_idx in jp_lang_sys.FeatureIndex:
                 if old_idx in jp_feat_index_map:
                     tag = None
                     if old_idx < len(jp_feature_records):
                         tag = jp_feature_records[old_idx].FeatureTag
-                    # HarfBuzz only applies the first auto-enabled GPOS
-                    # feature record for a duplicated tag under explicit
-                    # Latin scripts. If JP `kern` / `mark` / `mkmk` stays in
-                    # `latn` ahead of the Latin feature, the Latin lookup
-                    # becomes unreachable even though it exists in the table.
-                    # Keep JP duplicates for DFLT/CJK scripts, but under the
-                    # explicit Latin scripts let the Latin GPOS feature win.
-                    if (table_tag == 'GPOS'
-                            and script_tag in EXPLICIT_LATIN_SCRIPTS
-                            and tag in lat_tag_to_indices):
-                        continue
+                    # Drop the JP duplicate under explicit Latin scripts
+                    # for tags HB picks the first record of:
+                    #   - any GPOS tag (kern / mark / mkmk / etc.)
+                    #   - GSUB ccmp (verified by hb-shape against
+                    #     M̀ / Ê̄: the Latin-side
+                    #     gravecomb → gravecomb.case rule never fires
+                    #     when the JP-side ccmp is still present)
+                    if script_tag in EXPLICIT_LATIN_SCRIPTS \
+                            and tag in lat_tag_to_indices:
+                        if table_tag == 'GPOS' or (
+                                table_tag == 'GSUB'
+                                and tag in GSUB_LATN_DEDUPE_TAGS):
+                            continue
                     feat_indices.append(jp_feat_index_map[old_idx])
     else:
         # Unknown script: include both

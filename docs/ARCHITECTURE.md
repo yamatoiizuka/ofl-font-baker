@@ -176,6 +176,23 @@ lookups and drops every ligature entry whose first input *and* every
 Component glyph is in the Latin font. Cross-script entries (any CJK input
 in the chain) are preserved so JP keeps its legitimate ligatures.
 
+### `ccmp` Duplicate-Tag Dedupe
+
+The same shadowing pattern that broke kern under `latn` (HarfBuzz picks
+the first duplicate-tag record) also breaks `ccmp` on the GSUB side.
+Pan-CJK fonts ship their own `ccmp` under `latn`, so the merged LangSys
+ends up with two `ccmp` records and HB only runs the JP-side one. The
+Latin font's case-sensitive combining-mark rules
+(`gravecomb → gravecomb.case` etc.) never fire, so `M̀` / `Ê̄` lose their
+`.case` form on capital letters.
+
+`GSUB_LATN_DEDUPE_TAGS` lists GSUB tags that follow the same dedupe rule
+as GPOS under explicit Latin scripts. Verified members: `ccmp`. Other
+GSUB shared tags (`aalt`, `liga`, `dlig`, etc.) intentionally still keep
+both records — JP-side `aalt` for CJK glyphs needs to remain reachable
+from `latn` (Issue #2 #6), and ligatures are handled by per-entry
+stripping in `_strip_latin_only_ligatures`.
+
 ### Metrics
 
 - `head.unitsPerEm` = `outputUpm` (user-set, default 1000)
@@ -265,7 +282,7 @@ Test code is split across four files under `python/tests/`:
 | Output UPM | 5 | UPM scaling on hmtx / glyph / OS/2, base-only |
 | GPOS scaling | 3 | Kern scale, baseline unaffected, T+o pair kerning |
 | Latin kern preservation | 60 | 32 kern pairs (UC-UC, UC-lc, lc-UC, lc-lc, punct, digits) + 27 advance widths + 1 JP PairPos structural strip |
-| Latin ligature preservation | 25 | 12 dlig sequences (incl. n+s/S+v/A+m square-symbol traps) shaped + 12 dlig vs Latin-solo equivalence + 1 JP LigatureSubst structural strip |
+| Latin ligature preservation | 27 | 12 dlig sequences (incl. n+s/S+v/A+m square-symbol traps) + 12 dlig vs Latin-solo + 1 JP LigatureSubst strip + ccmp shaping parity (M̀ / Ê̄ etc.) + latn single-ccmp structural |
 | Feature preservation | 9 | calt / case / frac / ss01 / liga, subordinate Latin removal, chaining remap |
 | Same-tag features | 1 | JP-side `aalt` reachable from Latin LangSys |
 | Glyph names | 2 | post format 2.0, alternate glyph names |

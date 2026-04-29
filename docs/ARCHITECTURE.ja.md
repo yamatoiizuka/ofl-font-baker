@@ -173,6 +173,21 @@ Illustrator / InDesign で「任意の合字」(`dlig`) を ON にすると、
 リガチャエントリを削除する。クロススクリプトのエントリ（入力鎖のどこかに
 CJK グリフが含まれるもの）は保持されるので、JP 側の正規リガチャは生き残る。
 
+### `ccmp` の重複タグ排除
+
+kern を `latn` 配下で壊していた shadowing パターン（HarfBuzz は重複タグの
+最初のレコードしか発火させない）は、GSUB 側の `ccmp` でも同じように起きる。
+Pan-CJK 書体は独自の `ccmp` を `latn` 配下に持つので、マージ後の LangSys
+には `ccmp` が 2 本ぶら下がり、HB は JP 側だけ走らせる。Latin フォントの
+case-sensitive 結合マーク規則（`gravecomb → gravecomb.case` 等）が発火
+しなくなり、`M̀` / `Ê̄` は大文字に対する `.case` フォームを失う。
+
+`GSUB_LATN_DEDUPE_TAGS` は GPOS と同じ dedupe ルールを明示的 Latin script
+で適用する GSUB タグの一覧。検証済みメンバー: `ccmp`。それ以外の GSUB
+共有タグ（`aalt`, `liga`, `dlig` 等）は従来通り両方残す — JP 側の `aalt`
+は CJK glyph 用に `latn` から到達可能である必要がある (Issue #2 #6)、
+リガチャは `_strip_latin_only_ligatures` のエントリ単位の除去で対処済み。
+
 ### メトリクス
 
 - `head.unitsPerEm` = `outputUpm`（ユーザー設定、デフォルト 1000）
@@ -263,7 +278,7 @@ python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テ
 | Output UPM | 5 | hmtx / glyph / OS/2 への UPM スケーリング、base-only |
 | GPOS scaling | 3 | kern scale、baseline 非影響、T+o ペアカーニング保持 |
 | 欧文 kern 保持 | 60 | 32 ペア（UC-UC, UC-lc, lc-UC, lc-lc, 記号, 数字）+ 27 字幅 + JP PairPos の Latin 先頭除去確認 |
-| 欧文 ligature 保持 | 25 | dlig で 12 系列（n+s/S+v/A+m の単位記号トラップ含む）shape + 12 系列が Latin 単体と一致 + JP LigatureSubst の Latin-only 除去確認 |
+| 欧文 ligature 保持 | 27 | dlig で 12 系列（n+s/S+v/A+m の単位記号トラップ含む）+ 12 系列が Latin 単体と一致 + JP LigatureSubst の Latin-only 除去 + ccmp shape 一致（M̀ / Ê̄ 等）+ latn 配下 ccmp 1 本の構造確認 |
 | Feature preservation | 9 | calt / case / frac / ss01 / liga、従属欧文除去、chaining リマップ |
 | Same-tag features | 1 | Latin LangSys から JP 側 `aalt` への到達性 |
 | Glyph names | 2 | post format 2.0、代替グリフ名 |
