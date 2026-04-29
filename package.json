@@ -1,6 +1,6 @@
 {
   "name": "ofl-font-baker",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Composite font builder — merge English & Japanese typefaces",
   "main": "dist/main/index.js",
   "scripts": {
@@ -45,7 +45,7 @@
   },
   "build": {
     "appId": "com.yamatoiizuka.ofl-font-baker",
-    "productName": "Font Baker",
+    "productName": "OFL Font Baker",
     "directories": {
       "output": "release"
     },

@@ -10,7 +10,7 @@ import { isExporting, setExporting } from '@/main/export-state';
 import { abortMerge } from '@/main/merge-engine';
 import { initAutoUpdater } from '@/main/auto-updater';
 
-const APP_NAME = 'Font Baker';
+const APP_NAME = 'OFL Font Baker';
 
 let mainWindow: BrowserWindow | null = null;
 

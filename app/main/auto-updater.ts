@@ -26,7 +26,7 @@ export function initAutoUpdater(getWindow: () => BrowserWindow | null) {
       buttons: ['Restart now', 'Later'],
       defaultId: 0,
       cancelId: 1,
-      message: `Font Baker ${info.version} is ready to install`,
+      message: `OFL Font Baker ${info.version} is ready to install`,
       detail: 'The update has been downloaded. Restart the app to apply it.',
     };
     const result = win

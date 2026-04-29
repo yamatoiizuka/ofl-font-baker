@@ -36,23 +36,23 @@ echo "==> Building (sign + notarize .app + notarize/staple .dmg)"
 npm run dist
 
 echo "==> Verifying artifacts"
-xcrun stapler validate "release/Font Baker-arm64.dmg"
-codesign --verify --deep --strict "release/mac-arm64/Font Baker.app"
+xcrun stapler validate "release/OFL Font Baker-arm64.dmg"
+codesign --verify --deep --strict "release/mac-arm64/OFL Font Baker.app"
 
-# latest-mac.yml records URLs with hyphens (Font-Baker-...), but electron-builder
-# writes files with spaces (Font Baker-...). Rename so uploaded asset names match
-# the yml — otherwise auto-updater 404s.
+# latest-mac.yml records URLs with hyphens (OFL-Font-Baker-...), but
+# electron-builder writes files with spaces (OFL Font Baker-...). Rename so
+# uploaded asset names match the yml — otherwise auto-updater 404s.
 echo "==> Normalizing filenames (space -> hyphen)"
-for f in release/"Font Baker-"*; do
+for f in release/"OFL Font Baker-"*; do
   mv "$f" "${f// /-}"
 done
 
 echo "==> Creating draft release ${TAG}"
 gh release create "$TAG" \
-  "release/Font-Baker-arm64.dmg" \
-  "release/Font-Baker-arm64.dmg.blockmap" \
-  "release/Font-Baker-arm64.zip" \
-  "release/Font-Baker-arm64.zip.blockmap" \
+  "release/OFL-Font-Baker-arm64.dmg" \
+  "release/OFL-Font-Baker-arm64.dmg.blockmap" \
+  "release/OFL-Font-Baker-arm64.zip" \
+  "release/OFL-Font-Baker-arm64.zip.blockmap" \
   "release/latest-mac.yml" \
   --draft \
   --title "OFL Font Baker $TAG" \
