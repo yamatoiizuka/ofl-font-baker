@@ -1386,6 +1386,144 @@ def _rename_glyphs_in_ot_table(ot_table, name_map: dict):
                                             [rename(g) for g in seq])
 
 
+def _resort_lookup_coverages(font: TTFont):
+    """Re-sort every GSUB/GPOS Coverage and PairValueRecord by merged
+    glyph ID. fontTools doesn't auto-sort either on save; HarfBuzz binary-
+    searches both, and silently skips entries when the order is wrong.
+
+    Two failure modes had to be addressed at once:
+
+    1. **Coverage**: Latin font Coverages are sorted by the *Latin* font's
+       glyph IDs. After cmap merge the IDs are renumbered (JP glyphs come
+       first, Latin glyphs are appended), so the Coverages are unsorted
+       relative to the output. HarfBuzz then can't find the gating glyph
+       for kern / calt / chain context lookups. Sort Coverage and reorder
+       any parallel arrays (PairSet, Context rule sets) in lockstep.
+
+    2. **PairValueRecord**: each PairSet's PairValueRecord array must be
+       sorted in increasing SecondGlyph gid order — same binary-search
+       requirement, applied per first-glyph entry. With merged-renumbered
+       IDs, the originally sorted records become arbitrary and HB locks
+       onto the wrong pair (or misses the pair entirely).
+
+    Format-2 PairPos has no parallel-array problem — Coverage gates and
+    ClassDefs are name-keyed, so sorting Coverage alone is sufficient.
+    Mark/Base coverages are skipped because their attached MarkArray /
+    BaseArray use index alignments that aren't load-bearing for the kern
+    bug and would risk corrupting if reordered carelessly.
+    """
+    glyph_id = {g: i for i, g in enumerate(font.getGlyphOrder())}
+
+    def gid(name):
+        return glyph_id.get(name, 0)
+
+    PARALLEL_ATTRS = (
+        'PairSet',         # PairPos Format 1
+        'Value',           # SinglePos Format 2 (list of ValueRecords)
+        'SubRuleSet',      # ContextSubst Format 1
+        'ChainSubRuleSet', # ChainContextSubst Format 1
+        'PosRuleSet',      # ContextPos Format 1
+        'ChainPosRuleSet', # ChainContextPos Format 1
+    )
+
+    for tag in ('GSUB', 'GPOS'):
+        ot = font.get(tag)
+        if not ot or not getattr(ot, 'table', None):
+            continue
+        ll = ot.table.LookupList
+        if not ll:
+            continue
+        for lookup in ll.Lookup:
+            for subtable in lookup.SubTable:
+                st = subtable
+                if hasattr(st, 'ExtSubTable'):
+                    st = st.ExtSubTable
+                cov = getattr(st, 'Coverage', None)
+                if cov:
+                    if isinstance(cov, list):
+                        # ContextPos/ContextSubst Format 3: each input position
+                        # has its own gating Coverage; no parallel array.
+                        for c in cov:
+                            if c and getattr(c, 'glyphs', None):
+                                c.glyphs = sorted(c.glyphs, key=gid)
+                    else:
+                        glyphs = getattr(cov, 'glyphs', None)
+                        if glyphs:
+                            order = sorted(range(len(glyphs)),
+                                           key=lambda i: gid(glyphs[i]))
+                            if order != list(range(len(glyphs))):
+                                cov.glyphs = [glyphs[i] for i in order]
+                                for attr in PARALLEL_ATTRS:
+                                    arr = getattr(st, attr, None)
+                                    if isinstance(arr, list) and len(arr) == len(glyphs):
+                                        setattr(st, attr, [arr[i] for i in order])
+                # PairPos Format 1: sort PairValueRecord by SecondGlyph gid.
+                # Done after any Coverage permutation above so each PairSet
+                # is already at its final position.
+                pair_sets = getattr(st, 'PairSet', None)
+                if pair_sets:
+                    for ps in pair_sets:
+                        pvrs = getattr(ps, 'PairValueRecord', None)
+                        if pvrs:
+                            pvrs.sort(key=lambda pvr: gid(pvr.SecondGlyph))
+                # Chain context backtrack/input/lookahead Coverages are
+                # independent gating sets — sort each.
+                for attr in ('BacktrackCoverage', 'InputCoverage',
+                             'LookAheadCoverage'):
+                    covs = getattr(st, attr, None)
+                    if covs:
+                        for c in covs:
+                            if c and getattr(c, 'glyphs', None):
+                                c.glyphs = sorted(c.glyphs, key=gid)
+
+
+def _strip_latin_first_from_pairpos(lookup, lat_glyph_names: set):
+    """Drop Latin first-position glyphs from PairPos subtables.
+
+    JP fonts (e.g. Noto Sans JP) ship their own Latin glyphs and bake Latin
+    pair kerning for them. After the Latin font is merged in to overwrite
+    those slots, JP's leftover Latin kerning still references the same
+    glyph names — so the Latin font's kern lookup *and* the JP font's kern
+    lookup both fire for pairs like ``T+o``/``T+y``, stacking adjustments
+    and producing visibly broken spacing in words like "Tokyo" / "Type".
+
+    Stripping Latin glyphs from the *first* position Coverage neutralises
+    JP's redundant Latin kerning while leaving cross-script kerning that
+    starts on a JP glyph (CJK + Latin / CJK + CJK) intact.
+    """
+    if not lat_glyph_names:
+        return
+    for subtable in lookup.SubTable:
+        st = subtable
+        if hasattr(st, 'ExtSubTable'):
+            st = st.ExtSubTable
+        cov = getattr(st, 'Coverage', None)
+        # ContextPos format 3 stores Coverage as a list — that's not PairPos.
+        if not cov or isinstance(cov, list) or not getattr(cov, 'glyphs', None):
+            continue
+        glyphs = cov.glyphs
+        keep = [i for i, g in enumerate(glyphs) if g not in lat_glyph_names]
+        if len(keep) == len(glyphs):
+            continue
+        # PairPos Format 1: PairSet array is aligned with Coverage.glyphs.
+        if hasattr(st, 'PairSet') and st.PairSet is not None:
+            st.PairSet = [st.PairSet[i] for i in keep]
+            if hasattr(st, 'PairSetCount'):
+                st.PairSetCount = len(st.PairSet)
+            cov.glyphs = [glyphs[i] for i in keep]
+        # PairPos Format 2: class-based; Coverage gates whether the lookup
+        # fires at all, so dropping Latin glyphs here suppresses every
+        # Latin-first pair. Mirror the change on ClassDef1 for hygiene.
+        elif hasattr(st, 'Class1Record'):
+            cov.glyphs = [glyphs[i] for i in keep]
+            cd1 = getattr(st, 'ClassDef1', None)
+            if cd1 and getattr(cd1, 'classDefs', None):
+                cd1.classDefs = {
+                    g: c for g, c in cd1.classDefs.items()
+                    if g not in lat_glyph_names
+                }
+
+
 def merge_feature_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont,
                          lat_scale: float = 1.0, lat_baseline: float = 0,
                          lat_name_map: dict = None):
@@ -1520,11 +1658,12 @@ def _reindex_table(ot, kept_lookup_indices: list):
 
 # Latin-oriented scripts use EN features
 LATIN_SCRIPTS = {'latn', 'DFLT', 'cyrl', 'grek'}
+EXPLICIT_LATIN_SCRIPTS = LATIN_SCRIPTS - {'DFLT'}
 # CJK scripts use JP features
 CJK_SCRIPTS = {'kana', 'hani', 'hang', 'bopo', 'yi  '}
 
 
-def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag,
+def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
                     jp_feat_index_map, lat_feat_index_map,
                     lat_tag_to_indices, jp_feature_records):
     """Build a merged LangSys with correct feature references.
@@ -1533,6 +1672,7 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag,
         jp_lang_sys: Japanese LangSys object (or None)
         lat_lang_sys: Latin LangSys object (or None)
         script_tag: OpenType script tag (e.g. 'latn', 'kana')
+        table_tag: 'GSUB' or 'GPOS'
         jp_feat_index_map: old JP feature index -> new merged feature index
         lat_feat_index_map: old EN feature index -> new merged feature index
         lat_tag_to_indices: EN feature tag -> list of merged feature indices
@@ -1560,15 +1700,29 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag,
                 if old_idx in lat_feat_index_map:
                     feat_indices.append(lat_feat_index_map[old_idx])
         # Also add JP features. When a tag is shared with the Latin font
-        # (e.g. both define `dlig` or `aalt`), keep BOTH feature records
-        # under the Latin script's LangSys: the JP-side lookups operate on
-        # JP glyphs that the Latin lookups never touch, so dropping them
-        # silently strips functionality from CJK punctuation and similar
-        # cases (Issue #2 #6). OpenType allows multiple feature records to
-        # share a tag in a single LangSys; the shaper applies all of them.
+        # (e.g. both define `dlig` or `aalt`), we generally keep both
+        # feature records under the Latin script's LangSys so JP-side
+        # lookups on JP glyphs remain reachable. GPOS auto-features are the
+        # exception: HarfBuzz effectively lets the first duplicate tag win
+        # under explicit Latin scripts, so a JP `kern` / `mark` / `mkmk`
+        # would shadow the Latin one.
         if jp_lang_sys and jp_lang_sys.FeatureIndex:
             for old_idx in jp_lang_sys.FeatureIndex:
                 if old_idx in jp_feat_index_map:
+                    tag = None
+                    if old_idx < len(jp_feature_records):
+                        tag = jp_feature_records[old_idx].FeatureTag
+                    # HarfBuzz only applies the first auto-enabled GPOS
+                    # feature record for a duplicated tag under explicit
+                    # Latin scripts. If JP `kern` / `mark` / `mkmk` stays in
+                    # `latn` ahead of the Latin feature, the Latin lookup
+                    # becomes unreachable even though it exists in the table.
+                    # Keep JP duplicates for DFLT/CJK scripts, but under the
+                    # explicit Latin scripts let the Latin GPOS feature win.
+                    if (table_tag == 'GPOS'
+                            and script_tag in EXPLICIT_LATIN_SCRIPTS
+                            and tag in lat_tag_to_indices):
+                        continue
                     feat_indices.append(jp_feat_index_map[old_idx])
     else:
         # Unknown script: include both
@@ -1630,6 +1784,12 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
     # so chaining/context lookups must be remapped.
     for lookup in filtered_jp_lookups:
         _remap_lookup_references(lookup, jp_remap)
+
+    # Drop Latin-first PairPos pairs from JP GPOS so JP's leftover Latin
+    # kerning doesn't stack on top of the Latin font's own kern lookup.
+    if table_tag == 'GPOS' and lat_glyph_names:
+        for lookup in filtered_jp_lookups:
+            _strip_latin_first_from_pairpos(lookup, lat_glyph_names)
 
     # --- Step 2: Build merged lookup list ---
     lat_offset = len(filtered_jp_lookups)
@@ -1722,7 +1882,7 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
         jp_default = jp_sr.Script.DefaultLangSys if jp_sr else None
         lat_default = lat_sr.Script.DefaultLangSys if lat_sr else None
         new_sr.Script.DefaultLangSys = _build_lang_sys(
-            jp_default, lat_default, script_tag,
+            jp_default, lat_default, script_tag, table_tag,
             jp_feat_index_map, lat_feat_index_map,
             lat_tag_to_indices, jp_feature_records)
 
@@ -1746,7 +1906,7 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
             new_lsr.LangSys = _build_lang_sys(
                 jp_lang_map.get(lang_tag),
                 lat_lang_map.get(lang_tag),
-                script_tag,
+                script_tag, table_tag,
                 jp_feat_index_map, lat_feat_index_map,
                 lat_tag_to_indices, jp_feature_records)
             new_lang_records.append(new_lsr)
@@ -3154,6 +3314,11 @@ def merge_fonts(config: dict) -> str:
               paths.get("settings"), paths.get("config")):
         if p:
             os.makedirs(os.path.dirname(p), exist_ok=True)
+
+    # Re-sort GSUB/GPOS Coverages by the final merged glyph order so
+    # HarfBuzz's binary search can resolve Latin lookups after the cmap
+    # merge renumbered glyph IDs.
+    _resort_lookup_coverages(merged)
 
     merged.save(output_path)
 

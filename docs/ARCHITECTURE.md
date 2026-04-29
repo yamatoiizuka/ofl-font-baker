@@ -138,6 +138,28 @@ GPOS lookups are scaled by `jp_upm_ratio`, then `head.unitsPerEm` is set to
 `outputUpm`. `reconcile_tables` then compares against the already-scaled JP
 values, so the Latin envelope is taken in output UPM units.
 
+### Latin Pair Kerning Preservation
+
+Pan-CJK fonts (e.g. Noto Sans JP) ship Latin glyphs and define their own
+Latin pair kerning. After the cmap-based replacement swaps those glyph slots
+to the Latin font's outlines, the JP font's Latin kerning lookup still
+references the same glyph names — so both the JP and Latin `kern` lookups
+fire for pairs like `T+o` / `T+y`, stacking adjustments and producing
+visibly broken Latin spacing.
+
+`_strip_latin_first_from_pairpos` runs after JP lookup classification and
+removes Latin glyphs from the *first-position* `Coverage` (and `ClassDef1`)
+of every JP-side PairPos subtable. The result: JP's PairPos no longer fires
+when the first glyph is Latin, so Latin pairs use exclusively the Latin
+font's values. Cross-script kerning (JP first, Latin second — e.g. CJK
+punctuation followed by a Latin letter) is preserved.
+
+This is intentional even when the second glyph exists only in the JP font.
+Once a merged slot starts with a Latin glyph, that slot now carries the
+Latin font's outline and spacing model, so JP-origin Latin-first kerning is
+treated as subordinate and discarded wholesale rather than partially kept
+for JP-only second glyphs.
+
 ### Metrics
 
 - `head.unitsPerEm` = `outputUpm` (user-set, default 1000)
@@ -226,6 +248,7 @@ Test code is split across four files under `python/tests/`:
 | UPM normalization | 3 | 2048→1000 conversion, OS/2 metrics |
 | Output UPM | 5 | UPM scaling on hmtx / glyph / OS/2, base-only |
 | GPOS scaling | 3 | Kern scale, baseline unaffected, T+o pair kerning |
+| Latin kern preservation | 60 | 32 kern pairs (UC-UC, UC-lc, lc-UC, lc-lc, punct, digits) + 27 advance widths + 1 JP PairPos structural strip |
 | Feature preservation | 9 | calt / case / frac / ss01 / liga, subordinate Latin removal, chaining remap |
 | Same-tag features | 1 | JP-side `aalt` reachable from Latin LangSys |
 | Glyph names | 2 | post format 2.0, alternate glyph names |
@@ -253,6 +276,11 @@ Test code is split across four files under `python/tests/`:
 | Large CID font | 4 | 65535 glyphs, glyph count limit, cmap replacement, post format 3.0 |
 | Helpers (sfnt / style / outdir) | 8 | `detect_sfnt_ext`, `compute_style_name`, `prepare_output_dir` |
 | Package output | 12 | Manifest, font / woff2 / ofl / settings, overwrite, options |
+
+`TestLatinKernPreservation` depends on the committed fixture
+`python/tests/fonts/TikTok_Sans/static/TikTokSans-Regular.ttf`. It also
+locks in the design choice above: once the first glyph is Latin, JP-origin
+PairPos data is not preserved.
 
 ## Commands
 

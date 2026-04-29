@@ -43,6 +43,10 @@ JP_OTF_FULL = os.path.join(FONTS, "NotoSansCJKjp", "NotoSansCJKjp-Regular.otf")
 # Other typefaces used by single-purpose tests.
 PLAYWRITE = os.path.join(FONTS, "Playwrite_IE", "PlaywriteIE-VariableFont_wght.ttf")
 KAISEI = os.path.join(FONTS, "Kaisei_Decol", "KaiseiDecol-Regular.ttf")
+# UPM-stable Latin source for kerning preservation tests (UPM = 1000, same
+# as Noto Sans JP, so changes to kern values cannot be hidden behind UPM
+# scaling artifacts).
+TIKTOK_SANS = os.path.join(FONTS, "TikTok_Sans", "static", "TikTokSans-Regular.ttf")
 
 
 # ---------------------------------------------------------------------------

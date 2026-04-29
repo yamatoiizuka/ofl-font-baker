@@ -137,6 +137,26 @@ hhea ascent/descent/lineGap、post underline、head bbox）と JP GPOS ルック
 その後 `reconcile_tables` は既にスケール済みの JP 値を参照するので、Latin との
 エンベロープ比較は出力 UPM 単位で行われる。
 
+### 欧文ペアカーニングの保持
+
+Pan-CJK 書体（Noto Sans JP など）は Latin グリフを内蔵し、Latin 同士の
+ペアカーニングまで定義していることが多い。cmap ベースのグリフ置換で
+Latin 側のアウトラインに差し替えたあとも、JP 側の `kern` ルックアップは
+同じグリフ名を参照し続けるため、Latin と JP 両方の PairPos が同時に発火し
+`T+o` / `T+y` のような Latin ペアでカーニング値が積算されてしまう
+（"Tokyo" や "Type" の T が極端に詰まる症状）。
+
+`_strip_latin_first_from_pairpos` は JP ルックアップの分類後に走り、
+JP 側 PairPos サブテーブルの先頭グリフ `Coverage`（および `ClassDef1`）
+から Latin グリフを除去する。これにより Latin 始まりのペアでは JP の
+PairPos が発火せず、Latin フォント側のカーニング値だけが反映される。
+JP 始まりのクロススクリプト（CJK 約物 → Latin 文字など）は保持される。
+
+これは後続グリフが JP フォントにしか無い場合でも意図的である。先頭が
+Latin で始まる merged slot は、すでに Latin フォントのアウトラインと
+字幅モデルに置き換わっているため、JP 由来の Latin-first カーニングは
+一部だけ残さず従属データとしてまとめて捨てる。
+
 ### メトリクス
 
 - `head.unitsPerEm` = `outputUpm`（ユーザー設定、デフォルト 1000）
@@ -226,6 +246,7 @@ python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テ
 | UPM normalization | 3 | 2048→1000 変換、OS/2 metrics |
 | Output UPM | 5 | hmtx / glyph / OS/2 への UPM スケーリング、base-only |
 | GPOS scaling | 3 | kern scale、baseline 非影響、T+o ペアカーニング保持 |
+| 欧文 kern 保持 | 60 | 32 ペア（UC-UC, UC-lc, lc-UC, lc-lc, 記号, 数字）+ 27 字幅 + JP PairPos の Latin 先頭除去確認 |
 | Feature preservation | 9 | calt / case / frac / ss01 / liga、従属欧文除去、chaining リマップ |
 | Same-tag features | 1 | Latin LangSys から JP 側 `aalt` への到達性 |
 | Glyph names | 2 | post format 2.0、代替グリフ名 |
@@ -253,6 +274,11 @@ python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テ
 | Large CID font | 4 | 65535 グリフ、グリフ数制限、cmap 置換、post format 3.0 |
 | Helpers (sfnt / style / outdir) | 8 | `detect_sfnt_ext`、`compute_style_name`、`prepare_output_dir` |
 | Package output | 12 | manifest、font / woff2 / ofl / settings、overwrite、options |
+
+`TestLatinKernPreservation` はコミット済み fixture
+`python/tests/fonts/TikTok_Sans/static/TikTokSans-Regular.ttf` を前提にする。
+このテストは上記の設計判断、すなわち「先頭グリフが Latin なら JP 由来の
+PairPos は保持しない」ことも固定化している。
 
 ## コマンド
 

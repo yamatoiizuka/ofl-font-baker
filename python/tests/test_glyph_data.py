@@ -10,7 +10,7 @@ from fontTools.ttLib import TTFont
 
 from conftest import (
     EN_CFF, EN_FULL, EN_VAR, JP_FULL_VAR, JP_OTF, JP_STATIC, JP_VAR,
-    KAISEI, PLAYWRITE,
+    KAISEI, PLAYWRITE, TIKTOK_SANS,
     _cid_glyph_for_codepoint, _get_bounds, _merge, _merge_cff_to_cff,
 )
 
@@ -315,6 +315,247 @@ class TestGPOSScaling:
         kern = self._get_pair_kern(m, "T", "o")
         assert kern is not None, "T+o kern pair not found in merged font"
         assert kern < 0, f"T+o kern should be negative (tight), got {kern}"
+
+
+
+# ---------------------------------------------------------------------------
+# Latin kerning preservation when JP base ships its own Latin kerning
+# ---------------------------------------------------------------------------
+
+class TestLatinKernPreservation:
+    """Latin pair kerning must equal the source even when the JP base
+    (e.g. Noto Sans JP) ships its own Latin kerning for the same pairs.
+
+    Uses TikTok Sans (UPM=1000) as the Latin source so kern values share a
+    UPM with Noto Sans JP — any change in the merged value reflects a real
+    GPOS bug, not UPM rounding.
+    """
+
+    def _merge_tiktok_noto(self):
+        out = tempfile.mktemp(suffix=".ttf")
+        config = {
+            "subFont": {
+                "path": TIKTOK_SANS,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "baseFont": {
+                "path": JP_STATIC,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "output": {"familyName": "TestKernPreserve", "upm": 1000},
+            "export": {"path": {"font": out}},
+        }
+        mf.merge_fonts(config)
+        font = TTFont(out)
+        os.remove(out)
+        for ext in (".woff2",):
+            sib = out.replace(".ttf", ext)
+            if os.path.exists(sib):
+                os.remove(sib)
+        return font
+
+    def _sum_kern(self, font, glyph1, glyph2):
+        """Sum every kern XAdvance applied to a (g1, g2) pair across all
+        kern lookups — mirroring how a shaper stacks adjustments when the
+        same tag points at multiple lookups."""
+        gpos = font["GPOS"].table
+        total = 0
+        seen = False
+        for fr in gpos.FeatureList.FeatureRecord:
+            if fr.FeatureTag != "kern":
+                continue
+            for li in fr.Feature.LookupListIndex:
+                lk = gpos.LookupList.Lookup[li]
+                for st in lk.SubTable:
+                    ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+                    cov = getattr(ext, "Coverage", None)
+                    if not cov or isinstance(cov, list):
+                        continue
+                    if glyph1 not in (cov.glyphs or []):
+                        continue
+                    if ext.Format == 1 and hasattr(ext, "PairSet"):
+                        idx = cov.glyphs.index(glyph1)
+                        for pvr in ext.PairSet[idx].PairValueRecord:
+                            if pvr.SecondGlyph == glyph2:
+                                v = pvr.Value1.XAdvance if pvr.Value1 else 0
+                                if v:
+                                    seen = True
+                                    total += v
+                    if ext.Format == 2 and hasattr(ext, "ClassDef1"):
+                        c1 = ext.ClassDef1.classDefs.get(glyph1, 0)
+                        c2 = ext.ClassDef2.classDefs.get(glyph2, 0)
+                        val = ext.Class1Record[c1].Class2Record[c2]
+                        v = val.Value1.XAdvance if val.Value1 else 0
+                        if v:
+                            seen = True
+                            total += v
+        return total if seen else None
+
+    def _script_feature_indices(self, font, table_tag, script_tag, feature_tag):
+        table = font[table_tag].table
+        for sr in table.ScriptList.ScriptRecord:
+            if sr.ScriptTag != script_tag or not sr.Script.DefaultLangSys:
+                continue
+            return [
+                fi for fi in sr.Script.DefaultLangSys.FeatureIndex
+                if table.FeatureList.FeatureRecord[fi].FeatureTag == feature_tag
+            ]
+        return []
+
+    def _feature_has_pair_kern(self, font, feature_index, glyph1, glyph2):
+        gpos = font["GPOS"].table
+        feature = gpos.FeatureList.FeatureRecord[feature_index].Feature
+        for li in feature.LookupListIndex:
+            lk = gpos.LookupList.Lookup[li]
+            for st in lk.SubTable:
+                ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+                cov = getattr(ext, "Coverage", None)
+                if not cov or isinstance(cov, list) or glyph1 not in (cov.glyphs or []):
+                    continue
+                if ext.Format == 1 and hasattr(ext, "PairSet"):
+                    idx = cov.glyphs.index(glyph1)
+                    for pvr in ext.PairSet[idx].PairValueRecord:
+                        if pvr.SecondGlyph == glyph2:
+                            return True
+                if ext.Format == 2 and hasattr(ext, "ClassDef1"):
+                    c1 = ext.ClassDef1.classDefs.get(glyph1, 0)
+                    c2 = ext.ClassDef2.classDefs.get(glyph2, 0)
+                    val = ext.Class1Record[c1].Class2Record[c2]
+                    if val.Value1 and val.Value1.XAdvance:
+                        return True
+        return False
+
+    # Pairs sampled from TikTok Sans across category x category, biased
+    # toward pairs where Noto Sans JP defines a *different* value (so the
+    # bug actually manifests for these inputs without the fix).
+    KERN_PAIRS = [
+        # uppercase – uppercase
+        ("A", "T"), ("A", "V"), ("A", "W"), ("A", "Y"),
+        ("L", "T"), ("L", "V"), ("L", "W"), ("L", "Y"),
+        ("F", "J"), ("P", "J"),
+        # uppercase – lowercase  ← the user-reported "Tokyo" / "Type" cases
+        ("T", "o"), ("T", "y"), ("T", "s"), ("T", "e"), ("T", "a"),
+        ("Y", "e"), ("Y", "a"), ("V", "e"), ("W", "a"), ("K", "o"),
+        # lowercase – uppercase
+        ("a", "T"), ("e", "T"), ("o", "T"), ("h", "T"), ("n", "T"),
+        # lowercase – lowercase
+        ("r", "e"), ("r", "c"), ("r", "o"), ("f", "o"), ("k", "o"),
+        # punctuation / symbols
+        ("T", "period"), ("T", "comma"), ("V", "comma"),
+        ("L", "quoteright"),
+        # digits
+        ("seven", "one"),
+    ]
+
+    @pytest.fixture(scope="class")
+    def merged_font(self):
+        return self._merge_tiktok_noto()
+
+    @pytest.fixture(scope="class")
+    def src_font(self):
+        return TTFont(TIKTOK_SANS)
+
+    @pytest.mark.parametrize("g1,g2", KERN_PAIRS)
+    def test_kern_pair_matches_source(self, src_font, merged_font, g1, g2):
+        """Every sampled Latin kern pair must match TikTok's source value
+        (no JP overlay stacking onto the Latin font's pair value)."""
+        src_kern = self._sum_kern(src_font, g1, g2)
+        merged_kern = self._sum_kern(merged_font, g1, g2)
+        assert src_kern is not None, (
+            f"TikTok source defines no {g1}+{g2} kern; pick a different sample."
+        )
+        assert merged_kern == src_kern, (
+            f"{g1}+{g2} kern changed after merge: "
+            f"source={src_kern}, merged={merged_kern}"
+        )
+
+    def test_latn_script_has_single_kern_feature(self, merged_font):
+        """`latn` should expose exactly one kern feature record.
+
+        HarfBuzz only applies the first auto-enabled GPOS feature for a
+        duplicated tag under a LangSys. If both JP and Latin `kern`
+        features survive under `latn`, the JP one shadows the Latin one and
+        Latin pair kerning disappears in shaping even though the lookup
+        exists in the table.
+        """
+        indices = self._script_feature_indices(merged_font, "GPOS", "latn", "kern")
+        assert len(indices) == 1, (
+            f"latn script should expose exactly one kern feature, got {indices}"
+        )
+        assert self._feature_has_pair_kern(merged_font, indices[0], "T", "o"), (
+            "latn script's sole kern feature should carry the Latin T+o pair"
+        )
+
+    ADVANCE_GLYPHS = [
+        # uppercase
+        "A", "B", "K", "L", "T", "V", "W", "Y",
+        # lowercase
+        "a", "e", "f", "g", "i", "k", "n", "o", "r", "s", "t", "y",
+        # digits
+        "zero", "one", "five", "seven",
+        # punctuation / symbols
+        "period", "comma", "hyphen", "parenleft", "quoteright",
+    ]
+
+    @pytest.mark.parametrize("glyph", ADVANCE_GLYPHS)
+    def test_latin_advance_width_preserved(self, src_font, merged_font, glyph):
+        """Advance widths for Latin glyphs match the source — no SinglePos
+        from the JP base shifts them sideways."""
+        assert merged_font["hmtx"].metrics[glyph] == src_font["hmtx"].metrics[glyph], (
+            f"hmtx[{glyph}] changed: "
+            f"source={src_font['hmtx'].metrics[glyph]}, "
+            f"merged={merged_font['hmtx'].metrics[glyph]}"
+        )
+
+    def test_jp_pairpos_strips_latin_first_glyph(self, src_font, merged_font):
+        """JP-origin PairPos lookups no longer cover 'T' in first position.
+
+        The JP base ships PairPos subtables that include 'T' in their first-
+        glyph Coverage (Noto Sans JP has Latin-Latin kerning baked in). The
+        merge engine must strip those entries so JP's kern doesn't stack on
+        top of the Latin font's own pair values. We match JP-origin
+        subtables by their oversized Coverage (Noto's mixed kern lookup is
+        far larger than any TikTok subtable).
+        """
+        # Largest TikTok PairPos subtable sets the "this is Latin-origin"
+        # cutoff. Anything bigger in the merged font that still covers 'T'
+        # came from the JP base.
+        max_lat_cov = 0
+        src_gpos = src_font["GPOS"].table
+        for lk in src_gpos.LookupList.Lookup:
+            for st in lk.SubTable:
+                ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+                cov = getattr(ext, "Coverage", None)
+                if not cov or isinstance(cov, list):
+                    continue
+                if not (hasattr(ext, "PairSet") or hasattr(ext, "Class1Record")):
+                    continue
+                if cov.glyphs:
+                    max_lat_cov = max(max_lat_cov, len(cov.glyphs))
+
+        gpos = merged_font["GPOS"].table
+        offending = []
+        for li, lk in enumerate(gpos.LookupList.Lookup):
+            for sti, st in enumerate(lk.SubTable):
+                ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+                cov = getattr(ext, "Coverage", None)
+                if not cov or isinstance(cov, list):
+                    continue
+                if not (hasattr(ext, "PairSet") or hasattr(ext, "Class1Record")):
+                    continue
+                if "T" not in (cov.glyphs or []):
+                    continue
+                if len(cov.glyphs) <= max_lat_cov:
+                    continue  # Latin-origin subtable, fine
+                offending.append((li, sti, len(cov.glyphs)))
+        assert not offending, (
+            "JP-origin PairPos still covers 'T' in first position "
+            f"(kerning would stack): {offending}"
+        )
 
 
 
