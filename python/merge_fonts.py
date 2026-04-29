@@ -1706,14 +1706,24 @@ CJK_SCRIPTS = {'kana', 'hani', 'hang', 'bopo', 'yi  '}
 
 # GSUB feature tags whose JP-side record shadows the Latin-side record
 # under explicit Latin scripts in HarfBuzz, mirroring the GPOS dedupe
-# (`kern` / `mark` / `mkmk`). Verified for `ccmp` — JP `ccmp` lookup #2
-# fires first under `latn` and keeps Latin's `gravecomb → gravecomb.case`
-# / `uni0304 → uni0304.case` rules from running. Other GSUB tags (e.g.
-# `aalt`, `liga`, `dlig`) intentionally still keep both records: JP-side
+# (`kern` / `mark` / `mkmk`).
+#
+# - `ccmp`: verified by `M̀` / `Ê̄` shaping — JP `ccmp` fires
+#   first under `latn` and keeps Latin's `gravecomb → gravecomb.case`
+#   / `uni0304 → uni0304.case` rules from running.
+# - `dlig`: verified with Inter (Variable) + Noto Sans JP — Inter's
+#   chain-context dlig (`f → f.i` before `i`, `r → f.1` after `r`,
+#   `t → t.1` between two `t`s, etc.) never fires in the merged font
+#   because the JP `dlig` feature record sits ahead of Inter's under
+#   `latn`. The per-entry strip (`_strip_latin_only_ligatures`) empties
+#   JP's Latin-input entries but the *feature record* itself still
+#   shadows. Dedupe at the LangSys level so Inter's dlig fires.
+#
+# Other GSUB shared tags intentionally keep both records: JP-side
 # `aalt` for CJK glyphs needs to remain reachable under `latn` (Issue
-# #2 #6), and `liga` / `dlig` are handled by per-entry stripping in
-# `_strip_latin_only_ligatures`.
-GSUB_LATN_DEDUPE_TAGS = frozenset({'ccmp'})
+# #2 #6), and other tags either follow the same per-entry strip or
+# haven't been observed shadowing.
+GSUB_LATN_DEDUPE_TAGS = frozenset({'ccmp', 'dlig'})
 
 
 def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,

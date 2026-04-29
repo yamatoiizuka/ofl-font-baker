@@ -749,6 +749,91 @@ class TestLatinLigaturePreservation:
 
 
 # ---------------------------------------------------------------------------
+# Inter dlig chain-context preservation (the rf / fi / ff family)
+# ---------------------------------------------------------------------------
+
+class TestInterDligChainContext:
+    """Inter implements its `dlig` ligature family (`fi → f.i + i`,
+    `rf → r + f.1`, `ff → f + f.1`, …) via a Type 6 ChainContextSubst
+    lookup, not Type 4 LigatureSubst. Without the duplicate-tag dedupe
+    of `dlig` under `latn`, the merged LangSys carries both JP-side and
+    Latin-side `dlig` records and HarfBuzz only fires the first (JP)
+    record — so Inter's chain-context substitutions never reach the
+    buffer and merged shaping diverges from Inter solo.
+    """
+
+    DLIG_INPUTS = ("fi", "fl", "ff", "ffi", "ffl", "rf", "tt")
+
+    @pytest.fixture(scope="class")
+    def merged_font_path(self, tmp_path_factory):
+        out = tmp_path_factory.mktemp("inter_dlig") / "merged.ttf"
+        config = {
+            "subFont": {
+                "path": EN_VAR,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [
+                    {"tag": "opsz", "currentValue": 14},
+                    {"tag": "wght", "currentValue": 400},
+                ],
+            },
+            "baseFont": {
+                "path": JP_VAR,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "output": {"familyName": "TestInterDlig"},
+            "export": {"path": {"font": str(out)}},
+        }
+        mf.merge_fonts(config)
+        return str(out)
+
+    def _shape(self, font_path, text, features=None):
+        try:
+            import uharfbuzz as hb
+        except ImportError:
+            pytest.skip("uharfbuzz not installed")
+        with open(font_path, "rb") as f:
+            data = f.read()
+        face = hb.Face(data)
+        font = hb.Font(face)
+        order = TTFont(font_path).getGlyphOrder()
+        buf = hb.Buffer()
+        buf.add_str(text)
+        buf.guess_segment_properties()
+        hb.shape(font, buf, features or {})
+        return [order[g.codepoint] for g in buf.glyph_infos]
+
+    @pytest.mark.parametrize("text", DLIG_INPUTS)
+    def test_dlig_chain_context_matches_inter_solo(self, merged_font_path, text):
+        """Each dlig input must shape identically to Inter solo."""
+        merged = self._shape(merged_font_path, text, {"dlig": True})
+        solo = self._shape(EN_VAR, text, {"dlig": True})
+        assert merged == solo, (
+            f"dlig on {text!r}: merged={merged}, solo={solo}"
+        )
+
+    def test_latn_script_has_single_dlig_feature(self, merged_font_path):
+        """`latn` should expose exactly one `dlig` feature record."""
+        merged = TTFont(merged_font_path)
+        gsub = merged["GSUB"].table
+        for sr in gsub.ScriptList.ScriptRecord:
+            if sr.ScriptTag != "latn" or not sr.Script.DefaultLangSys:
+                continue
+            dlig = [
+                fi for fi in sr.Script.DefaultLangSys.FeatureIndex
+                if gsub.FeatureList.FeatureRecord[fi].FeatureTag == "dlig"
+            ]
+            assert len(dlig) == 1, (
+                f"latn DefaultLangSys dlig records: {dlig}"
+            )
+            return
+        pytest.fail("merged font has no latn script in GSUB")
+
+
+
+# ---------------------------------------------------------------------------
 # Feature preservation (GSUB / GPOS)
 # ---------------------------------------------------------------------------
 

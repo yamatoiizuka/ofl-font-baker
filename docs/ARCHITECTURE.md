@@ -187,11 +187,13 @@ Latin font's case-sensitive combining-mark rules
 `.case` form on capital letters.
 
 `GSUB_LATN_DEDUPE_TAGS` lists GSUB tags that follow the same dedupe rule
-as GPOS under explicit Latin scripts. Verified members: `ccmp`. Other
-GSUB shared tags (`aalt`, `liga`, `dlig`, etc.) intentionally still keep
-both records — JP-side `aalt` for CJK glyphs needs to remain reachable
-from `latn` (Issue #2 #6), and ligatures are handled by per-entry
-stripping in `_strip_latin_only_ligatures`.
+as GPOS under explicit Latin scripts. Verified members: `ccmp` (Latin
+case-sensitive combining marks) and `dlig` (Inter's chain-context
+`f → f.i` / `r → f.1` / `t → t.1` family — the per-entry strip empties
+JP's Latin-input ligatures, but the JP `dlig` *feature record* itself
+still shadows Inter's lookups under `latn`). `aalt` and other GSUB
+shared tags intentionally still keep both records — JP-side `aalt` for
+CJK glyphs needs to remain reachable from `latn` (Issue #2 #6).
 
 The dedupe is **per-LangSys**: it only fires when the *current* Latin
 LangSys actually contributes the same tag. If the Latin font has no
@@ -289,6 +291,7 @@ Test code is split across four files under `python/tests/`:
 | GPOS scaling | 3 | Kern scale, baseline unaffected, T+o pair kerning |
 | Latin kern preservation | 60 | 32 kern pairs (UC-UC, UC-lc, lc-UC, lc-lc, punct, digits) + 27 advance widths + 1 JP PairPos structural strip |
 | Latin ligature preservation | 28 | 12 dlig sequences (incl. n+s/S+v/A+m square-symbol traps) + 12 dlig vs Latin-solo + 1 JP LigatureSubst strip + ccmp shaping parity (M̀ / Ê̄ etc.) + latn single-ccmp structural + grek-keeps-jp-ccmp per-LangSys dedupe |
+| Inter dlig chain-context | 8 | Inter's fi/fl/ff/ffi/ffl/rf/tt chain-context dlig substitutions match Inter solo through the merge + latn single-dlig structural |
 | Feature preservation | 9 | calt / case / frac / ss01 / liga, subordinate Latin removal, chaining remap |
 | Same-tag features | 1 | JP-side `aalt` reachable from Latin LangSys |
 | Glyph names | 2 | post format 2.0, alternate glyph names |
