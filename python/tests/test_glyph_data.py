@@ -560,6 +560,132 @@ class TestLatinKernPreservation:
 
 
 # ---------------------------------------------------------------------------
+# Latin ligature preservation when JP base ships Latin-input ligatures
+# ---------------------------------------------------------------------------
+
+class TestLatinLigaturePreservation:
+    """Pan-CJK base fonts (Noto Sans JP, Source Han Sans) pack Latin-input
+    ligatures into ``dlig`` / ``liga`` lookups that emit CJK compatibility
+    square symbols (e.g. ``n+s → ㎱`` U+33B1, ``S+v → ㎜``). With dlig
+    enabled in Illustrator / InDesign, those rules fire on plain Latin
+    text — typing "Sans" produces "Sa㎱". The merge engine must strip
+    those Latin-input entries so the Latin font owns its own ligature
+    decisions; cross-script ligatures stay reachable.
+    """
+
+    SAMPLE_TEXT = ("Sans", "Tokyo", "Type", "AT",
+                   # Pairs explicitly known to trigger Noto Sans JP's
+                   # square-symbol dlig if the base lookup leaks through:
+                   "ns",   # → ㎱ U+33B1
+                   "Sv",   # → ㎜ U+33DC
+                   "Am",   # → ㏟ U+33DF
+                   "AU",   # → ㍳ U+3373
+                   "Bq",   # → ㏃ U+33C3
+                   "nA",   # → ㎁ U+3381
+                   "er",   # → ㌕ U+32CD prefix
+                   "rad")
+
+    @pytest.fixture(scope="class")
+    def merged_font_path(self, tmp_path_factory):
+        out = tmp_path_factory.mktemp("liga") / "merged.ttf"
+        config = {
+            "subFont": {
+                "path": TIKTOK_SANS,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "baseFont": {
+                "path": JP_STATIC,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "output": {"familyName": "TestLigaPreserve", "upm": 1000},
+            "export": {"path": {"font": str(out)}},
+        }
+        mf.merge_fonts(config)
+        return str(out)
+
+    def _shape(self, font_path, text, features=None):
+        """Return the glyph-name sequence produced by HarfBuzz."""
+        try:
+            import uharfbuzz as hb
+        except ImportError:
+            pytest.skip("uharfbuzz not installed")
+        with open(font_path, "rb") as f:
+            data = f.read()
+        face = hb.Face(data)
+        font = hb.Font(face)
+        order = TTFont(font_path).getGlyphOrder()
+        buf = hb.Buffer()
+        buf.add_str(text)
+        buf.guess_segment_properties()
+        hb.shape(font, buf, features or {})
+        return [order[g.codepoint] for g in buf.glyph_infos]
+
+    @pytest.mark.parametrize("text", SAMPLE_TEXT)
+    def test_dlig_does_not_emit_cjk_square_symbol(self, merged_font_path, text):
+        """With dlig enabled, plain Latin input must not collapse into
+        CJK compatibility square symbols (the JP-side ligature trap)."""
+        shaped = self._shape(merged_font_path, text, {"dlig": True})
+        # CJK compatibility square symbols live in U+3200-33FF. Their
+        # fontTools glyph names are typically "uniXXXX" or similar; the
+        # robust check is "no glyph name should look like a CJK uni-symbol
+        # (uni32xx / uni33xx)".
+        offending = [g for g in shaped
+                     if g.startswith("uni32") or g.startswith("uni33")]
+        assert not offending, (
+            f"dlig on {text!r} hit a JP-side square symbol: shaped={shaped}"
+        )
+
+    @pytest.mark.parametrize("text", SAMPLE_TEXT)
+    def test_dlig_matches_latin_solo(self, merged_font_path, text):
+        """Merged font's dlig output for Latin text must equal the Latin
+        font's own dlig output (which is "no substitution" for TikTok
+        Sans, since it doesn't ship dlig)."""
+        merged = self._shape(merged_font_path, text, {"dlig": True})
+        solo = self._shape(TIKTOK_SANS, text, {"dlig": True})
+        assert merged == solo, (
+            f"dlig on {text!r}: merged={merged} vs Latin solo={solo}"
+        )
+
+    def test_jp_dlig_lookup_no_latin_only_entry(self, merged_font_path):
+        """Structurally: no surviving GSUB ligature subtable should hold
+        an entry whose every input glyph is in the Latin font."""
+        merged = TTFont(merged_font_path)
+        lat_glyphs = set(TTFont(TIKTOK_SANS).getGlyphOrder())
+        gsub = merged["GSUB"].table
+        offending = []
+        for li, lk in enumerate(gsub.LookupList.Lookup):
+            for sti, st in enumerate(lk.SubTable):
+                ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+                ligs = getattr(ext, "ligatures", None)
+                if not ligs:
+                    continue
+                for first, lig_list in ligs.items():
+                    for lig in lig_list or ():
+                        comp = getattr(lig, "Component", None) or []
+                        inputs = [first, *comp]
+                        if all(g in lat_glyphs for g in inputs):
+                            # Tolerate Latin-origin lookups (sub font's
+                            # own dlig). Use the lookup's overall glyph
+                            # set: a lookup whose every referenced glyph
+                            # is Latin came from the sub font.
+                            all_in_lookup = mf._collect_lookup_glyphs(lk)
+                            if all(g in lat_glyphs for g in all_in_lookup):
+                                continue
+                            offending.append(
+                                (li, sti, first, list(comp), lig.LigGlyph)
+                            )
+        assert not offending, (
+            "Base-side LigatureSubst still holds Latin-only entries: "
+            f"{offending[:5]}"
+        )
+
+
+
+# ---------------------------------------------------------------------------
 # Feature preservation (GSUB / GPOS)
 # ---------------------------------------------------------------------------
 

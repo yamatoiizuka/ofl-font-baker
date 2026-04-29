@@ -1477,6 +1477,48 @@ def _resort_lookup_coverages(font: TTFont):
                                 c.glyphs = sorted(c.glyphs, key=gid)
 
 
+def _strip_latin_only_ligatures(lookup, lat_glyph_names: set):
+    """Drop ligature entries whose every input glyph is in the Latin font.
+
+    Pan-CJK fonts pack Latin-input ligatures into the same `dlig` / `liga`
+    lookup as JP-only ligatures and emit CJK compatibility square symbols
+    (e.g. ``n+s → ㎱`` U+33B1, ``A+m → ㏟`` U+33DF). The lookup is then
+    `mixed` to ``_classify_lookup`` (some inputs Latin, some not) and
+    survives merging. With dlig enabled in Illustrator / InDesign the
+    base-side rules fire on plain Latin text — typing "Sans" produces
+    "Sa㎱" because ``n+s`` matches a square-symbol ligature.
+
+    This is the GSUB analogue of ``_strip_latin_first_from_pairpos``:
+    walk Type 4 LigatureSubst subtables and drop entries where the first
+    input *and* every Component glyph is in the Latin font. Cross-script
+    entries (CJK first or any CJK Component) are preserved so the JP
+    side keeps its legitimate ligatures.
+    """
+    if not lat_glyph_names:
+        return
+    for subtable in lookup.SubTable:
+        st = subtable
+        if hasattr(st, 'ExtSubTable'):
+            st = st.ExtSubTable
+        ligatures = getattr(st, 'ligatures', None)
+        if not ligatures:
+            continue
+        new_ligatures = {}
+        for first, ligs in ligatures.items():
+            if not ligs:
+                continue
+            kept = []
+            for lig in ligs:
+                comp = getattr(lig, 'Component', None) or []
+                inputs = (first,) + tuple(comp)
+                if all(g in lat_glyph_names for g in inputs):
+                    continue  # purely-Latin input — Latin font owns this
+                kept.append(lig)
+            if kept:
+                new_ligatures[first] = kept
+        st.ligatures = new_ligatures
+
+
 def _strip_latin_first_from_pairpos(lookup, lat_glyph_names: set):
     """Drop Latin first-position glyphs from PairPos subtables.
 
@@ -1785,11 +1827,17 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
     for lookup in filtered_jp_lookups:
         _remap_lookup_references(lookup, jp_remap)
 
-    # Drop Latin-first PairPos pairs from JP GPOS so JP's leftover Latin
-    # kerning doesn't stack on top of the Latin font's own kern lookup.
-    if table_tag == 'GPOS' and lat_glyph_names:
-        for lookup in filtered_jp_lookups:
-            _strip_latin_first_from_pairpos(lookup, lat_glyph_names)
+    # Drop Latin-only layout entries from base-side `mixed` lookups so the
+    # base font's leftover Latin layout (kern stacking, dlig hijacking
+    # plain Latin text into CJK square symbols, etc.) doesn't fire alongside
+    # the Latin font's own layout.
+    if lat_glyph_names:
+        if table_tag == 'GPOS':
+            for lookup in filtered_jp_lookups:
+                _strip_latin_first_from_pairpos(lookup, lat_glyph_names)
+        elif table_tag == 'GSUB':
+            for lookup in filtered_jp_lookups:
+                _strip_latin_only_ligatures(lookup, lat_glyph_names)
 
     # --- Step 2: Build merged lookup list ---
     lat_offset = len(filtered_jp_lookups)
