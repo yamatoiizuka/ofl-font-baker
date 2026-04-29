@@ -10,7 +10,7 @@ from fontTools.ttLib import TTFont
 
 from conftest import (
     EN_CFF, EN_FULL, EN_VAR, JP_FULL_VAR, JP_OTF, JP_STATIC, JP_VAR,
-    KAISEI, PLAYWRITE,
+    KAISEI, PLAYWRITE, TIKTOK_SANS,
     _cid_glyph_for_codepoint, _get_bounds, _merge, _merge_cff_to_cff,
 )
 
@@ -315,6 +315,521 @@ class TestGPOSScaling:
         kern = self._get_pair_kern(m, "T", "o")
         assert kern is not None, "T+o kern pair not found in merged font"
         assert kern < 0, f"T+o kern should be negative (tight), got {kern}"
+
+
+
+# ---------------------------------------------------------------------------
+# Latin kerning preservation when JP base ships its own Latin kerning
+# ---------------------------------------------------------------------------
+
+class TestLatinKernPreservation:
+    """Latin pair kerning must equal the source even when the JP base
+    (e.g. Noto Sans JP) ships its own Latin kerning for the same pairs.
+
+    Uses TikTok Sans (UPM=1000) as the Latin source so kern values share a
+    UPM with Noto Sans JP — any change in the merged value reflects a real
+    GPOS bug, not UPM rounding.
+    """
+
+    def _merge_tiktok_noto(self):
+        out = tempfile.mktemp(suffix=".ttf")
+        config = {
+            "subFont": {
+                "path": TIKTOK_SANS,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "baseFont": {
+                "path": JP_STATIC,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "output": {"familyName": "TestKernPreserve", "upm": 1000},
+            "export": {"path": {"font": out}},
+        }
+        mf.merge_fonts(config)
+        font = TTFont(out)
+        os.remove(out)
+        for ext in (".woff2",):
+            sib = out.replace(".ttf", ext)
+            if os.path.exists(sib):
+                os.remove(sib)
+        return font
+
+    def _sum_kern(self, font, glyph1, glyph2):
+        """Sum every kern XAdvance applied to a (g1, g2) pair across all
+        kern lookups — mirroring how a shaper stacks adjustments when the
+        same tag points at multiple lookups."""
+        gpos = font["GPOS"].table
+        total = 0
+        seen = False
+        for fr in gpos.FeatureList.FeatureRecord:
+            if fr.FeatureTag != "kern":
+                continue
+            for li in fr.Feature.LookupListIndex:
+                lk = gpos.LookupList.Lookup[li]
+                for st in lk.SubTable:
+                    ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+                    cov = getattr(ext, "Coverage", None)
+                    if not cov or isinstance(cov, list):
+                        continue
+                    if glyph1 not in (cov.glyphs or []):
+                        continue
+                    if ext.Format == 1 and hasattr(ext, "PairSet"):
+                        idx = cov.glyphs.index(glyph1)
+                        for pvr in ext.PairSet[idx].PairValueRecord:
+                            if pvr.SecondGlyph == glyph2:
+                                v = pvr.Value1.XAdvance if pvr.Value1 else 0
+                                if v:
+                                    seen = True
+                                    total += v
+                    if ext.Format == 2 and hasattr(ext, "ClassDef1"):
+                        c1 = ext.ClassDef1.classDefs.get(glyph1, 0)
+                        c2 = ext.ClassDef2.classDefs.get(glyph2, 0)
+                        val = ext.Class1Record[c1].Class2Record[c2]
+                        v = val.Value1.XAdvance if val.Value1 else 0
+                        if v:
+                            seen = True
+                            total += v
+        return total if seen else None
+
+    def _script_feature_indices(self, font, table_tag, script_tag, feature_tag):
+        table = font[table_tag].table
+        for sr in table.ScriptList.ScriptRecord:
+            if sr.ScriptTag != script_tag or not sr.Script.DefaultLangSys:
+                continue
+            return [
+                fi for fi in sr.Script.DefaultLangSys.FeatureIndex
+                if table.FeatureList.FeatureRecord[fi].FeatureTag == feature_tag
+            ]
+        return []
+
+    def _feature_has_pair_kern(self, font, feature_index, glyph1, glyph2):
+        gpos = font["GPOS"].table
+        feature = gpos.FeatureList.FeatureRecord[feature_index].Feature
+        for li in feature.LookupListIndex:
+            lk = gpos.LookupList.Lookup[li]
+            for st in lk.SubTable:
+                ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+                cov = getattr(ext, "Coverage", None)
+                if not cov or isinstance(cov, list) or glyph1 not in (cov.glyphs or []):
+                    continue
+                if ext.Format == 1 and hasattr(ext, "PairSet"):
+                    idx = cov.glyphs.index(glyph1)
+                    for pvr in ext.PairSet[idx].PairValueRecord:
+                        if pvr.SecondGlyph == glyph2:
+                            return True
+                if ext.Format == 2 and hasattr(ext, "ClassDef1"):
+                    c1 = ext.ClassDef1.classDefs.get(glyph1, 0)
+                    c2 = ext.ClassDef2.classDefs.get(glyph2, 0)
+                    val = ext.Class1Record[c1].Class2Record[c2]
+                    if val.Value1 and val.Value1.XAdvance:
+                        return True
+        return False
+
+    # Pairs sampled from TikTok Sans across category x category, biased
+    # toward pairs where Noto Sans JP defines a *different* value (so the
+    # bug actually manifests for these inputs without the fix).
+    KERN_PAIRS = [
+        # uppercase – uppercase
+        ("A", "T"), ("A", "V"), ("A", "W"), ("A", "Y"),
+        ("L", "T"), ("L", "V"), ("L", "W"), ("L", "Y"),
+        ("F", "J"), ("P", "J"),
+        # uppercase – lowercase  ← the user-reported "Tokyo" / "Type" cases
+        ("T", "o"), ("T", "y"), ("T", "s"), ("T", "e"), ("T", "a"),
+        ("Y", "e"), ("Y", "a"), ("V", "e"), ("W", "a"), ("K", "o"),
+        # lowercase – uppercase
+        ("a", "T"), ("e", "T"), ("o", "T"), ("h", "T"), ("n", "T"),
+        # lowercase – lowercase
+        ("r", "e"), ("r", "c"), ("r", "o"), ("f", "o"), ("k", "o"),
+        # punctuation / symbols
+        ("T", "period"), ("T", "comma"), ("V", "comma"),
+        ("L", "quoteright"),
+        # digits
+        ("seven", "one"),
+    ]
+
+    @pytest.fixture(scope="class")
+    def merged_font(self):
+        return self._merge_tiktok_noto()
+
+    @pytest.fixture(scope="class")
+    def src_font(self):
+        return TTFont(TIKTOK_SANS)
+
+    @pytest.mark.parametrize("g1,g2", KERN_PAIRS)
+    def test_kern_pair_matches_source(self, src_font, merged_font, g1, g2):
+        """Every sampled Latin kern pair must match TikTok's source value
+        (no JP overlay stacking onto the Latin font's pair value)."""
+        src_kern = self._sum_kern(src_font, g1, g2)
+        merged_kern = self._sum_kern(merged_font, g1, g2)
+        assert src_kern is not None, (
+            f"TikTok source defines no {g1}+{g2} kern; pick a different sample."
+        )
+        assert merged_kern == src_kern, (
+            f"{g1}+{g2} kern changed after merge: "
+            f"source={src_kern}, merged={merged_kern}"
+        )
+
+    def test_latn_script_has_single_kern_feature(self, merged_font):
+        """`latn` should expose exactly one kern feature record.
+
+        HarfBuzz only applies the first auto-enabled GPOS feature for a
+        duplicated tag under a LangSys. If both JP and Latin `kern`
+        features survive under `latn`, the JP one shadows the Latin one and
+        Latin pair kerning disappears in shaping even though the lookup
+        exists in the table.
+        """
+        indices = self._script_feature_indices(merged_font, "GPOS", "latn", "kern")
+        assert len(indices) == 1, (
+            f"latn script should expose exactly one kern feature, got {indices}"
+        )
+        assert self._feature_has_pair_kern(merged_font, indices[0], "T", "o"), (
+            "latn script's sole kern feature should carry the Latin T+o pair"
+        )
+
+    ADVANCE_GLYPHS = [
+        # uppercase
+        "A", "B", "K", "L", "T", "V", "W", "Y",
+        # lowercase
+        "a", "e", "f", "g", "i", "k", "n", "o", "r", "s", "t", "y",
+        # digits
+        "zero", "one", "five", "seven",
+        # punctuation / symbols
+        "period", "comma", "hyphen", "parenleft", "quoteright",
+    ]
+
+    @pytest.mark.parametrize("glyph", ADVANCE_GLYPHS)
+    def test_latin_advance_width_preserved(self, src_font, merged_font, glyph):
+        """Advance widths for Latin glyphs match the source — no SinglePos
+        from the JP base shifts them sideways."""
+        assert merged_font["hmtx"].metrics[glyph] == src_font["hmtx"].metrics[glyph], (
+            f"hmtx[{glyph}] changed: "
+            f"source={src_font['hmtx'].metrics[glyph]}, "
+            f"merged={merged_font['hmtx'].metrics[glyph]}"
+        )
+
+    def test_jp_pairpos_strips_latin_first_glyph(self, src_font, merged_font):
+        """JP-origin PairPos lookups no longer cover 'T' in first position.
+
+        The JP base ships PairPos subtables that include 'T' in their first-
+        glyph Coverage (Noto Sans JP has Latin-Latin kerning baked in). The
+        merge engine must strip those entries so JP's kern doesn't stack on
+        top of the Latin font's own pair values. We match JP-origin
+        subtables by their oversized Coverage (Noto's mixed kern lookup is
+        far larger than any TikTok subtable).
+        """
+        # Largest TikTok PairPos subtable sets the "this is Latin-origin"
+        # cutoff. Anything bigger in the merged font that still covers 'T'
+        # came from the JP base.
+        max_lat_cov = 0
+        src_gpos = src_font["GPOS"].table
+        for lk in src_gpos.LookupList.Lookup:
+            for st in lk.SubTable:
+                ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+                cov = getattr(ext, "Coverage", None)
+                if not cov or isinstance(cov, list):
+                    continue
+                if not (hasattr(ext, "PairSet") or hasattr(ext, "Class1Record")):
+                    continue
+                if cov.glyphs:
+                    max_lat_cov = max(max_lat_cov, len(cov.glyphs))
+
+        gpos = merged_font["GPOS"].table
+        offending = []
+        for li, lk in enumerate(gpos.LookupList.Lookup):
+            for sti, st in enumerate(lk.SubTable):
+                ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+                cov = getattr(ext, "Coverage", None)
+                if not cov or isinstance(cov, list):
+                    continue
+                if not (hasattr(ext, "PairSet") or hasattr(ext, "Class1Record")):
+                    continue
+                if "T" not in (cov.glyphs or []):
+                    continue
+                if len(cov.glyphs) <= max_lat_cov:
+                    continue  # Latin-origin subtable, fine
+                offending.append((li, sti, len(cov.glyphs)))
+        assert not offending, (
+            "JP-origin PairPos still covers 'T' in first position "
+            f"(kerning would stack): {offending}"
+        )
+
+
+
+# ---------------------------------------------------------------------------
+# Latin ligature preservation when JP base ships Latin-input ligatures
+# ---------------------------------------------------------------------------
+
+class TestLatinLigaturePreservation:
+    """Pan-CJK base fonts (Noto Sans JP, Source Han Sans) pack Latin-input
+    ligatures into ``dlig`` / ``liga`` lookups that emit CJK compatibility
+    square symbols (e.g. ``n+s → ㎱`` U+33B1, ``S+v → ㎜``). With dlig
+    enabled in Illustrator / InDesign, those rules fire on plain Latin
+    text — typing "Sans" produces "Sa㎱". The merge engine must strip
+    those Latin-input entries so the Latin font owns its own ligature
+    decisions; cross-script ligatures stay reachable.
+    """
+
+    SAMPLE_TEXT = ("Sans", "Tokyo", "Type", "AT",
+                   # Pairs explicitly known to trigger Noto Sans JP's
+                   # square-symbol dlig if the base lookup leaks through:
+                   "ns",   # → ㎱ U+33B1
+                   "Sv",   # → ㎜ U+33DC
+                   "Am",   # → ㏟ U+33DF
+                   "AU",   # → ㍳ U+3373
+                   "Bq",   # → ㏃ U+33C3
+                   "nA",   # → ㎁ U+3381
+                   "er",   # → ㌕ U+32CD prefix
+                   "rad")
+
+    @pytest.fixture(scope="class")
+    def merged_font_path(self, tmp_path_factory):
+        out = tmp_path_factory.mktemp("liga") / "merged.ttf"
+        config = {
+            "subFont": {
+                "path": TIKTOK_SANS,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "baseFont": {
+                "path": JP_STATIC,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "output": {"familyName": "TestLigaPreserve", "upm": 1000},
+            "export": {"path": {"font": str(out)}},
+        }
+        mf.merge_fonts(config)
+        return str(out)
+
+    def _shape(self, font_path, text, features=None):
+        """Return the glyph-name sequence produced by HarfBuzz."""
+        try:
+            import uharfbuzz as hb
+        except ImportError:
+            pytest.skip("uharfbuzz not installed")
+        with open(font_path, "rb") as f:
+            data = f.read()
+        face = hb.Face(data)
+        font = hb.Font(face)
+        order = TTFont(font_path).getGlyphOrder()
+        buf = hb.Buffer()
+        buf.add_str(text)
+        buf.guess_segment_properties()
+        hb.shape(font, buf, features or {})
+        return [order[g.codepoint] for g in buf.glyph_infos]
+
+    @pytest.mark.parametrize("text", SAMPLE_TEXT)
+    def test_dlig_does_not_emit_cjk_square_symbol(self, merged_font_path, text):
+        """With dlig enabled, plain Latin input must not collapse into
+        CJK compatibility square symbols (the JP-side ligature trap)."""
+        shaped = self._shape(merged_font_path, text, {"dlig": True})
+        # CJK compatibility square symbols live in U+3200-33FF. Their
+        # fontTools glyph names are typically "uniXXXX" or similar; the
+        # robust check is "no glyph name should look like a CJK uni-symbol
+        # (uni32xx / uni33xx)".
+        offending = [g for g in shaped
+                     if g.startswith("uni32") or g.startswith("uni33")]
+        assert not offending, (
+            f"dlig on {text!r} hit a JP-side square symbol: shaped={shaped}"
+        )
+
+    @pytest.mark.parametrize("text", SAMPLE_TEXT)
+    def test_dlig_matches_latin_solo(self, merged_font_path, text):
+        """Merged font's dlig output for Latin text must equal the Latin
+        font's own dlig output (which is "no substitution" for TikTok
+        Sans, since it doesn't ship dlig)."""
+        merged = self._shape(merged_font_path, text, {"dlig": True})
+        solo = self._shape(TIKTOK_SANS, text, {"dlig": True})
+        assert merged == solo, (
+            f"dlig on {text!r}: merged={merged} vs Latin solo={solo}"
+        )
+
+    def test_latn_ccmp_matches_latin_solo(self, merged_font_path):
+        """`ccmp` substitutions on Latin combining marks must reach the
+        Latin font's `.case` rules.
+
+        Pan-CJK fonts ship their own `ccmp` lookup under `latn`, and
+        HarfBuzz lets the first duplicate-tag record win for `ccmp`
+        the same way it does for `kern` (verified via `hb-shape`
+        --trace). Without dedupe, `gravecomb -> gravecomb.case` and
+        similar Latin-side rules never fire and case-sensitive
+        combining marks regress to their default form.
+        """
+        for text in ("M̀", "Ê̄", "À̂",
+                     "İ", "T́"):
+            merged = self._shape(merged_font_path, text)
+            solo = self._shape(TIKTOK_SANS, text)
+            assert merged == solo, (
+                f"ccmp shaping for {text!r} differs: "
+                f"merged={merged}, solo={solo}"
+            )
+
+    def test_latn_script_has_single_ccmp_feature(self, merged_font_path):
+        """`latn` should expose exactly one `ccmp` feature record."""
+        merged = TTFont(merged_font_path)
+        gsub = merged["GSUB"].table
+        for sr in gsub.ScriptList.ScriptRecord:
+            if sr.ScriptTag != "latn" or not sr.Script.DefaultLangSys:
+                continue
+            ccmp = [
+                fi for fi in sr.Script.DefaultLangSys.FeatureIndex
+                if gsub.FeatureList.FeatureRecord[fi].FeatureTag == "ccmp"
+            ]
+            assert len(ccmp) == 1, (
+                f"latn DefaultLangSys ccmp records: {ccmp}"
+            )
+            return
+        pytest.fail("merged font has no latn script in GSUB")
+
+    def test_jp_only_explicit_latin_script_keeps_ccmp(self, merged_font_path):
+        """Per-LangSys dedupe: explicit Latin scripts that the Latin font
+        doesn't define keep their JP-side `ccmp` intact.
+
+        TikTok Sans has no `grek` script, but Noto Sans JP does. The
+        dedupe rule must not drop JP `grek` `ccmp` just because the tag
+        also exists under Latin's `latn` — otherwise Greek text loses
+        its combining-mark composition entirely.
+        """
+        merged = TTFont(merged_font_path)
+        gsub = merged["GSUB"].table
+        seen = False
+        for sr in gsub.ScriptList.ScriptRecord:
+            if sr.ScriptTag != "grek" or not sr.Script.DefaultLangSys:
+                continue
+            seen = True
+            ccmp = [
+                fi for fi in sr.Script.DefaultLangSys.FeatureIndex
+                if gsub.FeatureList.FeatureRecord[fi].FeatureTag == "ccmp"
+            ]
+            assert ccmp, (
+                "grek DefaultLangSys lost its JP-side ccmp (per-LangSys "
+                "dedupe regression)"
+            )
+        assert seen, "merged font has no grek script in GSUB"
+
+    def test_jp_dlig_lookup_no_latin_only_entry(self, merged_font_path):
+        """Structurally: no surviving GSUB ligature subtable should hold
+        an entry whose every input glyph is in the Latin font."""
+        merged = TTFont(merged_font_path)
+        lat_glyphs = set(TTFont(TIKTOK_SANS).getGlyphOrder())
+        gsub = merged["GSUB"].table
+        offending = []
+        for li, lk in enumerate(gsub.LookupList.Lookup):
+            for sti, st in enumerate(lk.SubTable):
+                ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+                ligs = getattr(ext, "ligatures", None)
+                if not ligs:
+                    continue
+                for first, lig_list in ligs.items():
+                    for lig in lig_list or ():
+                        comp = getattr(lig, "Component", None) or []
+                        inputs = [first, *comp]
+                        if all(g in lat_glyphs for g in inputs):
+                            # Tolerate Latin-origin lookups (sub font's
+                            # own dlig). Use the lookup's overall glyph
+                            # set: a lookup whose every referenced glyph
+                            # is Latin came from the sub font.
+                            all_in_lookup = mf._collect_lookup_glyphs(lk)
+                            if all(g in lat_glyphs for g in all_in_lookup):
+                                continue
+                            offending.append(
+                                (li, sti, first, list(comp), lig.LigGlyph)
+                            )
+        assert not offending, (
+            "Base-side LigatureSubst still holds Latin-only entries: "
+            f"{offending[:5]}"
+        )
+
+
+
+# ---------------------------------------------------------------------------
+# Inter dlig chain-context preservation (the rf / fi / ff family)
+# ---------------------------------------------------------------------------
+
+class TestInterDligChainContext:
+    """Inter implements its `dlig` ligature family (`fi → f.i + i`,
+    `rf → r + f.1`, `ff → f + f.1`, …) via a Type 6 ChainContextSubst
+    lookup, not Type 4 LigatureSubst. Without the duplicate-tag dedupe
+    of `dlig` under `latn`, the merged LangSys carries both JP-side and
+    Latin-side `dlig` records and HarfBuzz only fires the first (JP)
+    record — so Inter's chain-context substitutions never reach the
+    buffer and merged shaping diverges from Inter solo.
+    """
+
+    DLIG_INPUTS = ("fi", "fl", "ff", "ffi", "ffl", "rf", "tt")
+
+    @pytest.fixture(scope="class")
+    def merged_font_path(self, tmp_path_factory):
+        out = tmp_path_factory.mktemp("inter_dlig") / "merged.ttf"
+        config = {
+            "subFont": {
+                "path": EN_VAR,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [
+                    {"tag": "opsz", "currentValue": 14},
+                    {"tag": "wght", "currentValue": 400},
+                ],
+            },
+            "baseFont": {
+                "path": JP_VAR,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "output": {"familyName": "TestInterDlig"},
+            "export": {"path": {"font": str(out)}},
+        }
+        mf.merge_fonts(config)
+        return str(out)
+
+    def _shape(self, font_path, text, features=None):
+        try:
+            import uharfbuzz as hb
+        except ImportError:
+            pytest.skip("uharfbuzz not installed")
+        with open(font_path, "rb") as f:
+            data = f.read()
+        face = hb.Face(data)
+        font = hb.Font(face)
+        order = TTFont(font_path).getGlyphOrder()
+        buf = hb.Buffer()
+        buf.add_str(text)
+        buf.guess_segment_properties()
+        hb.shape(font, buf, features or {})
+        return [order[g.codepoint] for g in buf.glyph_infos]
+
+    @pytest.mark.parametrize("text", DLIG_INPUTS)
+    def test_dlig_chain_context_matches_inter_solo(self, merged_font_path, text):
+        """Each dlig input must shape identically to Inter solo."""
+        merged = self._shape(merged_font_path, text, {"dlig": True})
+        solo = self._shape(EN_VAR, text, {"dlig": True})
+        assert merged == solo, (
+            f"dlig on {text!r}: merged={merged}, solo={solo}"
+        )
+
+    def test_latn_script_has_single_dlig_feature(self, merged_font_path):
+        """`latn` should expose exactly one `dlig` feature record."""
+        merged = TTFont(merged_font_path)
+        gsub = merged["GSUB"].table
+        for sr in gsub.ScriptList.ScriptRecord:
+            if sr.ScriptTag != "latn" or not sr.Script.DefaultLangSys:
+                continue
+            dlig = [
+                fi for fi in sr.Script.DefaultLangSys.FeatureIndex
+                if gsub.FeatureList.FeatureRecord[fi].FeatureTag == "dlig"
+            ]
+            assert len(dlig) == 1, (
+                f"latn DefaultLangSys dlig records: {dlig}"
+            )
+            return
+        pytest.fail("merged font has no latn script in GSUB")
 
 
 

@@ -137,6 +137,66 @@ hhea ascent/descent/lineGap、post underline、head bbox）と JP GPOS ルック
 その後 `reconcile_tables` は既にスケール済みの JP 値を参照するので、Latin との
 エンベロープ比較は出力 UPM 単位で行われる。
 
+### 欧文ペアカーニングの保持
+
+Pan-CJK 書体（Noto Sans JP など）は Latin グリフを内蔵し、Latin 同士の
+ペアカーニングまで定義していることが多い。cmap ベースのグリフ置換で
+Latin 側のアウトラインに差し替えたあとも、JP 側の `kern` ルックアップは
+同じグリフ名を参照し続けるため、Latin と JP 両方の PairPos が同時に発火し
+`T+o` / `T+y` のような Latin ペアでカーニング値が積算されてしまう
+（"Tokyo" や "Type" の T が極端に詰まる症状）。
+
+`_strip_latin_first_from_pairpos` は JP ルックアップの分類後に走り、
+JP 側 PairPos サブテーブルの先頭グリフ `Coverage`（および `ClassDef1`）
+から Latin グリフを除去する。これにより Latin 始まりのペアでは JP の
+PairPos が発火せず、Latin フォント側のカーニング値だけが反映される。
+JP 始まりのクロススクリプト（CJK 約物 → Latin 文字など）は保持される。
+
+これは後続グリフが JP フォントにしか無い場合でも意図的である。先頭が
+Latin で始まる merged slot は、すでに Latin フォントのアウトラインと
+字幅モデルに置き換わっているため、JP 由来の Latin-first カーニングは
+一部だけ残さず従属データとしてまとめて捨てる。
+
+### 欧文リガチャの保持
+
+Pan-CJK ベース書体は `dlig` / `liga` の lookup に Latin 入力のリガチャ
+を JP 専用リガチャと一緒に詰め込んでいることが多く、その出力が CJK 互換
+の単位記号 — 例えば `n+s → ㎱` (U+33B1)、`S+v → ㎜`、`A+m → ㏟` —
+になる。入力集合に Latin と非 Latin の両方が含まれるため
+`_classify_lookup` は `mixed` と判定し、lookup は merge を生き残る。
+Illustrator / InDesign で「任意の合字」(`dlig`) を ON にすると、
+普通の Latin テキストにベース側の規則が発火して "Sans" が "Sa㎱" に化ける。
+
+`_strip_latin_only_ligatures` は GSUB 側の `_strip_latin_first_from_pairpos`
+相当の処理。生き残った JP-side lookup の Type 4 LigatureSubst サブテーブル
+を歩き、先頭入力と Component グリフが **すべて** Latin フォントに含まれる
+リガチャエントリを削除する。クロススクリプトのエントリ（入力鎖のどこかに
+CJK グリフが含まれるもの）は保持されるので、JP 側の正規リガチャは生き残る。
+
+### `ccmp` の重複タグ排除
+
+kern を `latn` 配下で壊していた shadowing パターン（HarfBuzz は重複タグの
+最初のレコードしか発火させない）は、GSUB 側の `ccmp` でも同じように起きる。
+Pan-CJK 書体は独自の `ccmp` を `latn` 配下に持つので、マージ後の LangSys
+には `ccmp` が 2 本ぶら下がり、HB は JP 側だけ走らせる。Latin フォントの
+case-sensitive 結合マーク規則（`gravecomb → gravecomb.case` 等）が発火
+しなくなり、`M̀` / `Ê̄` は大文字に対する `.case` フォームを失う。
+
+`GSUB_LATN_DEDUPE_TAGS` は GPOS と同じ dedupe ルールを明示的 Latin script
+で適用する GSUB タグの一覧。検証済みメンバー: `ccmp`（Latin case-sensitive
+結合マーク）と `dlig`（Inter の chain context 形式 `f → f.i` / `r → f.1`
+/ `t → t.1` 系 — エントリ単位の strip では JP の Latin 入力リガチャは
+空になるが、JP `dlig` の *feature record* 自体は依然として `latn` の下で
+Inter の lookup を shadowing する）。`aalt` その他の GSUB 共有タグは
+従来通り両方残す — JP 側の `aalt` は CJK glyph 用に `latn` から到達可能
+である必要がある (Issue #2 #6)。
+
+dedupe は **LangSys 単位** で判定する。つまり Latin 側が *現在の* LangSys
+に同じタグを実際に持っている場合だけ落とす。Latin font が当該 explicit
+Latin script の LangSys を持たない場合（例: Latin サブが Greek 非対応
+なのに base に grek LangSys がある場合）、JP 側 `ccmp` はそのまま残る
+— shadowing する相手がいないため。
+
 ### メトリクス
 
 - `head.unitsPerEm` = `outputUpm`（ユーザー設定、デフォルト 1000）
@@ -226,6 +286,9 @@ python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テ
 | UPM normalization | 3 | 2048→1000 変換、OS/2 metrics |
 | Output UPM | 5 | hmtx / glyph / OS/2 への UPM スケーリング、base-only |
 | GPOS scaling | 3 | kern scale、baseline 非影響、T+o ペアカーニング保持 |
+| 欧文 kern 保持 | 60 | 32 ペア（UC-UC, UC-lc, lc-UC, lc-lc, 記号, 数字）+ 27 字幅 + JP PairPos の Latin 先頭除去確認 |
+| 欧文 ligature 保持 | 28 | dlig で 12 系列（n+s/S+v/A+m の単位記号トラップ含む）+ 12 系列が Latin 単体と一致 + JP LigatureSubst の Latin-only 除去 + ccmp shape 一致（M̀ / Ê̄ 等）+ latn 配下 ccmp 1 本の構造確認 + grek の JP ccmp が LangSys 単位で温存される回帰確認 |
+| Inter dlig chain context | 8 | Inter の fi/fl/ff/ffi/ffl/rf/tt chain-context dlig が merge 後も Inter 単体と一致 + latn 配下 dlig 1 本の構造確認 |
 | Feature preservation | 9 | calt / case / frac / ss01 / liga、従属欧文除去、chaining リマップ |
 | Same-tag features | 1 | Latin LangSys から JP 側 `aalt` への到達性 |
 | Glyph names | 2 | post format 2.0、代替グリフ名 |
@@ -253,6 +316,11 @@ python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テ
 | Large CID font | 4 | 65535 グリフ、グリフ数制限、cmap 置換、post format 3.0 |
 | Helpers (sfnt / style / outdir) | 8 | `detect_sfnt_ext`、`compute_style_name`、`prepare_output_dir` |
 | Package output | 12 | manifest、font / woff2 / ofl / settings、overwrite、options |
+
+`TestLatinKernPreservation` はコミット済み fixture
+`python/tests/fonts/TikTok_Sans/static/TikTokSans-Regular.ttf` を前提にする。
+このテストは上記の設計判断、すなわち「先頭グリフが Latin なら JP 由来の
+PairPos は保持しない」ことも固定化している。
 
 ## コマンド
 

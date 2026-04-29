@@ -138,6 +138,69 @@ GPOS lookups are scaled by `jp_upm_ratio`, then `head.unitsPerEm` is set to
 `outputUpm`. `reconcile_tables` then compares against the already-scaled JP
 values, so the Latin envelope is taken in output UPM units.
 
+### Latin Pair Kerning Preservation
+
+Pan-CJK fonts (e.g. Noto Sans JP) ship Latin glyphs and define their own
+Latin pair kerning. After the cmap-based replacement swaps those glyph slots
+to the Latin font's outlines, the JP font's Latin kerning lookup still
+references the same glyph names — so both the JP and Latin `kern` lookups
+fire for pairs like `T+o` / `T+y`, stacking adjustments and producing
+visibly broken Latin spacing.
+
+`_strip_latin_first_from_pairpos` runs after JP lookup classification and
+removes Latin glyphs from the *first-position* `Coverage` (and `ClassDef1`)
+of every JP-side PairPos subtable. The result: JP's PairPos no longer fires
+when the first glyph is Latin, so Latin pairs use exclusively the Latin
+font's values. Cross-script kerning (JP first, Latin second — e.g. CJK
+punctuation followed by a Latin letter) is preserved.
+
+This is intentional even when the second glyph exists only in the JP font.
+Once a merged slot starts with a Latin glyph, that slot now carries the
+Latin font's outline and spacing model, so JP-origin Latin-first kerning is
+treated as subordinate and discarded wholesale rather than partially kept
+for JP-only second glyphs.
+
+### Latin Ligature Preservation
+
+Pan-CJK base fonts pack Latin-input ligatures into the same `dlig` / `liga`
+lookup as JP-only ligatures. They typically emit CJK compatibility square
+symbols — e.g. `n+s → ㎱` (U+33B1), `S+v → ㎜`, `A+m → ㏟`. The mixed
+input set classifies the lookup as `mixed` to `_classify_lookup`, so it
+survives merging. With `dlig` enabled in Illustrator / InDesign, the
+base-side rules then fire on plain Latin text — typing "Sans" produces
+"Sa㎱".
+
+`_strip_latin_only_ligatures` mirrors `_strip_latin_first_from_pairpos` on
+the GSUB side: it walks Type 4 LigatureSubst subtables in surviving JP
+lookups and drops every ligature entry whose first input *and* every
+Component glyph is in the Latin font. Cross-script entries (any CJK input
+in the chain) are preserved so JP keeps its legitimate ligatures.
+
+### `ccmp` Duplicate-Tag Dedupe
+
+The same shadowing pattern that broke kern under `latn` (HarfBuzz picks
+the first duplicate-tag record) also breaks `ccmp` on the GSUB side.
+Pan-CJK fonts ship their own `ccmp` under `latn`, so the merged LangSys
+ends up with two `ccmp` records and HB only runs the JP-side one. The
+Latin font's case-sensitive combining-mark rules
+(`gravecomb → gravecomb.case` etc.) never fire, so `M̀` / `Ê̄` lose their
+`.case` form on capital letters.
+
+`GSUB_LATN_DEDUPE_TAGS` lists GSUB tags that follow the same dedupe rule
+as GPOS under explicit Latin scripts. Verified members: `ccmp` (Latin
+case-sensitive combining marks) and `dlig` (Inter's chain-context
+`f → f.i` / `r → f.1` / `t → t.1` family — the per-entry strip empties
+JP's Latin-input ligatures, but the JP `dlig` *feature record* itself
+still shadows Inter's lookups under `latn`). `aalt` and other GSUB
+shared tags intentionally still keep both records — JP-side `aalt` for
+CJK glyphs needs to remain reachable from `latn` (Issue #2 #6).
+
+The dedupe is **per-LangSys**: it only fires when the *current* Latin
+LangSys actually contributes the same tag. If the Latin font has no
+LangSys for a given explicit Latin script (e.g. `grek` when the Latin
+sub doesn't ship Greek), the JP-side `ccmp` for that script stays put
+— there's nothing to shadow it.
+
 ### Metrics
 
 - `head.unitsPerEm` = `outputUpm` (user-set, default 1000)
@@ -226,6 +289,9 @@ Test code is split across four files under `python/tests/`:
 | UPM normalization | 3 | 2048→1000 conversion, OS/2 metrics |
 | Output UPM | 5 | UPM scaling on hmtx / glyph / OS/2, base-only |
 | GPOS scaling | 3 | Kern scale, baseline unaffected, T+o pair kerning |
+| Latin kern preservation | 60 | 32 kern pairs (UC-UC, UC-lc, lc-UC, lc-lc, punct, digits) + 27 advance widths + 1 JP PairPos structural strip |
+| Latin ligature preservation | 28 | 12 dlig sequences (incl. n+s/S+v/A+m square-symbol traps) + 12 dlig vs Latin-solo + 1 JP LigatureSubst strip + ccmp shaping parity (M̀ / Ê̄ etc.) + latn single-ccmp structural + grek-keeps-jp-ccmp per-LangSys dedupe |
+| Inter dlig chain-context | 8 | Inter's fi/fl/ff/ffi/ffl/rf/tt chain-context dlig substitutions match Inter solo through the merge + latn single-dlig structural |
 | Feature preservation | 9 | calt / case / frac / ss01 / liga, subordinate Latin removal, chaining remap |
 | Same-tag features | 1 | JP-side `aalt` reachable from Latin LangSys |
 | Glyph names | 2 | post format 2.0, alternate glyph names |
@@ -253,6 +319,11 @@ Test code is split across four files under `python/tests/`:
 | Large CID font | 4 | 65535 glyphs, glyph count limit, cmap replacement, post format 3.0 |
 | Helpers (sfnt / style / outdir) | 8 | `detect_sfnt_ext`, `compute_style_name`, `prepare_output_dir` |
 | Package output | 12 | Manifest, font / woff2 / ofl / settings, overwrite, options |
+
+`TestLatinKernPreservation` depends on the committed fixture
+`python/tests/fonts/TikTok_Sans/static/TikTokSans-Regular.ttf`. It also
+locks in the design choice above: once the first glyph is Latin, JP-origin
+PairPos data is not preserved.
 
 ## Commands
 
