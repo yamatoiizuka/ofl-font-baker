@@ -687,6 +687,32 @@ class TestLatinLigaturePreservation:
             return
         pytest.fail("merged font has no latn script in GSUB")
 
+    def test_jp_only_explicit_latin_script_keeps_ccmp(self, merged_font_path):
+        """Per-LangSys dedupe: explicit Latin scripts that the Latin font
+        doesn't define keep their JP-side `ccmp` intact.
+
+        TikTok Sans has no `grek` script, but Noto Sans JP does. The
+        dedupe rule must not drop JP `grek` `ccmp` just because the tag
+        also exists under Latin's `latn` — otherwise Greek text loses
+        its combining-mark composition entirely.
+        """
+        merged = TTFont(merged_font_path)
+        gsub = merged["GSUB"].table
+        seen = False
+        for sr in gsub.ScriptList.ScriptRecord:
+            if sr.ScriptTag != "grek" or not sr.Script.DefaultLangSys:
+                continue
+            seen = True
+            ccmp = [
+                fi for fi in sr.Script.DefaultLangSys.FeatureIndex
+                if gsub.FeatureList.FeatureRecord[fi].FeatureTag == "ccmp"
+            ]
+            assert ccmp, (
+                "grek DefaultLangSys lost its JP-side ccmp (per-LangSys "
+                "dedupe regression)"
+            )
+        assert seen, "merged font has no grek script in GSUB"
+
     def test_jp_dlig_lookup_no_latin_only_entry(self, merged_font_path):
         """Structurally: no surviving GSUB ligature subtable should hold
         an entry whose every input glyph is in the Latin font."""

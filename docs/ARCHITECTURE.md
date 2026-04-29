@@ -193,6 +193,12 @@ both records — JP-side `aalt` for CJK glyphs needs to remain reachable
 from `latn` (Issue #2 #6), and ligatures are handled by per-entry
 stripping in `_strip_latin_only_ligatures`.
 
+The dedupe is **per-LangSys**: it only fires when the *current* Latin
+LangSys actually contributes the same tag. If the Latin font has no
+LangSys for a given explicit Latin script (e.g. `grek` when the Latin
+sub doesn't ship Greek), the JP-side `ccmp` for that script stays put
+— there's nothing to shadow it.
+
 ### Metrics
 
 - `head.unitsPerEm` = `outputUpm` (user-set, default 1000)
@@ -282,7 +288,7 @@ Test code is split across four files under `python/tests/`:
 | Output UPM | 5 | UPM scaling on hmtx / glyph / OS/2, base-only |
 | GPOS scaling | 3 | Kern scale, baseline unaffected, T+o pair kerning |
 | Latin kern preservation | 60 | 32 kern pairs (UC-UC, UC-lc, lc-UC, lc-lc, punct, digits) + 27 advance widths + 1 JP PairPos structural strip |
-| Latin ligature preservation | 27 | 12 dlig sequences (incl. n+s/S+v/A+m square-symbol traps) + 12 dlig vs Latin-solo + 1 JP LigatureSubst strip + ccmp shaping parity (M̀ / Ê̄ etc.) + latn single-ccmp structural |
+| Latin ligature preservation | 28 | 12 dlig sequences (incl. n+s/S+v/A+m square-symbol traps) + 12 dlig vs Latin-solo + 1 JP LigatureSubst strip + ccmp shaping parity (M̀ / Ê̄ etc.) + latn single-ccmp structural + grek-keeps-jp-ccmp per-LangSys dedupe |
 | Feature preservation | 9 | calt / case / frac / ss01 / liga, subordinate Latin removal, chaining remap |
 | Same-tag features | 1 | JP-side `aalt` reachable from Latin LangSys |
 | Glyph names | 2 | post format 2.0, alternate glyph names |

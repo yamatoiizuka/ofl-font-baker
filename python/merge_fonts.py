@@ -1718,7 +1718,7 @@ GSUB_LATN_DEDUPE_TAGS = frozenset({'ccmp'})
 
 def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
                     jp_feat_index_map, lat_feat_index_map,
-                    lat_tag_to_indices, jp_feature_records):
+                    jp_feature_records, lat_feature_records):
     """Build a merged LangSys with correct feature references.
 
     Parameters:
@@ -1728,8 +1728,8 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
         table_tag: 'GSUB' or 'GPOS'
         jp_feat_index_map: old JP feature index -> new merged feature index
         lat_feat_index_map: old EN feature index -> new merged feature index
-        lat_tag_to_indices: EN feature tag -> list of merged feature indices
         jp_feature_records: JP FeatureList.FeatureRecord (for tag lookup)
+        lat_feature_records: EN FeatureList.FeatureRecord (for tag lookup)
     """
     from fontTools.ttLib.tables import otTables
 
@@ -1738,6 +1738,18 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
     new_lang_sys.LookupOrder = None
 
     feat_indices = []
+
+    # Tags that the Latin side actually contributes through *this* LangSys.
+    # The shadowing dedupe must compare per-LangSys, not table-globally:
+    # otherwise an explicit Latin script that the Latin font doesn't even
+    # define (e.g. `grek` when TikTok Sans has no Greek LangSys) would
+    # still drop JP-side features just because the tag exists somewhere
+    # else on the Latin side.
+    lat_tags_in_langsys = set()
+    if lat_lang_sys and lat_lang_sys.FeatureIndex:
+        for old_idx in lat_lang_sys.FeatureIndex:
+            if 0 <= old_idx < len(lat_feature_records):
+                lat_tags_in_langsys.add(lat_feature_records[old_idx].FeatureTag)
 
     if script_tag in CJK_SCRIPTS:
         # CJK script: use JP features only
@@ -1775,7 +1787,7 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
                     #     gravecomb → gravecomb.case rule never fires
                     #     when the JP-side ccmp is still present)
                     if script_tag in EXPLICIT_LATIN_SCRIPTS \
-                            and tag in lat_tag_to_indices:
+                            and tag in lat_tags_in_langsys:
                         if table_tag == 'GPOS' or (
                                 table_tag == 'GSUB'
                                 and tag in GSUB_LATN_DEDUPE_TAGS):
@@ -1910,11 +1922,6 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
     merged_feature_list.FeatureCount = len(all_features)
 
     # --- Step 4: Build merged ScriptList ---
-    # Build tag→indices mapping for EN features (used by _build_lang_sys)
-    lat_tag_to_indices = {}
-    for idx_offset, (tag, _, _) in enumerate(lat_features):
-        lat_tag_to_indices.setdefault(tag, []).append(len(jp_features) + idx_offset)
-
     # Collect all script tags from both fonts
     all_script_tags = set()
     jp_script_records = {}
@@ -1928,8 +1935,10 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
             all_script_tags.add(sr.ScriptTag)
             lat_script_records[sr.ScriptTag] = sr
 
-    # Capture JP feature records for _build_lang_sys tag lookups
+    # Capture feature records for _build_lang_sys tag lookups (per-LangSys
+    # dedupe needs the Latin records too).
     jp_feature_records = jp_ot.FeatureList.FeatureRecord if jp_ot.FeatureList else []
+    lat_feature_records = lat_ot.FeatureList.FeatureRecord if lat_ot.FeatureList else []
 
     # Build merged script records
     merged_script_records = []
@@ -1947,7 +1956,7 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
         new_sr.Script.DefaultLangSys = _build_lang_sys(
             jp_default, lat_default, script_tag, table_tag,
             jp_feat_index_map, lat_feat_index_map,
-            lat_tag_to_indices, jp_feature_records)
+            jp_feature_records, lat_feature_records)
 
         # Named LangSys records
         lang_sys_tags = set()
@@ -1971,7 +1980,7 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
                 lat_lang_map.get(lang_tag),
                 script_tag, table_tag,
                 jp_feat_index_map, lat_feat_index_map,
-                lat_tag_to_indices, jp_feature_records)
+                jp_feature_records, lat_feature_records)
             new_lang_records.append(new_lsr)
 
         new_sr.Script.LangSysRecord = new_lang_records if new_lang_records else []
