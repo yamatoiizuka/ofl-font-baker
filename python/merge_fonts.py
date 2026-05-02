@@ -1985,9 +1985,15 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
         for lang_tag in sorted(lang_sys_tags):
             new_lsr = otTables.LangSysRecord()
             new_lsr.LangSysTag = lang_tag
+            # If only one input defines a named LangSys, the other input's
+            # DefaultLangSys is still active for that language before merge.
+            # Preserve that effective feature set so the new named record does
+            # not shadow the missing side's default features.
+            jp_lang_sys = jp_lang_map.get(lang_tag, jp_default)
+            lat_lang_sys = lat_lang_map.get(lang_tag, lat_default)
             new_lsr.LangSys = _build_lang_sys(
-                jp_lang_map.get(lang_tag),
-                lat_lang_map.get(lang_tag),
+                jp_lang_sys,
+                lat_lang_sys,
                 script_tag, table_tag,
                 jp_feat_index_map, lat_feat_index_map,
                 jp_feature_records, lat_feature_records)

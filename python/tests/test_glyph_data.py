@@ -1728,6 +1728,78 @@ class TestSameTagFeatures:
 
 
 # ---------------------------------------------------------------------------
+# Named LangSys default fallback (Issue #12)
+# ---------------------------------------------------------------------------
+
+class TestNamedLangSysDefaultFallback:
+    """Named LangSys records must preserve the other side's default features.
+
+    If the merged font creates `latn/JAN` from the JP base but the Latin sub
+    font only has `latn/dflt`, HarfBuzz selects `latn/JAN` for Japanese text
+    and never consults `latn/dflt`. The named record therefore needs the
+    Latin default feature set folded in.
+    """
+
+    @staticmethod
+    def _gsub_feature_tags(font, script_tag, lang_sys_tag=None):
+        gsub = font["GSUB"].table
+        features = gsub.FeatureList.FeatureRecord
+        for sr in gsub.ScriptList.ScriptRecord:
+            if sr.ScriptTag != script_tag:
+                continue
+            if lang_sys_tag is None:
+                lang_sys = sr.Script.DefaultLangSys
+            else:
+                lang_sys = None
+                for lsr in (sr.Script.LangSysRecord or []):
+                    if lsr.LangSysTag == lang_sys_tag:
+                        lang_sys = lsr.LangSys
+                        break
+            if lang_sys is None:
+                pytest.fail(f"{script_tag}/{lang_sys_tag or 'dflt'} missing")
+            return {
+                features[i].FeatureTag
+                for i in (lang_sys.FeatureIndex or [])
+            }
+        pytest.fail(f"{script_tag} script missing")
+
+    def test_latn_jan_keeps_latin_default_features(self):
+        """Noto's `latn/JAN` must not shadow Inter's `latn/dflt` GSUB."""
+        m = _merge()
+        tags = self._gsub_feature_tags(m, "latn", "JAN ")
+
+        assert {"calt", "case", "frac", "tnum", "ss01", "zero"} <= tags
+        assert "locl" in tags
+
+    def test_latin_named_langsys_keeps_jp_default_features(self):
+        """The fallback is symmetric when only the Latin side has a locale."""
+        out = tempfile.mktemp(suffix=".ttf")
+        config = {
+            "subFont": {
+                "path": TIKTOK_SANS,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "baseFont": {
+                "path": JP_VAR,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "output": {"familyName": "TestNamedLangSys"},
+            "export": {"path": {"font": out}},
+        }
+        mf.merge_fonts(config)
+        m = TTFont(out)
+        os.remove(out)
+
+        tags = self._gsub_feature_tags(m, "latn", "CAT ")
+        assert "calt" in tags
+        assert "fwid" in tags
+
+
+# ---------------------------------------------------------------------------
 # maxp recalc after merge (Issue #2 #8)
 # ---------------------------------------------------------------------------
 
