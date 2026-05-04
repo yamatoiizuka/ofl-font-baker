@@ -160,6 +160,29 @@ Latin font's outline and spacing model, so JP-origin Latin-first kerning is
 treated as subordinate and discarded wholesale rather than partially kept
 for JP-only second glyphs.
 
+### Adobe-Compatible `kern` Feature Shape
+
+The merged GPOS `kern` feature intentionally follows the base font's source
+shape rather than keeping separate JP and Latin feature records. Noto Sans JP
+exposes one `kern` feature record across `DFLT` / `hani` / `kana` / `latn`;
+Adobe apps appear to rely on that shape for Japanese metrics kerning. If the
+merged font exposes duplicate `kern` records, or if `latn` only points at the
+Latin source's kern lookups, Illustrator can apply `palt` while ignoring CJK
+pair kerning such as `す。`.
+
+During GPOS merge, JP and Latin `kern` feature records are folded into one
+merged feature record. The JP/base PairPos lookup stays first and has already
+had Latin-first entries stripped, so CJK pairs keep the base font's values
+while Latin pairs fall through to the appended Latin lookups without stacking.
+Every script/LangSys that previously referenced either side's `kern` maps to
+that single merged record.
+
+After writing the font once, `_save_with_adobe_kern_compat` reloads the output
+and checks whether a non-Latin `kern` PairPos was hidden behind GPOS
+ExtensionPos (`LookupType 9`). If so, it disables fontTools' HarfBuzz repacker
+and saves again so the CJK PairPos remains a direct `LookupType 2`, matching
+the source font structure Adobe handles reliably.
+
 ### Latin Ligature Preservation
 
 Pan-CJK base fonts pack Latin-input ligatures into the same `dlig` / `liga`

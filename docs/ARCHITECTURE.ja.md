@@ -157,6 +157,29 @@ Latin で始まる merged slot は、すでに Latin フォントのアウトラ
 字幅モデルに置き換わっているため、JP 由来の Latin-first カーニングは
 一部だけ残さず従属データとしてまとめて捨てる。
 
+### Adobe 互換の `kern` feature 形状
+
+merged GPOS の `kern` feature は、JP と Latin の feature record を分けて
+残すのではなく、ベースフォントの元構造に寄せて 1 本化する。Noto Sans JP は
+`DFLT` / `hani` / `kana` / `latn` の各 script から同じ `kern` feature record
+を参照しており、Adobe アプリは日本語のメトリクスカーニングでこの形を前提に
+しているように見える。merged font に重複した `kern` record が残ったり、
+`latn` が Latin 側の kern lookup だけを指したりすると、Illustrator では
+`palt` は効くのに `す。` のような CJK ペアカーニングだけ無視されることがある。
+
+GPOS merge 時は、JP と Latin の `kern` feature record を 1 つの merged
+feature record に畳み込む。JP/base の PairPos lookup は先頭に残し、事前に
+Latin-first エントリを除去してあるため、CJK ペアはベースフォントの値を保ち、
+Latin ペアは後続の Latin lookup に fall through して積算なしで適用される。
+元々どちらかの `kern` を参照していた script/LangSys は、すべてこの 1 本の
+merged record を参照する。
+
+一度フォントを書き出したあと、`_save_with_adobe_kern_compat` は出力を読み戻し、
+非 Latin の `kern` PairPos が GPOS ExtensionPos (`LookupType 9`) の背後に
+隠れていないか確認する。該当する場合は fontTools の HarfBuzz repacker を
+無効にして再保存し、CJK PairPos を direct `LookupType 2` として維持する。
+これは Adobe が安定して処理できる元フォント側の構造に合わせるためである。
+
 ### 欧文リガチャの保持
 
 Pan-CJK ベース書体は `dlig` / `liga` の lookup に Latin 入力のリガチャ
