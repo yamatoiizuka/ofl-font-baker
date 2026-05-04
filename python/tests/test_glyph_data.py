@@ -971,16 +971,19 @@ class TestFeaturePreservation:
                                             f"Lookup {i}: nested chaining ref {slr.LookupListIndex} >= total {total}"
 
     def test_base_kern_preserved_in_dflt_script(self):
-        """CJK kern (e.g. す。) from base font is accessible from DFLT script."""
-        if not os.path.exists(JP_FULL_VAR):
-            pytest.skip("NotoSansJP-VariableFont_wght.ttf not found")
+        """CJK kern stays direct PairPos and accessible from DFLT script."""
+        if not os.path.exists(JP_FULL_VAR) or not os.path.exists(EN_FULL):
+            pytest.skip("Full Inter or Noto Sans JP variable fixture not found")
         out = tempfile.mktemp(suffix=".ttf")
         config = {
             "subFont": {
-                "path": EN_CFF,
+                "path": EN_FULL,
                 "scale": 1.0,
                 "baselineOffset": 0,
-                "axes": [],
+                "axes": [
+                    {"tag": "opsz", "currentValue": 14},
+                    {"tag": "wght", "currentValue": 400},
+                ],
             },
             "baseFont": {
                 "path": JP_FULL_VAR,
@@ -997,14 +1000,26 @@ class TestFeaturePreservation:
 
         gpos = font["GPOS"].table
 
-        # Find kern feature indices referenced by DFLT script
-        dflt_kern_feat_indices = set()
-        for sr in gpos.ScriptList.ScriptRecord:
-            if sr.ScriptTag == "DFLT" and sr.Script.DefaultLangSys:
-                for fi in sr.Script.DefaultLangSys.FeatureIndex:
-                    if gpos.FeatureList.FeatureRecord[fi].FeatureTag == "kern":
-                        dflt_kern_feat_indices.add(fi)
+        def kern_feature_indices(script_tag):
+            indices = set()
+            for sr in gpos.ScriptList.ScriptRecord:
+                if sr.ScriptTag == script_tag and sr.Script.DefaultLangSys:
+                    for fi in sr.Script.DefaultLangSys.FeatureIndex:
+                        if gpos.FeatureList.FeatureRecord[fi].FeatureTag == "kern":
+                            indices.add(fi)
+            return indices
+
+        # Match Noto's source shape: scripts share one kern feature record.
+        dflt_kern_feat_indices = kern_feature_indices("DFLT")
         assert dflt_kern_feat_indices, "DFLT script should have kern features"
+        assert len(dflt_kern_feat_indices) == 1, (
+            "DFLT should expose a single kern feature so Adobe apps do not "
+            f"skip the base CJK kern path: {dflt_kern_feat_indices}"
+        )
+        for script_tag in ("hani", "kana", "latn"):
+            assert kern_feature_indices(script_tag) == dflt_kern_feat_indices, (
+                f"{script_tag} should share the same merged kern feature as DFLT"
+            )
 
         # Collect all kern lookup indices reachable from DFLT
         dflt_kern_lookups = set()
@@ -1028,6 +1043,10 @@ class TestFeaturePreservation:
                     idx = st.Coverage.glyphs.index("uni3059")
                     for pvr in st.PairSet[idx].PairValueRecord:
                         if pvr.SecondGlyph == "uni3002":
+                            assert lookup.LookupType == 2, (
+                                "CJK kern PairPos should stay direct LookupType 2 "
+                                "for Adobe compatibility"
+                            )
                             assert pvr.Value1.XAdvance == -100
                             found = True
         assert found, "す。kern pair (XAdvance=-100) should be reachable from DFLT"

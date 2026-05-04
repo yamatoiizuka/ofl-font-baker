@@ -32,6 +32,7 @@ import sys
 
 from fontTools.misc.timeTools import timestampNow
 from fontTools.ttLib import TTFont
+from fontTools.ttLib.tables.otBase import USE_HARFBUZZ_REPACKER
 from fontTools.pens.pointPen import SegmentToPointPen
 from fontTools.pens.recordingPen import RecordingPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
@@ -45,6 +46,59 @@ def progress(stage: str, percent: int, message: str):
         "percent": percent,
         "message": message,
     }), file=sys.stderr, flush=True)
+
+
+def _disable_harfbuzz_repacker(font: TTFont):
+    """Keep final GSUB/GPOS serialization in fontTools' pure Python path.
+
+    hb.repack can preserve valid tables, but for large merged GPOS tables it
+    may emit CJK kern PairPos lookups behind ExtensionPos. Adobe apps appear
+    not to apply those CJK metrics kern pairs, so prefer direct PairPos output.
+    """
+    font.cfg[USE_HARFBUZZ_REPACKER] = False
+
+
+def _has_extension_non_latin_kern(font: TTFont, lat_glyph_names: set) -> bool:
+    """Return True when a saved font wraps non-Latin kern PairPos in ExtensionPos."""
+    gpos = font.get("GPOS")
+    if not gpos or not getattr(gpos, "table", None):
+        return False
+    table = gpos.table
+    if not table.LookupList or not table.FeatureList:
+        return False
+
+    for feature_record in table.FeatureList.FeatureRecord:
+        if feature_record.FeatureTag != "kern":
+            continue
+        for lookup_index in feature_record.Feature.LookupListIndex:
+            lookup = table.LookupList.Lookup[lookup_index]
+            if lookup.LookupType != 9:
+                continue
+            for subtable in lookup.SubTable:
+                if getattr(subtable, "ExtensionLookupType", None) != 2:
+                    continue
+                pairpos = getattr(subtable, "ExtSubTable", None)
+                coverage = getattr(pairpos, "Coverage", None)
+                glyphs = getattr(coverage, "glyphs", None) if coverage else None
+                if glyphs and any(g not in lat_glyph_names for g in glyphs):
+                    return True
+    return False
+
+
+def _save_with_adobe_kern_compat(font: TTFont, output_path: str,
+                                 lat_glyph_names: set):
+    """Save normally, then fall back only if hb.repack hides CJK kern."""
+    font.save(output_path)
+
+    saved = TTFont(output_path)
+    try:
+        needs_fallback = _has_extension_non_latin_kern(saved, lat_glyph_names)
+    finally:
+        saved.close()
+
+    if needs_fallback:
+        _disable_harfbuzz_repacker(font)
+        font.save(output_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1894,17 +1948,39 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
     # Collect JP features (with remapped lookup indices, dropping empty ones)
     jp_features = []  # list of (tag, Feature object, source='jp')
     jp_feat_index_map = {}  # old JP feature index → new merged feature index
+    merged_gpos_kern_index = None
+
+    def _merge_lookup_indices_into_feature(feature_index, lookup_indices):
+        if feature_index < len(jp_features):
+            feature = jp_features[feature_index][1].Feature
+        else:
+            feature = lat_features[feature_index - len(jp_features)][1].Feature
+        seen = set(feature.LookupListIndex or [])
+        for lookup_index in lookup_indices:
+            if lookup_index not in seen:
+                feature.LookupListIndex.append(lookup_index)
+                seen.add(lookup_index)
+        feature.LookupCount = len(feature.LookupListIndex)
+
     if jp_ot.FeatureList:
         for old_idx, feat_rec in enumerate(jp_ot.FeatureList.FeatureRecord):
             new_indices = [jp_remap[i] for i in feat_rec.Feature.LookupListIndex
                            if i in jp_remap]
             if new_indices:
+                if table_tag == 'GPOS' and feat_rec.FeatureTag == 'kern' \
+                        and merged_gpos_kern_index is not None:
+                    _merge_lookup_indices_into_feature(
+                        merged_gpos_kern_index, new_indices)
+                    jp_feat_index_map[old_idx] = merged_gpos_kern_index
+                    continue
                 new_feat = copy.deepcopy(feat_rec)
                 new_feat.Feature.LookupListIndex = new_indices
                 new_feat.Feature.LookupCount = len(new_indices)
                 new_merged_idx = len(jp_features)
                 jp_feat_index_map[old_idx] = new_merged_idx
                 jp_features.append((feat_rec.FeatureTag, new_feat, 'jp'))
+                if table_tag == 'GPOS' and feat_rec.FeatureTag == 'kern':
+                    merged_gpos_kern_index = new_merged_idx
 
     # Collect EN features (with offset lookup indices)
     lat_features = []  # list of (tag, Feature object, source='en')
@@ -1916,6 +1992,12 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
                 i + lat_offset for i in new_feat.Feature.LookupListIndex
             ]
             new_feat.Feature.LookupCount = len(new_feat.Feature.LookupListIndex)
+            if table_tag == 'GPOS' and feat_rec.FeatureTag == 'kern' \
+                    and merged_gpos_kern_index is not None:
+                _merge_lookup_indices_into_feature(
+                    merged_gpos_kern_index, new_feat.Feature.LookupListIndex)
+                lat_feat_index_map[old_idx] = merged_gpos_kern_index
+                continue
             # Mark this record so the later UINameID-collision remap in
             # reconcile_tables only touches Latin-derived FeatureParams,
             # not the base font's ones that happen to share a nameID value.
@@ -1923,6 +2005,8 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
             new_merged_idx = len(jp_features) + len(lat_features)
             lat_feat_index_map[old_idx] = new_merged_idx
             lat_features.append((feat_rec.FeatureTag, new_feat, 'en'))
+            if table_tag == 'GPOS' and feat_rec.FeatureTag == 'kern':
+                merged_gpos_kern_index = new_merged_idx
 
     # Merged feature list: JP features first, then EN features
     all_features = jp_features + lat_features
@@ -3408,7 +3492,12 @@ def merge_fonts(config: dict) -> str:
     # merge renumbered glyph IDs.
     _resort_lookup_coverages(merged)
 
-    merged.save(output_path)
+    output_lat_glyph_names = set()
+    if lat_font:
+        output_lat_glyph_names = {
+            lat_to_merged_name.get(g, g) for g in lat_font.getGlyphOrder()
+        }
+    _save_with_adobe_kern_compat(merged, output_path, output_lat_glyph_names)
 
     # Step 14: Write WOFF2
     woff2_out = paths.get("woff2")
