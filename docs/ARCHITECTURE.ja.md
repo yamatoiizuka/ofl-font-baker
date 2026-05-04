@@ -228,6 +228,9 @@ Latin script の LangSys を持たない場合（例: Latin サブが Greek 非�
 
 ### OFL メタデータ
 
+デフォルト（`output.metadataMode = "merge"` または未指定）では、出力を新しい
+派生著作物として扱う。識別系のレコードは `output.*` の値からすべて作り直す:
+
 - nameID 0 (Copyright): 両ソースの copyright を結合 + ユーザー追加
 - nameID 7 (Trademark): 両ソースの trademark を結合 + ユーザー追加。3 つとも空のときだけレコードを残さない
 - nameID 3 (Unique Font Identifier): `{version};{PostScript フルネーム}` を自動生成。派生フォントがベースフォントと同じ UniqueID を持たないようにして、OS のフォントキャッシュが別物として扱えるようにする。
@@ -242,6 +245,50 @@ Latin script の LangSys を持たない場合（例: Latin サブが Greek 非�
 - OS/2 `achVendID`: 常に半角スペース 4 つ（ベンダー不明）に固定。派生フォントがベースフォントの登録ベンダータグを引き継がないようにする。
 - CFF TopDict `FullName` / `FamilyName` / `Notice`: nameID 4 / 1 / 0 と同じ値をセット。PDF 埋め込みや Adobe 系ツールが CFF を直接読む際にベースフォント名が残らないようにする。
 - OS/2 `achVendID`: ユーザー設定の 4 文字タグ（短い場合は空白で右詰め）、空の場合は `"    "`（ベンダー不明）をセット
+
+### メタデータ継承モード（`output.metadataMode`）
+
+`output.metadataMode` で識別レコードのポリシーを切り替えられる:
+
+| 値 | 挙動 |
+|---|---|
+| 未指定 / `null` / `"merge"` | デフォルト。識別レコードを派生著作物として作り直す（上記）。 |
+| `"inheritBase"` | base フォントの識別レコードをそのまま流用し、ユーザーが `output.*` で明示的に指定したフィールドだけ上書きする。 |
+| `"inheritSub"` | 同様だが、識別を sub フォントから取る（`subFont` がない場合はエラー）。 |
+
+中間生成物（さらに別パイプラインに渡すために、ベースに対してグリフだけ
+焼き込みたい場合など）や、派生として再宣言したくないマージ（例: `Noto
+Hentaigana` のグリフを `Noto Sans JP` に取り込みつつ、結果を Noto Sans JP
+として識別させたい場合）に有用。
+
+継承モードでは以下の処理を **行わない**:
+
+- nameID 13 / 14 を OFL の正規テキストで上書きする
+- nameID 9 / 12（designer）をクリアする
+- `OS/2.achVendID` を半角スペース 4 つに固定する
+- `head.created` / `head.modified` をマージ実行時刻で上書きする
+- nameID 25（Variations PS Prefix）を削除する
+- nameID 5 に `;ofl-font-baker {appVersion}` を追記する
+
+`output.*` で値が指定された場合は、その項目だけ継承元を上書きする:
+
+- `familyName` / `postScriptName` は nameID 1 / 4 / 6 / 16 を再合成する。style 部分は継承元の現値を使う。
+- `weight` / `italic` / `width` は nameID 2 / 4 / 6 / 17 と `OS/2`、`head.macStyle` のビットを再計算する。指定されなかった項目は継承元の `OS/2` から拾い、`400 / 非イタリック / 標準幅` のデフォルトには戻さない。
+- `version` は nameID 5 と `head.fontRevision` を上書き。
+- `copyright` / `trademark` / `manufacturer` / `manufacturerURL` は対応する nameID を **完全に上書き**する（merge モードのような結合は行わない）。
+- CFF TopDict `FullName` / `FamilyName` / `Notice` は、上書きで識別が変わったとき、または sub から継承するときに、最終的な name レコードに同期する。
+- nameID 3（Unique Font Identifier）は、上記の識別系オーバーライド（`familyName` / `postScriptName` / `weight` / `italic` / `width` / `version`）が **指定されたとき**、新しい name 5 / 6 から `{version};{PostScript フルネーム}` で再生成する。何も指定しないピュアなパススルー時は継承元の UID をそのまま残す。
+
+各上書きは `progress("info", ...)` で `[metadata] override
+familyName='...'` のような 1 行をログに出すので、ビルドログから何が
+書き換えられたか追跡できる。
+
+`inheritBase` で出力したフォントは、グリフや feature が混ざっているにも
+かかわらず name table 上ではベースフォントとして名乗ることになる。これを
+そのまま「ベースフォント」として配布すると誤認を招くので、継承モードは
+中間生成物・社内パイプライン・派生だと承知の上での拡張リリース、といった
+用途を想定している（OFL §1 上は name table が何と書いていても派生著作物
+であることに変わりはない）。
 
 ## 状態管理 (Zustand)
 

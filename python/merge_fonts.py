@@ -440,7 +440,7 @@ def build_export_config(config: dict, path_map: dict = None) -> dict:
     output = config.get("output") or {}
     for field in ("familyName", "postScriptName", "version", "weight", "italic",
                   "width", "manufacturer", "manufacturerURL",
-                  "copyright", "trademark", "upm"):
+                  "copyright", "trademark", "upm", "metadataMode"):
         val = output.get(field)
         if val is not None:
             result.setdefault("output", {})[field] = val
@@ -2224,6 +2224,39 @@ _OFL_LICENSE_TEXT = (
 )
 _OFL_LICENSE_URL = "https://openfontlicense.org"
 
+# nameIDs reserved for predefined identity records. Records >= 256 are
+# user-defined slots used by Stylistic Set / Character Variant labels and
+# must never be touched by the identity-pass-through logic — they belong
+# to the feature label remapping path (see lat_name handling below).
+_IDENTITY_NAMEID_LIMIT = 256
+
+# Triple of OS/2 / head fields that together define the static style
+# identity (weight class, italic bit, width class). Touched as a unit so
+# nameID 2 / 4 / 6 / 17 stay internally consistent.
+_VALID_METADATA_MODES = ("merge", "inheritBase", "inheritSub")
+
+
+def _resolve_metadata_mode(output: dict, has_sub_font: bool) -> str:
+    """Validate and normalise ``output.metadataMode``.
+
+    Returns one of ``"merge"`` / ``"inheritBase"`` / ``"inheritSub"``.
+    Missing, ``None``, or ``"merge"`` collapse to ``"merge"``. Other
+    values raise. ``"inheritSub"`` requires a sub font.
+    """
+    raw = output.get("metadataMode")
+    if raw is None or raw == "merge":
+        return "merge"
+    if raw not in _VALID_METADATA_MODES:
+        raise ValueError(
+            f"output.metadataMode must be one of {_VALID_METADATA_MODES} "
+            f"or null, got {raw!r}"
+        )
+    if raw == "inheritSub" and not has_sub_font:
+        raise ValueError(
+            "output.metadataMode='inheritSub' requires a subFont"
+        )
+    return raw
+
 
 def _get_name(font: "TTFont", nameID: int) -> str:
     """Return the best available string for *nameID*, or ''."""
@@ -2241,6 +2274,18 @@ def _set_name(name_table, nameID: int, value: str):
         name_table.setName(value, nameID, 1, 0, 0)    # Macintosh, Roman, English
     except UnicodeEncodeError:
         pass  # Skip Mac-Roman if value contains non-encodable characters
+
+
+def _override_name(name_table, nameID: int, value: str):
+    """Replace all records for *nameID* with *value*, or remove if empty.
+
+    Inherit mode uses this so user overrides cleanly displace whatever
+    platform/encoding/language combinations the source font already had,
+    instead of leaving stale Mac-Japanese / Unicode-only records behind.
+    """
+    name_table.removeNames(nameID=nameID)
+    if value:
+        _set_name(name_table, nameID, value)
 
 
 def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
@@ -2342,11 +2387,25 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
 
 
 # ---------------------------------------------------------------------------
-# Table reconciliation
+# Identity passes (merge-mode default vs. inherit-mode pass-through)
 # ---------------------------------------------------------------------------
 
-def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: dict):
-    """Reconcile name, OS/2, hhea, head tables after merge."""
+# OS/2 fsSelection bit 0 = ITALIC, bit 6 = REGULAR.
+_FS_SELECTION_ITALIC = 0x0001
+_FS_SELECTION_REGULAR = 0x0040
+# head.macStyle bit 1 = italic.
+_MAC_STYLE_ITALIC = 0x0002
+
+
+def _apply_derivative_metadata(lat_font, jp_font, merged, config: dict):
+    """Rewrite identity records as a derivative work (merge mode).
+
+    This is the historical Font-Baker identity pipeline: nameID 1/2/3/4/6/16/17
+    are recomposed from ``output.familyName`` + ``output.weight/italic/width``,
+    OS/2 / head are forced to derivative defaults, OFL nameID 13/14 are pinned
+    to the canonical OFL text, and ``head.created/modified`` are refreshed to
+    "now" so the derivative reports its own provenance.
+    """
     output = config.get("output") or {}
     output_name = output.get("familyName", "Merged Font")
 
@@ -2388,27 +2447,7 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     output_italic = output.get("italic", False)
     output_width = output.get("width", 5)
 
-    WEIGHT_NAMES = {
-        100: "Thin", 200: "ExtraLight", 300: "Light", 400: "Regular",
-        500: "Medium", 600: "SemiBold", 700: "Bold", 800: "ExtraBold",
-        900: "Black",
-    }
-    WIDTH_NAMES = {
-        2: "Compressed", 3: "Condensed", 4: "Narrow",
-        5: "", 6: "Wide", 7: "Extended",
-    }
-
-    weight_name = WEIGHT_NAMES.get(output_weight, "Regular")
-    width_name = WIDTH_NAMES.get(output_width, "")
-
-    # Compute full style name: "[Width] WeightName [Italic]"
-    parts = []
-    if width_name:
-        parts.append(width_name)
-    parts.append(weight_name)
-    if output_italic:
-        parts.append("Italic")
-    style_name = " ".join(parts)
+    style_name = compute_style_name(output_weight, output_italic, output_width)
 
     # Set OS/2 usWeightClass and usWidthClass
     os2 = merged.get("OS/2")
@@ -2426,9 +2465,9 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     head = merged.get("head")
     if head:
         if output_italic:
-            head.macStyle |= 0x0002   # bit 1 = italic
+            head.macStyle |= _MAC_STYLE_ITALIC
         else:
-            head.macStyle &= ~0x0002
+            head.macStyle &= ~_MAC_STYLE_ITALIC
         now = timestampNow()
         head.created = now
         head.modified = now
@@ -2443,17 +2482,13 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
         # "1.000-beta" or "Version 2.5" collapse to the numeric prefix
         # (1.0 / 2.5). Anything that doesn't start with a number falls
         # back to the 1.000 default.
-        version_raw = (output.get("version") or "").strip() or "1.000"
-        if version_raw.lower().startswith("version "):
-            version_raw = version_raw[len("Version "):].strip()
-        m = re.match(r"^\d+(?:\.\d+)?", version_raw)
-        head.fontRevision = float(m.group(0)) if m else 1.0
+        head.fontRevision = _parse_font_revision(output.get("version"))
     if os2:
         if output_italic:
-            os2.fsSelection |= 0x0001   # bit 0 = italic
-            os2.fsSelection &= ~0x0040  # clear REGULAR
+            os2.fsSelection |= _FS_SELECTION_ITALIC
+            os2.fsSelection &= ~_FS_SELECTION_REGULAR
         else:
-            os2.fsSelection &= ~0x0001
+            os2.fsSelection &= ~_FS_SELECTION_ITALIC
 
     # Update name table style entries
     for record in name_table.names:
@@ -2520,6 +2555,305 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
         ps_full = _get_name(merged, 6)
         if ps_full and cff.fontNames:
             cff.fontNames[0] = ps_full
+
+
+def _parse_font_revision(version_raw) -> float:
+    """Extract a Fixed 16.16-friendly float from an output.version string."""
+    raw = (version_raw or "").strip() or "1.000"
+    if raw.lower().startswith("version "):
+        raw = raw[len("Version "):].strip()
+    m = re.match(r"^\d+(?:\.\d+)?", raw)
+    return float(m.group(0)) if m else 1.0
+
+
+def _swap_identity_records_to_sub(merged: TTFont, sub_font: TTFont):
+    """Replace merged's identity name records (nameID < 256) with sub's.
+
+    Merged's name table arrives as a clone of base, so this is the only
+    way to make ``inheritSub`` actually identify as the sub font. Records
+    >= 256 (feature labels) are kept untouched on both sides — they are
+    handled by the lat_name copy pass downstream.
+    """
+    name_table = merged["name"]
+    sub_name = sub_font.get("name")
+    if sub_name is None:
+        return
+    name_table.names = [
+        r for r in name_table.names if r.nameID >= _IDENTITY_NAMEID_LIMIT
+    ]
+    for record in sub_name.names:
+        if record.nameID < _IDENTITY_NAMEID_LIMIT:
+            name_table.names.append(copy.deepcopy(record))
+
+    # Mirror sub's identity slice of OS/2 / head into merged. Only the
+    # fields that name a *style identity* are copied — vertical metrics
+    # are reconciled separately in reconcile_tables based on glyph extent.
+    sub_os2 = sub_font.get("OS/2")
+    merged_os2 = merged.get("OS/2")
+    if sub_os2 and merged_os2:
+        merged_os2.usWeightClass = sub_os2.usWeightClass
+        merged_os2.usWidthClass = sub_os2.usWidthClass
+        # Preserve only the italic+regular bits from sub — other fsSelection
+        # bits encode unrelated state that merged may have set already.
+        sub_italic_bits = sub_os2.fsSelection & (
+            _FS_SELECTION_ITALIC | _FS_SELECTION_REGULAR
+        )
+        merged_os2.fsSelection = (
+            merged_os2.fsSelection
+            & ~(_FS_SELECTION_ITALIC | _FS_SELECTION_REGULAR)
+            | sub_italic_bits
+        )
+        merged_os2.achVendID = sub_os2.achVendID
+
+    sub_head = sub_font.get("head")
+    merged_head = merged.get("head")
+    if sub_head and merged_head:
+        # macStyle italic bit only; bold bit (0x0001) follows weight class
+        # and we don't want to leak unrelated bits like underline (0x0008).
+        merged_head.macStyle = (
+            merged_head.macStyle & ~_MAC_STYLE_ITALIC
+            | (sub_head.macStyle & _MAC_STYLE_ITALIC)
+        )
+        merged_head.fontRevision = sub_head.fontRevision
+        merged_head.created = sub_head.created
+        merged_head.modified = sub_head.modified
+
+
+def _apply_inherited_metadata(lat_font, jp_font, merged, config: dict, mode: str):
+    """Pass identity through from the chosen source, then apply explicit overrides.
+
+    ``mode`` is ``"inheritBase"`` or ``"inheritSub"``. The merged font's name
+    table arrives as a clone of base, so ``inheritBase`` is the no-op case
+    (any ``output.*`` overrides are layered on base's records); ``inheritSub``
+    first swaps identity records over from sub, then applies overrides.
+
+    In contrast to merge mode, OFL nameID 13 / 14 are *not* forced, designer
+    9 / 12 are *not* cleared, ``achVendID`` is *not* zeroed, ``head.created/
+    modified`` are *not* refreshed, nameID 25 is *not* stripped, and
+    ``;ofl-font-baker`` is *not* appended to the version string. The output
+    keeps whatever provenance the source font carried.
+    """
+    output = config.get("output") or {}
+    name_table = merged["name"]
+
+    if mode == "inheritSub":
+        if lat_font is None:
+            # Defensive: should already be caught by _resolve_metadata_mode.
+            raise ValueError(
+                "output.metadataMode='inheritSub' requires a subFont"
+            )
+        _swap_identity_records_to_sub(merged, lat_font)
+
+    # fontTools' TTFont save() defaults to recalcTimestamp=True, which would
+    # bump head.modified to "now" — defeating the inherit-mode promise that
+    # the source font's timestamps survive into the output.
+    merged.recalcTimestamp = False
+
+    progress(
+        "info", 0,
+        f"[metadata] mode={mode}; identity inherited from "
+        f"{'sub' if mode == 'inheritSub' else 'base'}"
+    )
+
+    # Snapshot post-swap state — these are the values to fall back to
+    # when a particular output.* override is absent.
+    os2 = merged.get("OS/2")
+    head = merged.get("head")
+    cur_family = _get_name(merged, 1)
+    cur_ps_full = _get_name(merged, 6)
+    # nameID 6 is conventionally "<PSBase>-<PSStyle>"; use the prefix as
+    # the PS base when the user only renames family without supplying a
+    # postScriptName. If there is no hyphen we treat the whole thing as
+    # the base.
+    cur_ps_base = cur_ps_full.split("-", 1)[0] if "-" in cur_ps_full else cur_ps_full
+    cur_subfamily = _get_name(merged, 2) or "Regular"
+    cur_weight = os2.usWeightClass if os2 else 400
+    cur_italic = bool(os2.fsSelection & _FS_SELECTION_ITALIC) if os2 else False
+    cur_width = os2.usWidthClass if os2 else 5
+
+    family_specified = "familyName" in output
+    psname_specified = "postScriptName" in output
+    weight_specified = "weight" in output
+    italic_specified = "italic" in output
+    width_specified = "width" in output
+    style_changed = weight_specified or italic_specified or width_specified
+    name_changed = family_specified or psname_specified or style_changed
+
+    new_family = output.get("familyName") if family_specified else cur_family
+    new_ps_base = (output.get("postScriptName") or "").strip() if psname_specified else ""
+    if not new_ps_base:
+        new_ps_base = (
+            sanitize_postscript_name(new_family) if family_specified else cur_ps_base
+        )
+    if name_changed:
+        validate_postscript_name(new_ps_base)
+
+    new_weight = output.get("weight", cur_weight)
+    new_italic = output.get("italic", cur_italic)
+    new_width = output.get("width", cur_width)
+    new_style = (
+        compute_style_name(new_weight, new_italic, new_width)
+        if style_changed else cur_subfamily
+    )
+
+    overrides: list[str] = []
+
+    # nameID 1 / 16 (family) -----------------------------------------------
+    if family_specified:
+        _override_name(name_table, 1, new_family)
+        # nameID 16 is only required when nameID 1 cannot represent the
+        # full family naming (non-RIBBI subfamilies). Update it only when
+        # the source already carried one — adding a fresh nameID 16 in
+        # pure pass-through would change identity beyond the user's intent.
+        if any(r.nameID == 16 for r in name_table.names):
+            _override_name(name_table, 16, new_family)
+        overrides.append(f"familyName={new_family!r}")
+
+    # nameID 2 / 17 (subfamily) --------------------------------------------
+    if style_changed:
+        _override_name(name_table, 2, new_style)
+        if any(r.nameID == 17 for r in name_table.names):
+            _override_name(name_table, 17, new_style)
+
+    # nameID 4 / 6 (full name + PostScript name) ---------------------------
+    # These are composite records: any change to family OR style requires
+    # re-composition so the parts stay in sync.
+    if name_changed:
+        family_for_full = new_family if family_specified else cur_family
+        style_for_full = new_style if style_changed else cur_subfamily
+        full_name = f"{family_for_full} {style_for_full}".strip()
+        _override_name(name_table, 4, full_name)
+        ps_base_for_id = new_ps_base if (family_specified or psname_specified) else cur_ps_base
+        ps_style = (style_for_full or "Regular").replace(" ", "") or "Regular"
+        _override_name(name_table, 6, f"{ps_base_for_id}-{ps_style}")
+        if psname_specified:
+            overrides.append(f"postScriptName={new_ps_base!r}")
+
+    # OS/2 numeric style fields -------------------------------------------
+    if os2:
+        if weight_specified:
+            os2.usWeightClass = new_weight
+            overrides.append(f"weight={new_weight}")
+        if width_specified:
+            os2.usWidthClass = new_width
+            overrides.append(f"width={new_width}")
+        if italic_specified:
+            if new_italic:
+                os2.fsSelection |= _FS_SELECTION_ITALIC
+                os2.fsSelection &= ~_FS_SELECTION_REGULAR
+            else:
+                os2.fsSelection &= ~_FS_SELECTION_ITALIC
+            overrides.append(f"italic={new_italic}")
+
+    # head.macStyle italic bit + fontRevision -----------------------------
+    if head and italic_specified:
+        if new_italic:
+            head.macStyle |= _MAC_STYLE_ITALIC
+        else:
+            head.macStyle &= ~_MAC_STYLE_ITALIC
+
+    # nameID 5 (version) + head.fontRevision ------------------------------
+    version_specified = "version" in output
+    if version_specified:
+        version_value = (output.get("version") or "").strip() or "1.000"
+        if not version_value.lower().startswith("version "):
+            version_value = f"Version {version_value}"
+        # Note: ;ofl-font-baker suffix is intentionally NOT appended in
+        # inherit mode. This matches the "pass-through" intent — the
+        # output should not announce Font Baker as a producer of fonts
+        # whose metadata claims to be the unmodified base/sub font.
+        _override_name(name_table, 5, version_value)
+        if head:
+            head.fontRevision = _parse_font_revision(output.get("version"))
+        overrides.append(f"version={version_value!r}")
+
+    # nameID 3 (Unique Font Identifier) -----------------------------------
+    # Cache identity must track family / style / version. Pure pass-through
+    # leaves nameID 3 alone — but as soon as any of those identity inputs
+    # is overridden, the inherited UID would conflict with the new name
+    # records and the OS font cache would render derivatives with the
+    # source font's stale glyphs.
+    if name_changed or version_specified:
+        version_for_id = _get_name(merged, 5) or "1.000"
+        if version_for_id.lower().startswith("version "):
+            version_for_id = version_for_id[len("Version "):].strip()
+        ps_full_name = _get_name(merged, 6)
+        if ps_full_name:
+            _override_name(name_table, 3, f"{version_for_id};{ps_full_name}")
+
+    # Simple-overwrite text fields ----------------------------------------
+    for key, name_id in (
+        ("copyright", 0),
+        ("trademark", 7),
+        ("manufacturer", 8),
+        ("manufacturerURL", 11),
+    ):
+        if key in output:
+            value = (output.get(key) or "").strip()
+            _override_name(name_table, name_id, value)
+            overrides.append(f"{key}={value!r}")
+
+    # CFF TopDict identity sync -------------------------------------------
+    # When base is CFF and inheriting from sub, merged's CFF TopDict still
+    # carries base's name — PDF embedders read it directly, so inheritSub
+    # would otherwise leak base's identity through the CFF side.
+    # When merge-style overrides happened (family / style / copyright),
+    # the same fields need to be mirrored into the TopDict for consistency.
+    cff_sync_needed = (
+        mode == "inheritSub" or name_changed or "copyright" in output
+    )
+    if cff_sync_needed and "CFF " in merged:
+        cff = merged["CFF "].cff
+        td = cff.topDictIndex[0]
+        full_name = _get_name(merged, 4)
+        family_name = _get_name(merged, 1)
+        cff_copyright = _get_name(merged, 0)
+        if full_name:
+            td.FullName = full_name
+        if family_name:
+            td.FamilyName = family_name
+        if cff_copyright:
+            td.Notice = cff_copyright
+            if hasattr(td, "Copyright"):
+                td.Copyright = cff_copyright
+        ps_full = _get_name(merged, 6)
+        if ps_full and cff.fontNames:
+            cff.fontNames[0] = ps_full
+
+    for ov in overrides:
+        progress("info", 0, f"[metadata] override {ov}")
+
+
+# ---------------------------------------------------------------------------
+# Table reconciliation
+# ---------------------------------------------------------------------------
+
+def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: dict):
+    """Reconcile name, OS/2, hhea, head tables after merge.
+
+    Identity records (nameID 0-25, OS/2 weight/width/fsSelection, head
+    macStyle/fontRevision/timestamps, CFF TopDict identity) are handled
+    differently per ``output.metadataMode``:
+
+      * ``merge``        — derivative defaults, with user-supplied
+                           ``output.*`` values overlaid (current behavior).
+      * ``inheritBase``  — keep base font's identity untouched, only
+                           rewrite the records the user explicitly set.
+      * ``inheritSub``   — copy sub font's identity into the merged font,
+                           then apply user overrides on top.
+
+    Vertical metrics, feature-label name records (nameID >= 256), DSIG
+    removal, and post-table fix-up are unconditional — they affect
+    correctness of the merged font, not its identity.
+    """
+    output = config.get("output") or {}
+    metadata_mode = _resolve_metadata_mode(output, lat_font is not None)
+    name_table = merged["name"]
+
+    if metadata_mode == "merge":
+        _apply_derivative_metadata(lat_font, jp_font, merged, config)
+    else:
+        _apply_inherited_metadata(lat_font, jp_font, merged, config, metadata_mode)
 
     # --- Copy feature name records from Latin font ---
     lat_name = lat_font.get("name") if lat_font else None
@@ -2792,6 +3126,10 @@ def merge_fonts(config: dict) -> str:
     if "woff2" in paths and "font" not in paths:
         raise ValueError("export.path.woff2 requires export.path.font")
     output_path = paths["font"]
+
+    # Validate metadataMode up-front so a typo or a missing subFont fails
+    # before we spend time loading and merging glyphs.
+    _resolve_metadata_mode(output, lat_cfg is not None)
 
     S = 5
 

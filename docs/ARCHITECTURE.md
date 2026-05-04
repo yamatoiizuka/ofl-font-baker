@@ -232,6 +232,10 @@ sub doesn't ship Greek), the JP-side `ccmp` for that script stays put
 
 ### OFL Metadata
 
+The default mode (`output.metadataMode = "merge"` or absent) treats the
+output as a fresh derivative work. Identity records are rebuilt from the
+user's `output.*` fields:
+
 - nameID 0 (Copyright): concatenate both sources' copyright + user addition
 - nameID 7 (Trademark): concatenate both sources' trademark + user addition; record is cleared only when all three are empty
 - nameID 3 (Unique Font Identifier): auto-built as `{version};{PostScript full name}`. Ensures OS font caches treat distinct versions/styles as separate entries so derivatives don't collide with their base font.
@@ -246,6 +250,51 @@ sub doesn't ship Greek), the JP-side `ccmp` for that script stays put
 - OS/2 `achVendID`: fixed to four spaces (unknown vendor) so the derivative doesn't claim the base font's registered tag.
 - CFF TopDict `FullName` / `FamilyName` / `Notice`: mirror nameID 4 / 1 / 0 so PDF embedders and Adobe tools see the derivative's name, not the base font's, when reading CFF directly.
 - OS/2 `achVendID`: user-specified 4-char tag (right-padded with spaces); defaults to `"    "` (unknown vendor) when empty
+
+### Inherit modes (`output.metadataMode`)
+
+`output.metadataMode` selects the identity policy for the merged font:
+
+| Value | Behavior |
+|---|---|
+| absent / `null` / `"merge"` | Default. Identity records are rebuilt as a derivative (see above). |
+| `"inheritBase"` | Pass base's identity records through untouched. Apply only the explicit `output.*` fields the user supplied as overrides. |
+| `"inheritSub"` | Same, but identity is copied from the sub font (errors if `subFont` is absent). |
+
+Inherit modes are useful when the merged font is an intermediate
+artifact (e.g. baking glyphs into a base font for further processing) or
+when the merge should not announce itself as a new derivative — for
+example, adding `Noto Hentaigana` glyphs into `Noto Sans JP` while
+keeping the result identifiable as Noto Sans JP.
+
+In inherit modes, the merge engine does **not**:
+
+- force OFL canonical text on nameID 13 / 14
+- clear designer (nameID 9 / 12)
+- set `OS/2.achVendID` to four spaces
+- refresh `head.created` / `head.modified` to the merge time
+- strip nameID 25 (Variations PS Prefix)
+- append `;ofl-font-baker {appVersion}` to nameID 5
+
+When an `output.*` field IS specified in inherit mode, it overrides the
+inherited value:
+
+- `familyName` / `postScriptName` recompose nameID 1 / 4 / 6 / 16, keeping the source font's existing style suffix.
+- `weight` / `italic` / `width` recompose nameID 2 / 4 / 6 / 17 and the corresponding `OS/2` and `head.macStyle` bits. Unspecified style fields fall back to the source font's `OS/2` values, not to `400 / non-italic / normal`.
+- `version` overwrites nameID 5 and sets `head.fontRevision`.
+- `copyright` / `trademark` / `manufacturer` / `manufacturerURL` overwrite the corresponding nameID — they are NOT concatenated with the source's value.
+- CFF TopDict `FullName` / `FamilyName` / `Notice` are mirrored to the resulting name records when CFF identity needs to track an override or when inheriting from sub.
+- nameID 3 (Unique Font Identifier) is **recomputed** as `{version};{PostScript full name}` whenever any of the above identity overrides (`familyName` / `postScriptName` / `weight` / `italic` / `width` / `version`) is supplied. Pure pass-through (no overrides) leaves nameID 3 untouched so the inherited UID survives.
+
+Each override emits a `progress("info", ...)` line (`[metadata] override
+familyName='...'`) so the build log shows which fields were modified.
+
+Note that `inheritBase` produces a font whose name table claims to be
+the unmodified base font even though glyphs and features have been
+merged in. Distributing such a font as the base font is misleading; the
+inherit modes are intended for intermediate artifacts, in-house
+pipelines, or knowingly-extended releases (per OFL §1, the result is
+still a derivative work even when its name table doesn't say so).
 
 ## State Management (Zustand)
 

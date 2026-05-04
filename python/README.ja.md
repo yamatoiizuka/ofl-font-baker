@@ -113,6 +113,7 @@ cat config.json | python3 merge_fonts.py
 | `copyright`       | `""`         | ソースのコピーライトに追加されるコピーライト文字列。                                                                                                                            |
 | `trademark`       | `""`         | ソースの商標に追加される商標文字列。                                                                                                                                            |
 | `metricsSource`   | `"base"`     | 垂直メトリクス（OS/2, hhea）の参照元。`"base"` はベースフォントのメトリクスを維持し、サブフォントの方が大きい場合のみ拡張する。`"sub"` はサブフォントのメトリクスで上書きする。 |
+| `metadataMode`    | `"merge"`    | 識別レコードのポリシー。`"merge"`（`null` または未指定も同義）は name / OS/2 / head の識別レコードを派生著作物として書き直す（現行のデフォルト）。`"inheritBase"` は base フォントの識別をそのまま流用、`"inheritSub"` は sub フォントの識別を流用する（`subFont` がなければエラー）。`output.*` で明示的に指定したフィールドだけが継承元を上書きし、OFL nameID 13/14・designer・vendor ID・`head.created/modified` などは触らない。中間生成物や、新しい派生として再宣言したくないマージ（例：`Noto Hentaigana` のグリフを `Noto Sans JP` に取り込みたい場合）に有用。 |
 
 ### `export.path`
 

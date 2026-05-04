@@ -7,7 +7,7 @@ import pytest
 
 from fontTools.ttLib import TTFont
 
-from conftest import EN_CFF_FULL, JP_VAR, _merge, _merge_with_meta
+from conftest import EN_CFF_FULL, EN_VAR, JP_VAR, _merge, _merge_with_meta
 
 import merge_fonts as mf
 
@@ -494,6 +494,347 @@ class TestBuildSettingsText:
         assert "[Sub Font]" in text
 
 
+
+
+# ---------------------------------------------------------------------------
+# metadataMode: inheritBase / inheritSub
+# ---------------------------------------------------------------------------
+
+
+def _merge_inherit(mode, output_extra=None, with_sub=True, return_path=False):
+    """Run a merge with output.metadataMode={mode} and optional overrides."""
+    out = tempfile.mktemp(suffix=".ttf")
+    output = {"metadataMode": mode}
+    if output_extra:
+        output.update(output_extra)
+    config = {
+        "baseFont": {
+            "path": JP_VAR,
+            "scale": 1.0,
+            "baselineOffset": 0,
+            "axes": [{"tag": "wght", "currentValue": 400}],
+        },
+        "output": output,
+        "export": {"path": {"font": out}},
+    }
+    if with_sub:
+        config["subFont"] = {
+            "path": EN_VAR,
+            "scale": 1.0,
+            "baselineOffset": 0,
+            "axes": [
+                {"tag": "opsz", "currentValue": 14},
+                {"tag": "wght", "currentValue": 400},
+            ],
+        }
+    mf.merge_fonts(config)
+    if return_path:
+        return out
+    font = TTFont(out)
+    for f in (out, out.replace(".ttf", ".woff2")):
+        if os.path.exists(f):
+            os.remove(f)
+    return font
+
+
+class TestMetadataModeValidation:
+    """Validation of output.metadataMode."""
+
+    def test_unknown_value_raises(self):
+        with pytest.raises(ValueError, match="metadataMode"):
+            _merge_inherit("bogus")
+
+    def test_inherit_sub_without_sub_raises(self):
+        with pytest.raises(ValueError, match="requires a subFont"):
+            _merge_inherit("inheritSub", with_sub=False)
+
+    def test_null_treated_as_merge(self):
+        """metadataMode=null collapses to merge mode."""
+        # Null falls through to merge, which forces familyName="Merged Font"
+        # default and clears designer. Smoke-check that it runs.
+        m = _merge_inherit(None, output_extra={"familyName": "MergedNull"})
+        assert m["name"].getDebugName(1) == "MergedNull"
+
+
+class TestInheritBase:
+    """inheritBase: pass identity through from the base font."""
+
+    def test_family_name_inherited_from_base(self):
+        """No familyName override → nameID 1 keeps base's family."""
+        base = TTFont(JP_VAR)
+        base_family = base["name"].getDebugName(1)
+        m = _merge_inherit("inheritBase")
+        assert m["name"].getDebugName(1) == base_family
+
+    def test_copyright_inherited_from_base(self):
+        """No copyright override → nameID 0 keeps base's copyright (no merging from sub)."""
+        base = TTFont(JP_VAR)
+        base_copy = base["name"].getDebugName(0)
+        m = _merge_inherit("inheritBase")
+        assert m["name"].getDebugName(0) == base_copy
+
+    def test_designer_not_cleared(self):
+        """inherit mode does NOT clear nameID 9 — base's designer survives."""
+        base = TTFont(JP_VAR)
+        base_designer = base["name"].getDebugName(9)
+        m = _merge_inherit("inheritBase")
+        if base_designer:
+            assert m["name"].getDebugName(9) == base_designer
+
+    def test_license_not_forced_to_ofl_canonical(self):
+        """inherit mode does NOT overwrite nameID 13 with the canonical OFL text."""
+        base = TTFont(JP_VAR)
+        base_license = base["name"].getDebugName(13)
+        m = _merge_inherit("inheritBase")
+        # The license string should be byte-identical to base, even if it
+        # differs from the canonical merge-mode license text.
+        if base_license is not None:
+            assert m["name"].getDebugName(13) == base_license
+
+    def test_head_timestamps_not_refreshed(self):
+        """inherit mode keeps head.created/modified from the base font."""
+        base = TTFont(JP_VAR)
+        m = _merge_inherit("inheritBase")
+        assert m["head"].created == base["head"].created
+        assert m["head"].modified == base["head"].modified
+
+    def test_version_not_modified_when_unspecified(self):
+        """inherit mode without version override keeps base's nameID 5."""
+        base = TTFont(JP_VAR)
+        base_version = base["name"].getDebugName(5)
+        m = _merge_inherit("inheritBase")
+        assert m["name"].getDebugName(5) == base_version
+
+    def test_version_no_ofl_baker_suffix_in_inherit(self):
+        """inherit mode does NOT append ;ofl-font-baker even with appVersion."""
+        out = tempfile.mktemp(suffix=".ttf")
+        config = {
+            "subFont": {
+                "path": EN_VAR, "scale": 1.0, "baselineOffset": 0,
+                "axes": [
+                    {"tag": "opsz", "currentValue": 14},
+                    {"tag": "wght", "currentValue": 400},
+                ],
+            },
+            "baseFont": {
+                "path": JP_VAR, "scale": 1.0, "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "appVersion": "9.9.9",
+            "output": {"metadataMode": "inheritBase", "version": "2.5"},
+            "export": {"path": {"font": out}},
+        }
+        mf.merge_fonts(config)
+        font = TTFont(out)
+        for f in (out, out.replace(".ttf", ".woff2")):
+            if os.path.exists(f):
+                os.remove(f)
+        v = font["name"].getDebugName(5)
+        assert v == "Version 2.5", f"Unexpected nameID 5: {v!r}"
+        assert ";ofl-font-baker" not in v
+
+    def test_variations_ps_prefix_kept(self):
+        """inherit mode does NOT strip nameID 25 (only merge mode does)."""
+        base = TTFont(JP_VAR)
+        base_n25 = base["name"].getDebugName(25)
+        m = _merge_inherit("inheritBase")
+        if base_n25 is not None:
+            assert m["name"].getDebugName(25) == base_n25
+
+
+class TestInheritBaseOverrides:
+    """Explicit output.* fields override the inherited base values."""
+
+    def test_family_override_recomposes_full_name(self):
+        """familyName override updates nameID 1 and recomposes nameID 4 with base style."""
+        base = TTFont(JP_VAR)
+        base_subfamily = base["name"].getDebugName(2) or "Regular"
+        m = _merge_inherit("inheritBase", {"familyName": "OverrideFam"})
+        assert m["name"].getDebugName(1) == "OverrideFam"
+        assert m["name"].getDebugName(4) == f"OverrideFam {base_subfamily}".strip()
+
+    def test_family_override_recomposes_postscript_name(self):
+        """familyName override regenerates nameID 6 from sanitized family."""
+        base = TTFont(JP_VAR)
+        base_subfamily = base["name"].getDebugName(2) or "Regular"
+        m = _merge_inherit("inheritBase", {"familyName": "Override Fam"})
+        ps_style = base_subfamily.replace(" ", "") or "Regular"
+        assert m["name"].getDebugName(6) == f"OverrideFam-{ps_style}"
+
+    def test_explicit_postscript_name(self):
+        """postScriptName override picks the PS base directly."""
+        base = TTFont(JP_VAR)
+        base_subfamily = base["name"].getDebugName(2) or "Regular"
+        m = _merge_inherit("inheritBase",
+                           {"familyName": "OverrideFam", "postScriptName": "MyPS"})
+        ps_style = base_subfamily.replace(" ", "") or "Regular"
+        assert m["name"].getDebugName(6) == f"MyPS-{ps_style}"
+
+    def test_weight_override_recomposes_style(self):
+        """weight override updates OS/2 + nameID 2/4 style."""
+        m = _merge_inherit("inheritBase", {"weight": 700})
+        assert m["OS/2"].usWeightClass == 700
+        assert m["name"].getDebugName(2) == "Bold"
+        # nameID 4 includes the new style
+        assert "Bold" in m["name"].getDebugName(4)
+
+    def test_italic_override_sets_bits(self):
+        """italic override flips OS/2.fsSelection and head.macStyle italic bits."""
+        m = _merge_inherit("inheritBase", {"italic": True})
+        assert m["OS/2"].fsSelection & 0x0001
+        assert m["head"].macStyle & 0x0002
+        assert "Italic" in (m["name"].getDebugName(2) or "")
+
+    def test_version_override(self):
+        """version override sets nameID 5 + head.fontRevision (no suffix)."""
+        m = _merge_inherit("inheritBase", {"version": "3.0"})
+        assert m["name"].getDebugName(5) == "Version 3.0"
+        assert m["head"].fontRevision == 3.0
+
+    def test_copyright_overwrite(self):
+        """copyright override fully replaces nameID 0 (no concatenation)."""
+        m = _merge_inherit("inheritBase",
+                           {"copyright": "Copyright Override"})
+        assert m["name"].getDebugName(0) == "Copyright Override"
+
+    def test_manufacturer_override(self):
+        m = _merge_inherit("inheritBase", {"manufacturer": "Acme"})
+        assert m["name"].getDebugName(8) == "Acme"
+
+    def test_unspecified_fields_untouched(self):
+        """Specifying weight does NOT clear designer or rewrite copyright."""
+        base = TTFont(JP_VAR)
+        base_designer = base["name"].getDebugName(9)
+        base_copy = base["name"].getDebugName(0)
+        m = _merge_inherit("inheritBase", {"weight": 700})
+        if base_designer:
+            assert m["name"].getDebugName(9) == base_designer
+        assert m["name"].getDebugName(0) == base_copy
+
+
+class TestInheritSub:
+    """inheritSub: identity comes from the sub font."""
+
+    def test_family_from_sub(self):
+        """nameID 1 comes from sub, not base."""
+        sub = TTFont(EN_VAR)
+        sub_family = sub["name"].getDebugName(1)
+        m = _merge_inherit("inheritSub")
+        assert m["name"].getDebugName(1) == sub_family
+
+    def test_copyright_from_sub(self):
+        """nameID 0 comes from sub only (not concatenated)."""
+        sub = TTFont(EN_VAR)
+        sub_copy = sub["name"].getDebugName(0)
+        m = _merge_inherit("inheritSub")
+        assert m["name"].getDebugName(0) == sub_copy
+
+    def test_weight_class_from_sub(self):
+        """OS/2.usWeightClass comes from sub."""
+        sub = TTFont(EN_VAR)
+        m = _merge_inherit("inheritSub")
+        assert m["OS/2"].usWeightClass == sub["OS/2"].usWeightClass
+
+    def test_family_override_on_sub(self):
+        """familyName override re-composes name records on top of sub identity."""
+        sub = TTFont(EN_VAR)
+        sub_subfamily = sub["name"].getDebugName(2) or "Regular"
+        m = _merge_inherit("inheritSub", {"familyName": "SubOverride"})
+        assert m["name"].getDebugName(1) == "SubOverride"
+        assert m["name"].getDebugName(4) == f"SubOverride {sub_subfamily}".strip()
+
+
+class TestInheritUniqueId:
+    """nameID 3 (Unique Font Identifier) must track family / style / version
+    overrides so the OS font cache treats the merged font as a distinct
+    entry instead of colliding with the inherited source font."""
+
+    def test_pure_passthrough_keeps_base_unique_id(self):
+        """No overrides → nameID 3 is preserved verbatim from the base font."""
+        base = TTFont(JP_VAR)
+        base_uid = base["name"].getDebugName(3)
+        m = _merge_inherit("inheritBase")
+        assert m["name"].getDebugName(3) == base_uid
+
+    def test_family_override_recomputes_unique_id(self):
+        """familyName override → nameID 3 is recomputed from new nameID 5/6."""
+        m = _merge_inherit("inheritBase",
+                           {"familyName": "OverrideFam"})
+        uid = m["name"].getDebugName(3)
+        ps_full = m["name"].getDebugName(6)
+        version = m["name"].getDebugName(5) or ""
+        if version.lower().startswith("version "):
+            version = version[len("Version "):].strip()
+        assert uid == f"{version};{ps_full}"
+
+    def test_postscript_override_recomputes_unique_id(self):
+        """postScriptName override → nameID 3 reflects the new PS full name."""
+        m = _merge_inherit("inheritBase",
+                           {"familyName": "Fam", "postScriptName": "MyPS"})
+        uid = m["name"].getDebugName(3)
+        assert "MyPS" in uid
+
+    def test_version_override_recomputes_unique_id(self):
+        """version override → nameID 3 starts with the new version."""
+        m = _merge_inherit("inheritBase", {"version": "3.0"})
+        uid = m["name"].getDebugName(3)
+        assert uid.startswith("3.0;"), \
+            f"Expected nameID 3 to start with '3.0;', got {uid!r}"
+
+    def test_combined_overrides_dont_inherit_stale_uid(self):
+        """The reviewer's repro: familyName + postScriptName + version
+        together must NOT leave nameID 3 pointing at the base UID."""
+        base = TTFont(JP_VAR)
+        base_uid = base["name"].getDebugName(3)
+        m = _merge_inherit("inheritBase", {
+            "familyName": "Fam",
+            "postScriptName": "MyPS",
+            "version": "3.0",
+        })
+        uid = m["name"].getDebugName(3)
+        assert uid != base_uid
+        assert uid.startswith("3.0;")
+        assert "MyPS" in uid
+
+
+class TestExportConfigMetadataMode:
+    """build_export_config must round-trip output.metadataMode so that
+    bundled package exports and path exports don't silently revert
+    inheritBase/inheritSub to the merge-mode default when reused."""
+
+    def test_inherit_base_preserved(self):
+        config = {
+            "baseFont": {"path": "/fonts/base.ttf", "scale": 1.0,
+                         "baselineOffset": 0, "axes": []},
+            "output": {"metadataMode": "inheritBase",
+                       "familyName": "Fam"},
+            "export": {"path": {"font": "/out.ttf"}},
+        }
+        result = mf.build_export_config(config)
+        assert result["output"]["metadataMode"] == "inheritBase"
+
+    def test_inherit_sub_preserved(self):
+        config = {
+            "baseFont": {"path": "/fonts/base.ttf", "scale": 1.0,
+                         "baselineOffset": 0, "axes": []},
+            "subFont": {"path": "/fonts/sub.ttf", "scale": 1.0,
+                        "baselineOffset": 0, "axes": []},
+            "output": {"metadataMode": "inheritSub"},
+            "export": {"path": {"font": "/out.ttf"}},
+        }
+        result = mf.build_export_config(config)
+        assert result["output"]["metadataMode"] == "inheritSub"
+
+    def test_merge_mode_omitted_when_unset(self):
+        """metadataMode unset → not added to output (preserves default)."""
+        config = {
+            "baseFont": {"path": "/fonts/base.ttf", "scale": 1.0,
+                         "baselineOffset": 0, "axes": []},
+            "output": {"familyName": "Fam"},
+            "export": {"path": {"font": "/out.ttf"}},
+        }
+        result = mf.build_export_config(config)
+        assert "metadataMode" not in result.get("output", {})
 
 
 # ---------------------------------------------------------------------------
