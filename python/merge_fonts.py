@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import struct
+import subprocess
 import sys
 
 from fontTools.misc.timeTools import timestampNow
@@ -440,7 +441,8 @@ def build_export_config(config: dict, path_map: dict = None) -> dict:
     output = config.get("output") or {}
     for field in ("familyName", "postScriptName", "version", "weight", "italic",
                   "width", "manufacturer", "manufacturerURL",
-                  "copyright", "trademark", "upm", "metadataMode"):
+                  "copyright", "trademark", "upm", "metadataMode",
+                  "hinting"):
         val = output.get(field)
         if val is not None:
             result.setdefault("output", {})[field] = val
@@ -1177,6 +1179,123 @@ def transform_tt_glyph_inplace(font: TTFont, glyph_name: str,
     if glyph_name in hmtx.metrics:
         aw, lsb = hmtx.metrics[glyph_name]
         hmtx.metrics[glyph_name] = (int(round(aw * scale)), int(round(lsb * scale)))
+
+
+# ---------------------------------------------------------------------------
+# TrueType hinting normalization
+# ---------------------------------------------------------------------------
+
+# maxp v1 hint-related fields. Cleared together with the bytecode tables so
+# the merged font's "this is unhinted" status is consistent across maxp,
+# glyf, and the font-wide hint programs.
+_MAXP_HINT_FIELDS_ZERO = (
+    "maxTwilightPoints",
+    "maxStorage",
+    "maxFunctionDefs",
+    "maxInstructionDefs",
+    "maxStackElements",
+    "maxSizeOfInstructions",
+)
+
+
+def normalize_truetype_hinting(font: TTFont) -> None:
+    """Drop all TrueType bytecode hinting from a merged TTF.
+
+    Glyph bytecode from one source cannot reliably run against the font-wide
+    ``fpgm`` / ``prep`` / ``cvt `` from a different source: function indices,
+    storage slots, and CVT entries are all source-specific. The merge engine
+    happily mixes Latin glyphs with the base font's hint program, so we
+    publish unhinted output and let the platform's autohinter handle small
+    sizes. ``gasp`` is left in place — it controls smoothing strategy, not
+    bytecode execution.
+
+    Mirrors the policy described in Issue #17: per-glyph programs are
+    cleared, ``fpgm`` / ``prep`` / ``cvt `` are removed, and the maxp v1
+    hint counters are reset to zero so renderers don't reserve workspace
+    for instructions that aren't there.
+    """
+    if "glyf" not in font:
+        return  # CFF output uses a separate hint-preserving path.
+
+    from array import array
+
+    glyf = font["glyf"]
+    for gname in glyf.glyphOrder:
+        try:
+            g = glyf[gname]
+        except KeyError:
+            continue
+        program = getattr(g, "program", None)
+        if program is not None and getattr(program, "bytecode", None):
+            program.bytecode = array("B")
+
+    for tag in ("fpgm", "prep", "cvt "):
+        if tag in font:
+            del font[tag]
+
+    maxp = font.get("maxp")
+    if maxp is not None:
+        if hasattr(maxp, "maxZones"):
+            # OpenType maxp v1 requires maxZones to be 1 when instructions
+            # do not use the twilight zone. Zero is not a conformant value,
+            # even for unhinted TrueType outlines.
+            maxp.maxZones = 1
+        for attr in _MAXP_HINT_FIELDS_ZERO:
+            if hasattr(maxp, attr):
+                setattr(maxp, attr, 0)
+
+
+def _resolve_hinting_policy(config: dict) -> str:
+    """Resolve output hinting policy for TrueType output.
+
+    The default is ``strip`` because preserving mixed-source TT bytecode is
+    unsafe. ``ttfautohint`` is an opt-in post-process for environments that
+    provide the external tool.
+    """
+    output = config.get("output") or {}
+    raw = (output.get("hinting") or "strip").strip().lower()
+    aliases = {
+        "none": "strip",
+        "unhinted": "strip",
+        "strip": "strip",
+        "ttfautohint": "ttfautohint",
+        "autohint": "ttfautohint",
+    }
+    if raw not in aliases:
+        raise ValueError(
+            "output.hinting must be one of: strip, unhinted, none, "
+            "ttfautohint, autohint"
+        )
+    return aliases[raw]
+
+
+def _apply_ttfautohint(output_path: str, tool_path: str = None) -> None:
+    """Run ttfautohint over the final saved TTF file in-place."""
+    exe = tool_path or shutil.which("ttfautohint")
+    if not exe:
+        raise RuntimeError(
+            "output.hinting=ttfautohint requested, but ttfautohint was not "
+            "found on PATH"
+        )
+
+    tmp_path = f"{output_path}.ttfautohint.tmp"
+    try:
+        subprocess.run(
+            [exe, output_path, tmp_path],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        os.replace(tmp_path, output_path)
+    except subprocess.CalledProcessError as e:
+        stderr = e.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(
+            f"ttfautohint failed for {os.path.basename(output_path)}"
+            + (f": {stderr}" if stderr else "")
+        ) from e
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -3171,6 +3290,7 @@ def merge_fonts(config: dict) -> str:
     output = config.get("output") or {}
     lat_cfg = config.get("subFont")
     jp_cfg = config["baseFont"]
+    hinting_policy = _resolve_hinting_policy(config)
 
     if "woff2" in paths and "font" not in paths:
         raise ValueError("export.path.woff2 requires export.path.font")
@@ -3868,6 +3988,13 @@ def merge_fonts(config: dict) -> str:
         ):
             if hasattr(_maxp, attr):
                 setattr(_maxp, attr, max(getattr(_maxp, attr, 0), value))
+
+    # Normalize TT hinting for merged TTF output (Issue #17). Glyph-level
+    # bytecode from the sub font cannot reliably execute against the base
+    # font's fpgm/prep/cvt, and partial preservation made the output look
+    # bytecode-hinted to renderers without actually moving any points.
+    if "glyf" in merged:
+        normalize_truetype_hinting(merged)
     # Ensure parent directory exists for all path-mode outputs
     for p in (output_path, paths.get("woff2"), paths.get("ofl"),
               paths.get("settings"), paths.get("config")):
@@ -3886,12 +4013,21 @@ def merge_fonts(config: dict) -> str:
         }
     _save_with_adobe_kern_compat(merged, output_path, output_lat_glyph_names)
 
+    font_for_woff2 = merged
+    if "glyf" in merged and hinting_policy == "ttfautohint":
+        progress("writing", 9, f"4/{S} \u00b7 Applying TrueType autohint...")
+        _apply_ttfautohint(output_path)
+        if paths.get("woff2"):
+            font_for_woff2 = TTFont(output_path)
+
     # Step 14: Write WOFF2
     woff2_out = paths.get("woff2")
     if woff2_out:
         progress("writing", 10, f"5/{S} \u00b7 Exporting .woff2...")
-        merged.flavor = "woff2"
-        merged.save(woff2_out)
+        font_for_woff2.flavor = "woff2"
+        font_for_woff2.save(woff2_out)
+        if font_for_woff2 is not merged:
+            font_for_woff2.close()
 
     # Path-mode artifact writing
     ofl_out = paths.get("ofl")

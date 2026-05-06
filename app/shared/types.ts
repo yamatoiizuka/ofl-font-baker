@@ -58,6 +58,8 @@ export interface MergeOutput {
   /** Extra trademark text appended after source trademarks (nameID 7). */
   trademark: string;
   upm: number;
+  /** TrueType output hinting policy. Defaults to Python engine's safe strip mode. */
+  hinting?: 'strip' | 'unhinted' | 'none' | 'ttfautohint' | 'autohint';
 }
 
 export interface MergePackage {

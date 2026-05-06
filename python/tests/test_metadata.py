@@ -978,9 +978,7 @@ class TestInheritUniqueId:
 
 
 class TestExportConfigMetadataMode:
-    """build_export_config must round-trip output.metadataMode so that
-    bundled package exports and path exports don't silently revert
-    inheritBase/inheritSub to the merge-mode default when reused."""
+    """build_export_config must round-trip non-identity output policies."""
 
     def test_inherit_base_preserved(self):
         config = {
@@ -1015,6 +1013,17 @@ class TestExportConfigMetadataMode:
         }
         result = mf.build_export_config(config)
         assert "metadataMode" not in result.get("output", {})
+
+    def test_hinting_policy_preserved(self):
+        """hinting policy is kept so bundled exports remain reproducible."""
+        config = {
+            "baseFont": {"path": "/fonts/base.ttf", "scale": 1.0,
+                         "baselineOffset": 0, "axes": []},
+            "output": {"hinting": "ttfautohint"},
+            "export": {"path": {"font": "/out.ttf"}},
+        }
+        result = mf.build_export_config(config)
+        assert result["output"]["hinting"] == "ttfautohint"
 
 
 # ---------------------------------------------------------------------------

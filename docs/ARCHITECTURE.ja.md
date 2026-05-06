@@ -122,6 +122,19 @@ TT→CFF グリフコピー時は `ReverseContourPen` を必ず挟む。TT は�
 
 CFF のヒント保持: ヒント命令と Private dict（ブルーゾーン・ステム幅）はアウトラインと同じアフィン変換で再計算するので、マージ後もヒントがグリフ位置と整合する。
 
+### TrueType ヒンティング方針
+
+TrueType の bytecode hinting はフォント全体で成立する仕組みで、各グリフのプログラムは `fpgm` / `prep` / `cvt ` / `maxp` カウンタが同一ソース由来であることを前提にしている。サブフォントのグリフ bytecode をベースフォントのヒント環境で実行すると、関数番号・ストレージスロット・CVT エントリが衝突し、結果として「どのソースの整合も取れていない」状態になる。
+
+`normalize_truetype_hinting` は maxp 再計算の直後・保存直前に走り、以下を行う。
+
+- 全グリフの `program.bytecode` をクリア
+- `fpgm` / `prep` / `cvt ` テーブルを削除
+- `maxp` v1 のヒント関連フィールド（`maxTwilightPoints` / `maxStorage` / `maxFunctionDefs` / `maxInstructionDefs` / `maxStackElements` / `maxSizeOfInstructions`）を 0 に正規化。`maxZones` は OpenType 仕様上 unhinted でも 1 が必要なので 1 に固定
+- `gasp` はそのまま残す（スムージング戦略のテーブルで bytecode 実行とは独立）
+
+オプションの後段処理として `output.hinting = "ttfautohint"`（エイリアス `"autohint"`）を指定すると、上記の strip 済み TTF を一度書き出した後で外部 `ttfautohint` バイナリをそのファイルに対してインプレースで実行する。ツールが見つからない場合は黙って fallback せずエラーを上げる。デフォルトの `"strip"`（`"unhinted"` / `"none"` も同義）は unhinted のまま出力し、小サイズはプラットフォームのオートヒンタに委ねる。CFF 出力は別系統のヒント保持パスを使う。
+
 ### 統合 UPM / スケール / ベースライン変換
 
 `outputUpm`（UI で編集可能、デフォルト 1000）は JP 側のマージに対する単一
@@ -391,7 +404,7 @@ python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テ
 | Glyph names | 2 | post format 2.0、代替グリフ名 |
 | Composite integrity | 2 | 参照完全性、hmtx 完全性 |
 | Metrics preservation | 10 | UPM、OS/2、hhea、scale/baseline 非影響 |
-| TT hinting preservation | 7 | prep / gasp / maxp、instructions クリア (scale 時) |
+| TT hinting normalization | 10 | fpgm / prep / cvt 削除、gasp 保持、glyph program クリア、maxp ヒントカウンタ 0、ヒント付きサブフォント regression、ttfautohint ポリシー配線 |
 | Maxp recalc | 1 | merge 後の maxp サブフィールド再計算 |
 | CFF hint preservation | 8 | hstem / vstem / BlueValues 保持 (CFF→CFF)、TopDict と nameID の整合 |
 | CFF coincidence snap | 3 | スケール経由でも一致頂点を保持 |

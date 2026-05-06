@@ -114,6 +114,7 @@ Progress is emitted as JSON lines on stderr.
 | `trademark`       | `""`        | Additional trademark string appended to source trademarks.                                                                                                                            |
 | `metricsSource`   | `"base"`    | Which font's vertical metrics (OS/2, hhea) to use. `"base"` keeps the base font metrics and expands only when the sub font is larger. `"sub"` overwrites with the sub font's metrics. |
 | `metadataMode`    | `"merge"`   | Identity policy. `"merge"` (or `null` / unset) rewrites name / OS/2 / head identity records as a fresh derivative work — current default. `"inheritBase"` passes the base font's identity through untouched; `"inheritSub"` does the same with the sub font (errors if `subFont` is absent). Only the `output.*` fields you explicitly set act as overrides on top of the inherited identity, and OFL nameID 13/14, designer, vendor ID, and `head.created/modified` are left alone. Useful for intermediate artifacts or merges that should not self-identify as a new derivative (e.g. adding `Noto Hentaigana` glyphs into `Noto Sans JP`). |
+| `hinting`         | `"strip"`   | TrueType output hinting policy. `"strip"` (also `"unhinted"` / `"none"`) removes TT bytecode, `fpgm`, `prep`, and `cvt `, while keeping `maxp` valid for unhinted outlines. `"ttfautohint"` (also `"autohint"`) first writes the final stripped TTF, then runs an external `ttfautohint` binary over the finished font. CFF output keeps its separate CFF hint-preserving path. |
 
 ### `export.path`
 
