@@ -230,6 +230,31 @@ sub doesn't ship Greek), the JP-side `ccmp` for that script stays put
 - OS/2 and hhea ascender/descender are the envelope of both fonts in output UPM
 - Latin scale/baseline do not affect global metrics
 
+### Static output identity
+
+ofl-font-baker only emits static instances. Both the base and sub
+fonts are instantiated at their selected axis location before merging,
+and any source-font style hierarchy is dropped:
+
+- `STAT` is removed unconditionally. `fontTools.varLib.instancer`
+  prunes STAT to the instantiated location and leaves stale axis
+  records (or a partial table for off-axis instances such as
+  `wght=465`); any subsequent `output.weight/italic/width` override
+  would make the inherited STAT contradict the static identity. Static
+  TTF families like Inter ship without STAT, so dropping it lets
+  `name` / `OS/2` be the single source of truth (Issue #16).
+- `OS/2.fsSelection` REGULAR / BOLD / ITALIC and `head.macStyle`
+  bold / italic are recomputed from `(weight, italic, width)` so the
+  bits agree with `usWeightClass` / `usWidthClass` and the italic
+  flag. REGULAR is reserved for the actual Regular face — weight 400,
+  width 5, non-italic. Light / Medium / SemiBold and other non-RIBBI
+  members must clear REGULAR or font-matchers pick them as the
+  family's regular style.
+
+In inherit modes, the bits are recomputed only when at least one
+style component (`weight` / `italic` / `width`) is overridden; pure
+pass-through keeps the source bits untouched.
+
 ### OFL Metadata
 
 The default mode (`output.metadataMode = "merge"` or absent) treats the
@@ -356,6 +381,7 @@ Test code is split across four files under `python/tests/`:
 |---|---|---|
 | Filter subordinate lookups | 7 | Helper-level: ScriptList & cross-lookup remap, Format 1 rule rename, Type 5 F3 collector |
 | Variable instantiation | 4 | wght bake, JP weight, fvar removal, default axes |
+| Static style identity | 15 | STAT removal across modes, fsSelection REGULAR/BOLD/ITALIC + macStyle bold/italic for merge / inheritBase / inheritSub |
 | Baseline offset | 4 | Simple shift, Latin & JP composite double-shift prevention, JP unaffected |
 | Scale | 2 | Glyph size, advance width |
 | UPM normalization | 3 | 2048→1000 conversion, OS/2 metrics |

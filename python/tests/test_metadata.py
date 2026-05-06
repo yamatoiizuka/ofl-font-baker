@@ -47,6 +47,186 @@ class TestOutputWeight:
 
 
 # ---------------------------------------------------------------------------
+# Static-output style identity: STAT removal + fsSelection / macStyle
+# (Issue #16)
+# ---------------------------------------------------------------------------
+
+_FS_ITALIC = 0x0001
+_FS_BOLD = 0x0020
+_FS_REGULAR = 0x0040
+_MAC_BOLD = 0x0001
+_MAC_ITALIC = 0x0002
+
+
+def _merge_with_italic(output_weight=400, output_italic=False,
+                       metadata_mode=None):
+    """Run a merge that lets the test choose italic + metadataMode."""
+    out = tempfile.mktemp(suffix=".ttf")
+    output = {
+        "familyName": "StyleTest",
+        "weight": output_weight,
+        "italic": output_italic,
+    }
+    if metadata_mode is not None:
+        output["metadataMode"] = metadata_mode
+    config = {
+        "subFont": {
+            "path": EN_VAR, "scale": 1.0, "baselineOffset": 0,
+            "axes": [
+                {"tag": "opsz", "currentValue": 14},
+                {"tag": "wght", "currentValue": 400},
+            ],
+        },
+        "baseFont": {
+            "path": JP_VAR, "scale": 1.0, "baselineOffset": 0,
+            "axes": [{"tag": "wght", "currentValue": 400}],
+        },
+        "output": output,
+        "export": {"path": {"font": out}},
+    }
+    mf.merge_fonts(config)
+    font = TTFont(out)
+    for f in (out, out.replace(".ttf", ".woff2")):
+        if os.path.exists(f):
+            os.remove(f)
+    return font
+
+
+class TestStripStat:
+    """STAT must not survive into static outputs.
+
+    fontTools.varLib.instancer prunes STAT to the instantiated location,
+    leaving stale axis records (or a partial table for off-axis instances).
+    Once output.weight/italic/width overrides change the static identity,
+    inherited STAT contradicts the name table / OS/2.
+    """
+
+    def test_merge_mode_drops_stat(self):
+        """Merge mode removes STAT regardless of source."""
+        # Sanity: source has STAT (so the test is meaningful).
+        assert "STAT" in TTFont(JP_VAR)
+        m = _merge(output_weight=700)
+        assert "STAT" not in m
+
+    def test_inherit_base_drops_stat(self):
+        """inheritBase also drops STAT — static outputs don't need it."""
+        m = _merge_inherit("inheritBase")
+        assert "STAT" not in m
+
+    def test_inherit_base_with_weight_drops_stat(self):
+        """inheritBase + weight override (the issue #16 scenario)."""
+        m = _merge_inherit("inheritBase", {"weight": 700})
+        assert "STAT" not in m
+
+    def test_inherit_sub_drops_stat(self):
+        """inheritSub also drops STAT."""
+        m = _merge_inherit("inheritSub")
+        assert "STAT" not in m
+
+
+class TestStyleBitsMergeMode:
+    """OS/2.fsSelection REGULAR/BOLD/ITALIC and head.macStyle bold/italic
+    must agree with output.weight + output.italic. The base font's bits
+    must not leak into the derivative."""
+
+    def test_regular_sets_regular_clears_bold_italic(self):
+        m = _merge(output_weight=400)
+        fs = m["OS/2"].fsSelection
+        ms = m["head"].macStyle
+        assert fs & _FS_REGULAR
+        assert not (fs & _FS_BOLD)
+        assert not (fs & _FS_ITALIC)
+        assert not (ms & _MAC_BOLD)
+        assert not (ms & _MAC_ITALIC)
+
+    def test_bold_sets_bold_clears_regular(self):
+        """Issue #16: weight=700 must clear inherited REGULAR bit."""
+        m = _merge(output_weight=700)
+        fs = m["OS/2"].fsSelection
+        ms = m["head"].macStyle
+        assert fs & _FS_BOLD, f"BOLD bit missing in fsSelection={fs:#x}"
+        assert not (fs & _FS_REGULAR), \
+            f"REGULAR bit still set in fsSelection={fs:#x}"
+        assert ms & _MAC_BOLD, f"macStyle bold bit missing in {ms:#x}"
+
+    def test_extra_bold_also_sets_bold(self):
+        """weight >= 700 sets the bold bits."""
+        m = _merge(output_weight=800)
+        fs = m["OS/2"].fsSelection
+        assert fs & _FS_BOLD
+        assert not (fs & _FS_REGULAR)
+
+    @pytest.mark.parametrize("weight,name", [
+        (300, "Light"),
+        (500, "Medium"),
+        (600, "SemiBold"),
+    ])
+    def test_non_regular_weights_clear_regular_bit(self, weight, name):
+        """Light / Medium / SemiBold must clear REGULAR — only the actual
+        Regular face (weight=400, normal width, non-italic) advertises it.
+        Otherwise font matchers would pick e.g. SemiBold as the family's
+        Regular style."""
+        m = _merge(output_weight=weight)
+        # Sanity: confirm we really did get the non-Regular style.
+        assert m["name"].getDebugName(2) == name
+        fs = m["OS/2"].fsSelection
+        assert not (fs & _FS_REGULAR), \
+            f"REGULAR must be clear for {name}, got fsSelection={fs:#x}"
+        assert not (fs & _FS_BOLD)
+        assert not (fs & _FS_ITALIC)
+
+    def test_italic_sets_italic_clears_regular(self):
+        m = _merge_with_italic(output_weight=400, output_italic=True)
+        fs = m["OS/2"].fsSelection
+        ms = m["head"].macStyle
+        assert fs & _FS_ITALIC
+        assert not (fs & _FS_REGULAR)
+        assert not (fs & _FS_BOLD)
+        assert ms & _MAC_ITALIC
+        assert not (ms & _MAC_BOLD)
+
+    def test_bold_italic_sets_both(self):
+        m = _merge_with_italic(output_weight=700, output_italic=True)
+        fs = m["OS/2"].fsSelection
+        ms = m["head"].macStyle
+        assert fs & _FS_BOLD
+        assert fs & _FS_ITALIC
+        assert not (fs & _FS_REGULAR)
+        assert ms & _MAC_BOLD
+        assert ms & _MAC_ITALIC
+
+
+class TestStyleBitsInheritMode:
+    """Inherit mode must re-sync style bits when any style component is
+    overridden, but leave them alone in pure pass-through."""
+
+    def test_pure_passthrough_keeps_bits(self):
+        """No style override → fsSelection is preserved verbatim."""
+        base = TTFont(JP_VAR)
+        base_fs = base["OS/2"].fsSelection
+        m = _merge_inherit("inheritBase")
+        assert m["OS/2"].fsSelection == base_fs
+
+    def test_weight_override_recomputes_bits(self):
+        """Issue #16 root case: inheritBase + weight=700 must clear
+        the inherited REGULAR bit and set BOLD even when italic isn't
+        explicitly specified."""
+        m = _merge_inherit("inheritBase", {"weight": 700})
+        fs = m["OS/2"].fsSelection
+        ms = m["head"].macStyle
+        assert fs & _FS_BOLD, f"BOLD missing in fsSelection={fs:#x}"
+        assert not (fs & _FS_REGULAR), \
+            f"REGULAR still set in fsSelection={fs:#x}"
+        assert ms & _MAC_BOLD
+
+    def test_italic_override_clears_regular(self):
+        m = _merge_inherit("inheritBase", {"italic": True})
+        fs = m["OS/2"].fsSelection
+        assert fs & _FS_ITALIC
+        assert not (fs & _FS_REGULAR)
+
+
+# ---------------------------------------------------------------------------
 # PostScript name sanitization and validation
 # ---------------------------------------------------------------------------
 

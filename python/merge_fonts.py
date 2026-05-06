@@ -2390,11 +2390,54 @@ def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
 # Identity passes (merge-mode default vs. inherit-mode pass-through)
 # ---------------------------------------------------------------------------
 
-# OS/2 fsSelection bit 0 = ITALIC, bit 6 = REGULAR.
+# OS/2 fsSelection bits.
 _FS_SELECTION_ITALIC = 0x0001
+_FS_SELECTION_BOLD = 0x0020
 _FS_SELECTION_REGULAR = 0x0040
-# head.macStyle bit 1 = italic.
+# head.macStyle bit 0 = bold, bit 1 = italic.
+_MAC_STYLE_BOLD = 0x0001
 _MAC_STYLE_ITALIC = 0x0002
+
+
+def _apply_style_bits(os2, head, weight: int, italic: bool, width: int = 5) -> None:
+    """Sync OS/2.fsSelection and head.macStyle to the static style identity.
+
+    REGULAR / BOLD / ITALIC in fsSelection and the bold / italic bits in
+    head.macStyle must agree with ``usWeightClass`` / ``usWidthClass``
+    and the italic flag, or Windows and Adobe pick the wrong style when
+    matching the family. Re-syncing here also fixes inherited
+    inconsistencies (e.g. a base font that carried ``fsSelection=REGULAR``
+    while the derivative is Bold).
+
+    REGULAR (bit 6) is only set on the actual Regular face — weight 400,
+    width 5, non-italic. Light / Medium / SemiBold and other non-RIBBI
+    members of a family must clear REGULAR so font-matchers don't pick
+    them as the family's regular style.
+    """
+    is_bold = weight >= 700
+    is_regular = (weight == 400 and width == 5 and not italic)
+    if os2 is not None:
+        if italic:
+            os2.fsSelection |= _FS_SELECTION_ITALIC
+        else:
+            os2.fsSelection &= ~_FS_SELECTION_ITALIC
+        if is_bold:
+            os2.fsSelection |= _FS_SELECTION_BOLD
+        else:
+            os2.fsSelection &= ~_FS_SELECTION_BOLD
+        if is_regular:
+            os2.fsSelection |= _FS_SELECTION_REGULAR
+        else:
+            os2.fsSelection &= ~_FS_SELECTION_REGULAR
+    if head is not None:
+        if italic:
+            head.macStyle |= _MAC_STYLE_ITALIC
+        else:
+            head.macStyle &= ~_MAC_STYLE_ITALIC
+        if is_bold:
+            head.macStyle |= _MAC_STYLE_BOLD
+        else:
+            head.macStyle &= ~_MAC_STYLE_BOLD
 
 
 def _apply_derivative_metadata(lat_font, jp_font, merged, config: dict):
@@ -2460,14 +2503,10 @@ def _apply_derivative_metadata(lat_font, jp_font, merged, config: dict):
         # font's tag would misattribute the derivative.
         os2.achVendID = "    "
 
-    # Set italic flags + refresh timestamps so the derivative reports its
-    # own creation/modification time rather than inheriting the base font's.
+    # Refresh timestamps so the derivative reports its own creation/
+    # modification time rather than inheriting the base font's.
     head = merged.get("head")
     if head:
-        if output_italic:
-            head.macStyle |= _MAC_STYLE_ITALIC
-        else:
-            head.macStyle &= ~_MAC_STYLE_ITALIC
         now = timestampNow()
         head.created = now
         head.modified = now
@@ -2483,12 +2522,13 @@ def _apply_derivative_metadata(lat_font, jp_font, merged, config: dict):
         # (1.0 / 2.5). Anything that doesn't start with a number falls
         # back to the 1.000 default.
         head.fontRevision = _parse_font_revision(output.get("version"))
-    if os2:
-        if output_italic:
-            os2.fsSelection |= _FS_SELECTION_ITALIC
-            os2.fsSelection &= ~_FS_SELECTION_REGULAR
-        else:
-            os2.fsSelection &= ~_FS_SELECTION_ITALIC
+
+    # Sync REGULAR / BOLD / ITALIC bits in OS/2.fsSelection and the
+    # bold / italic bits in head.macStyle to the output style. Inherited
+    # bits would otherwise contradict the new identity — base fonts that
+    # carried fsSelection=REGULAR keep advertising "Regular" even when
+    # the derivative is Bold or any other non-Regular weight.
+    _apply_style_bits(os2, head, output_weight, output_italic, output_width)
 
     # Update name table style entries
     for record in name_table.names:
@@ -2738,19 +2778,15 @@ def _apply_inherited_metadata(lat_font, jp_font, merged, config: dict, mode: str
             os2.usWidthClass = new_width
             overrides.append(f"width={new_width}")
         if italic_specified:
-            if new_italic:
-                os2.fsSelection |= _FS_SELECTION_ITALIC
-                os2.fsSelection &= ~_FS_SELECTION_REGULAR
-            else:
-                os2.fsSelection &= ~_FS_SELECTION_ITALIC
             overrides.append(f"italic={new_italic}")
 
-    # head.macStyle italic bit + fontRevision -----------------------------
-    if head and italic_specified:
-        if new_italic:
-            head.macStyle |= _MAC_STYLE_ITALIC
-        else:
-            head.macStyle &= ~_MAC_STYLE_ITALIC
+    # Style bits ----------------------------------------------------------
+    # Recompute fsSelection REGULAR/BOLD/ITALIC and head.macStyle bold/
+    # italic when any style component is overridden so the inherited bits
+    # don't contradict the new style. Pure pass-through (no style
+    # override) keeps the source bits untouched.
+    if style_changed:
+        _apply_style_bits(os2, head, new_weight, new_italic, new_width)
 
     # nameID 5 (version) + head.fontRevision ------------------------------
     version_specified = "version" in output
@@ -2997,6 +3033,19 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
     # --- Remove DSIG (will be invalid) ---
     if "DSIG" in merged:
         del merged["DSIG"]
+
+    # --- Remove STAT ---
+    # STAT (Style Attributes) places the font within a family's style
+    # hierarchy. fontTools.varLib.instancer prunes it to the instantiated
+    # location, leaving stale axis records — or a partial table for
+    # off-axis instances (e.g. wght=465) — and any output.weight /
+    # italic / width override would make the inherited STAT contradict
+    # the static identity. ofl-font-baker only emits static instances,
+    # so the safer default (matching many static TTF families like
+    # Inter) is to drop STAT and let name / OS/2 be the source of truth.
+    # See issue #16.
+    if "STAT" in merged:
+        del merged["STAT"]
 
     # --- post table: use format 2.0 to preserve glyph names ---
     # Format 3.0 discards all glyph names, causing GSUB/GPOS lookups

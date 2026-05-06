@@ -226,6 +226,32 @@ Latin script の LangSys を持たない場合（例: Latin サブが Greek 非�
 - OS/2, hhea のアセンダー/ディセンダーは両フォントのエンベロープ（出力 UPM 単位）
 - Latin のスケール/ベースラインはグローバルメトリクスに影響しない
 
+### 静的出力としての識別
+
+ofl-font-baker は常に static インスタンスを出力する。base / sub は
+マージ前にそれぞれの軸位置でインスタンス化され、ソースフォントが
+持っていたファミリー階層情報は出力に持ち込まない:
+
+- `STAT` は無条件で削除する。`fontTools.varLib.instancer` は STAT
+  をインスタンス化位置だけ残して prune するため、軸レコードが残骸と
+  して残ったり、軸上にない位置（例: `wght=465`）では部分的なテーブル
+  になる。さらに `output.weight/italic/width` で上書きされると、継承
+  された STAT が静的識別と矛盾する。Inter のような static TTF
+  ファミリーは STAT を持たずに出荷されることが多く、`name` / `OS/2`
+  を識別の唯一の真実とするためにも static 出力で STAT は不要 (Issue
+  #16)。
+- `OS/2.fsSelection` の REGULAR / BOLD / ITALIC、`head.macStyle` の
+  bold / italic ビットは `(weight, italic, width)` から再計算する。
+  `usWeightClass` / `usWidthClass` と italic フラグに矛盾しないように
+  揃える。REGULAR は本当の Regular 面（weight 400・width 5・非
+  italic）にだけ立てる。Light / Medium / SemiBold など RIBBI に入ら
+  ないメンバーは REGULAR をクリアしないと、フォントマッチャがそれを
+  ファミリーの Regular だと誤認する。
+
+継承モードでは、`weight` / `italic` / `width` のいずれかが上書き
+されたときだけビットを再計算する。何も指定しないピュアパススルー時
+は継承元のビットをそのまま残す。
+
 ### OFL メタデータ
 
 デフォルト（`output.metadataMode = "merge"` または未指定）では、出力を新しい
@@ -351,6 +377,7 @@ python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テ
 |---|---|---|
 | Filter subordinate lookups | 7 | helper-level: ScriptList & cross-lookup remap、Format 1 rule rename、Type 5 F3 collector |
 | Variable instantiation | 4 | wght bake、JP weight、fvar 除去、デフォルト axes |
+| Static style identity | 15 | merge / inheritBase / inheritSub での STAT 削除、fsSelection REGULAR/BOLD/ITALIC + macStyle bold/italic |
 | Baseline offset | 4 | simple シフト、Latin & JP composite 二重シフト防止、JP 非影響 |
 | Scale | 2 | グリフサイズ、advance width |
 | UPM normalization | 3 | 2048→1000 変換、OS/2 metrics |
