@@ -1278,14 +1278,21 @@ class TestOutputUpm:
 
 
 # ---------------------------------------------------------------------------
-# TrueType hinting preservation
+# TrueType hinting normalization (Issue #17)
 # ---------------------------------------------------------------------------
 
-class TestHintingPreservation:
-    """Verify that base font TrueType hinting tables survive merge.
+class TestHintingNormalization:
+    """Merged TTF output is published unhinted.
 
-    The merged font is cloned from the base (JP) font, so fpgm / prep /
-    cvt / gasp tables should be preserved as-is.
+    Mixing glyph bytecode from one source with the font-wide ``fpgm`` /
+    ``prep`` / ``cvt `` of another source is unsafe: function indices,
+    storage slots, and CVT entries are source-specific. The previous
+    behavior left hint state from the base font in the output while the
+    sub font's glyph programs survived alongside it, so the output looked
+    bytecode-hinted to renderers without actually moving any points. The
+    merge engine now strips bytecode hinting entirely and lets the
+    platform autohinter handle small sizes; ``gasp`` is left in place
+    because it controls smoothing strategy, not bytecode execution.
     """
 
     @pytest.fixture(autouse=True)
@@ -1295,55 +1302,69 @@ class TestHintingPreservation:
         jp = TTFont(JP_VAR)
         self.jp = instantiateVariableFont(jp, {"wght": 400})
 
-    def test_prep_table_survives_merge(self):
-        """prep table is preserved after merge."""
-        if "prep" not in self.jp:
-            pytest.skip("Base font has no prep table")
+    def test_fpgm_dropped(self):
+        """fpgm is dropped from merged TTF output."""
         m = _merge()
-        assert "prep" in m, "prep table lost during merge"
-        # Contents should match the base font
-        assert m["prep"].program.getBytecode() == self.jp["prep"].program.getBytecode(), \
-            "prep table contents differ from base font"
+        assert "fpgm" not in m, "fpgm should be stripped from merged TTF"
+
+    def test_prep_dropped(self):
+        """prep is dropped from merged TTF output."""
+        m = _merge()
+        assert "prep" not in m, "prep should be stripped from merged TTF"
+
+    def test_cvt_dropped(self):
+        """cvt is dropped from merged TTF output."""
+        m = _merge()
+        assert "cvt " not in m, "cvt should be stripped from merged TTF"
 
     def test_gasp_table_survives_merge(self):
-        """gasp table is preserved after merge."""
+        """gasp is preserved (smoothing hint, not bytecode)."""
         if "gasp" not in self.jp:
             pytest.skip("Base font has no gasp table")
         m = _merge()
         assert "gasp" in m, "gasp table lost during merge"
-        # Verify gasp ranges are preserved
         assert m["gasp"].gaspRange == self.jp["gasp"].gaspRange, \
             "gasp ranges differ from base font"
 
-    def test_latin_glyph_instructions_not_crash(self):
-        """Latin glyph hinting instructions do not crash after merge.
+    def test_glyph_programs_cleared(self):
+        """Every glyph in the merged TTF has an empty bytecode program."""
+        m = _merge(lat_scale=1.5)
+        glyf = m["glyf"]
+        for gname in m.getGlyphOrder():
+            try:
+                g = glyf[gname]
+            except KeyError:
+                continue
+            program = getattr(g, "program", None)
+            if program is None:
+                continue
+            assert len(program.bytecode) == 0, \
+                f"Glyph '{gname}' still carries {len(program.bytecode)} bytes of bytecode"
 
-        Glyph-level TT instructions may become invalid after scaling,
-        but font compilation and loading should still work.
-        """
-        m = _merge(lat_scale=1.0)
-        # Round-trip: save and reload to verify no instruction-related crash
-        out = tempfile.mktemp(suffix=".ttf")
-        try:
-            m.save(out)
-            reloaded = TTFont(out)
-            glyf = reloaded["glyf"]
-            # Verify Latin glyphs are accessible
-            for gname in ["H", "a", "zero"]:
-                g = glyf.get(gname)
-                assert g is not None, f"Glyph '{gname}' missing after round-trip"
-        finally:
-            if os.path.exists(out):
-                os.remove(out)
+    def test_maxp_hinting_fields_zeroed(self):
+        """maxp v1 hint counters are normalized in unhinted output."""
+        m = _merge()
+        maxp = m["maxp"]
+        assert maxp.maxZones == 1, "maxp.maxZones must be 1 for unhinted TrueType output"
+        for attr in (
+            "maxTwilightPoints",
+            "maxStorage",
+            "maxFunctionDefs",
+            "maxInstructionDefs",
+            "maxStackElements",
+            "maxSizeOfInstructions",
+        ):
+            if hasattr(maxp, attr):
+                assert getattr(maxp, attr) == 0, \
+                    f"maxp.{attr} = {getattr(maxp, attr)}, expected 0 for unhinted output"
 
-    def test_scaled_latin_glyph_instructions_not_crash(self):
-        """Scaled Latin glyphs do not crash on round-trip."""
+    def test_round_trip_loads_clean(self):
+        """Saved-then-reloaded TTF still has every glyph accessible."""
         m = _merge(lat_scale=1.5)
         out = tempfile.mktemp(suffix=".ttf")
         try:
             m.save(out)
             reloaded = TTFont(out)
-            # Access all glyphs to trigger instruction parsing
             glyf = reloaded["glyf"]
             for gname in reloaded.getGlyphOrder():
                 _ = glyf[gname]
@@ -1351,34 +1372,95 @@ class TestHintingPreservation:
             if os.path.exists(out):
                 os.remove(out)
 
-    def test_scaled_latin_instructions_cleared(self):
-        """Scaled Latin glyphs have their hinting instructions cleared."""
-        m = _merge(lat_scale=1.5)
-        glyf = m["glyf"]
-        # 'A' is a Latin glyph that was scaled
-        a_glyph = glyf.get("A")
-        if a_glyph and hasattr(a_glyph, "program") and a_glyph.program:
-            assert len(a_glyph.program.bytecode) == 0, \
-                "Scaled Latin glyph should have empty instructions"
+    def test_hinted_sub_font_gets_normalized(self):
+        """Hinted sub font + base merge still yields unhinted output (Issue #17)."""
+        out = tempfile.mktemp(suffix=".ttf")
+        config = {
+            "subFont": {
+                "path": TIKTOK_SANS,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "baseFont": {
+                "path": JP_VAR,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "output": {"familyName": "TestHintNormalize"},
+            "export": {"path": {"font": out}},
+        }
+        try:
+            mf.merge_fonts(config)
+            m = TTFont(out)
+            try:
+                # Bytecode tables: fully removed.
+                assert "fpgm" not in m
+                assert "prep" not in m
+                assert "cvt " not in m
+                # Sub font's Latin glyphs: bytecode stripped despite the
+                # original carrying e.g. 29 bytes on 'A'. This was the core
+                # issue — glyph bytecode survived without its companion
+                # fpgm/prep/cvt and silently did nothing.
+                glyf = m["glyf"]
+                for gname in ("A", "zero"):
+                    if gname in glyf.glyphOrder:
+                        program = getattr(glyf[gname], "program", None)
+                        if program is not None:
+                            assert len(program.bytecode) == 0, \
+                                f"Sub-font hinted glyph '{gname}' must have bytecode cleared"
+                # maxp counters reset.
+                maxp = m["maxp"]
+                assert maxp.maxZones == 1
+                for attr in ("maxFunctionDefs", "maxStorage",
+                             "maxSizeOfInstructions"):
+                    if hasattr(maxp, attr):
+                        assert getattr(maxp, attr) == 0
+            finally:
+                m.close()
+        finally:
+            if os.path.exists(out):
+                os.remove(out)
+            woff2 = out.replace(".ttf", ".woff2")
+            if os.path.exists(woff2):
+                os.remove(woff2)
 
-    def test_unscaled_latin_instructions_preserved(self):
-        """Unscaled Latin glyphs preserve hinting instructions."""
-        # UPM ratio may cause implicit scaling, so check if any instructions survive
-        # at scale=1.0. This depends on whether UPMs match.
-        m = _merge(lat_scale=1.0)
-        glyf = m["glyf"]
-        # Just verify it doesn't crash — actual preservation depends on UPM match
-        a_glyph = glyf.get("A")
-        assert a_glyph is not None
+    def test_ttfautohint_policy_requires_tool(self, monkeypatch):
+        """Explicit ttfautohint mode fails clearly when the tool is absent."""
+        monkeypatch.setattr(mf.shutil, "which", lambda name: None)
+        with pytest.raises(RuntimeError, match="ttfautohint was not found"):
+            mf._apply_ttfautohint("/tmp/nonexistent.ttf")
 
-    def test_maxp_hinting_fields_present(self):
-        """maxp table has TT hinting-related fields."""
-        m = _merge()
-        maxp = m["maxp"]
-        # TrueType maxp (version 1.0) should have these fields
-        assert hasattr(maxp, "maxZones"), "maxp missing maxZones"
-        assert hasattr(maxp, "maxFunctionDefs"), "maxp missing maxFunctionDefs"
-        assert hasattr(maxp, "maxSizeOfInstructions"), "maxp missing maxSizeOfInstructions"
+    def test_ttfautohint_policy_replaces_output(self, monkeypatch):
+        """ttfautohint mode writes a temp output, then replaces the final TTF."""
+        calls = []
+        out = tempfile.mktemp(suffix=".ttf")
+        tmp = f"{out}.ttfautohint.tmp"
+        try:
+            with open(out, "wb") as f:
+                f.write(b"before")
+
+            def fake_run(args, check, stdout, stderr):
+                calls.append((args, check, stdout, stderr))
+                assert args[1] == out
+                assert args[2] == tmp
+                with open(args[2], "wb") as f:
+                    f.write(b"after")
+
+            monkeypatch.setattr(mf.shutil, "which", lambda name: "/usr/bin/ttfautohint")
+            monkeypatch.setattr(mf.subprocess, "run", fake_run)
+
+            mf._apply_ttfautohint(out)
+
+            assert calls
+            with open(out, "rb") as f:
+                assert f.read() == b"after"
+            assert not os.path.exists(tmp)
+        finally:
+            for p in (out, tmp):
+                if os.path.exists(p):
+                    os.remove(p)
 
 
 

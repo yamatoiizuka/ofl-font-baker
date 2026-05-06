@@ -122,6 +122,19 @@ TT→CFF glyph copy (used for Latin sources that don't match the base) always in
 
 CFF hint preservation: hint operators and `Private` dict blue zones / stem widths are scaled by the same affine (scale, baseline) used on the outlines, so hints continue to align with the transformed glyph after merge.
 
+### TrueType Hinting Policy
+
+TrueType bytecode hinting is font-wide: per-glyph programs depend on `fpgm`, `prep`, `cvt `, and matching `maxp` workspace counters from the same source. Mixing the sub font's glyph bytecode with the base font's hint program is unsafe — function indices, storage slots, and CVT entries collide silently and the rendered output is no longer hinted against any consistent state.
+
+`normalize_truetype_hinting` runs after the maxp recompute, just before save:
+
+- Every glyph's `program.bytecode` is cleared.
+- `fpgm`, `prep`, and `cvt ` are deleted.
+- `maxp` v1 hint counters (`maxTwilightPoints`, `maxStorage`, `maxFunctionDefs`, `maxInstructionDefs`, `maxStackElements`, `maxSizeOfInstructions`) are zeroed; `maxZones` is forced to `1` because OpenType requires it even for unhinted output.
+- `gasp` is left in place — it controls smoothing strategy, not bytecode execution.
+
+Optional post-process: when `output.hinting = "ttfautohint"` (alias `"autohint"`), the merge writes the stripped TTF first, then runs the external `ttfautohint` binary in place. If the tool is missing, the merge raises rather than silently falling back. The default `"strip"` (alias `"unhinted"` / `"none"`) ships unhinted and lets the platform autohinter handle small sizes. CFF output keeps its separate CFF hint-preserving path.
+
 ### Unified UPM / Scale / Baseline Transform
 
 `outputUpm` (user-editable, default 1000 in the UI) drives a single affine
@@ -395,7 +408,7 @@ Test code is split across four files under `python/tests/`:
 | Glyph names | 2 | post format 2.0, alternate glyph names |
 | Composite integrity | 2 | Reference completeness, hmtx completeness |
 | Metrics preservation | 10 | UPM, OS/2, hhea, scale/baseline unaffected |
-| TT hinting preservation | 7 | prep / gasp / maxp, instructions cleared on scale |
+| TT hinting normalization | 10 | fpgm / prep / cvt dropped, gasp kept, glyph programs cleared, maxp hint counters zeroed, hinted-sub-font regression, ttfautohint policy plumbing |
 | Maxp recalc | 1 | maxp sub-fields refreshed after merge |
 | CFF hint preservation | 8 | hstem / vstem / BlueValues survive CFF→CFF, TopDict mirrors nameIDs |
 | CFF coincidence snap | 3 | Coincident vertices preserved through scale |
