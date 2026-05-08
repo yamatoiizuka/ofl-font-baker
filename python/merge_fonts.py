@@ -1249,6 +1249,48 @@ def transform_tt_glyph_inplace(font: TTFont, glyph_name: str,
         hmtx.metrics[glyph_name] = (int(round(aw * scale)), int(round(lsb * scale)))
 
 
+def _copy_vertical_metrics(font: TTFont, src_name: str, dst_name: str) -> None:
+    """Copy vertical metrics from one glyph slot to another in the same font."""
+    if "vmtx" in font and src_name in font["vmtx"].metrics:
+        font["vmtx"].metrics[dst_name] = font["vmtx"].metrics[src_name]
+    if "VORG" in font:
+        vorg = font["VORG"]
+        records = getattr(vorg, "VOriginRecords", None)
+        if records is not None and src_name in records:
+            records[dst_name] = records[src_name]
+
+
+def _copy_single_substitutions_for_features(
+    font: TTFont, src_name: str, dst_name: str, feature_tags: set
+) -> None:
+    """Copy feature-scoped SingleSubst mappings from one glyph to another."""
+    gsub = font.get("GSUB")
+    if not gsub or not getattr(gsub, "table", None):
+        return
+    table = gsub.table
+    if not table.FeatureList or not table.LookupList:
+        return
+
+    for feature_record in table.FeatureList.FeatureRecord:
+        if feature_record.FeatureTag not in feature_tags:
+            continue
+        for lookup_index in feature_record.Feature.LookupListIndex:
+            lookup = table.LookupList.Lookup[lookup_index]
+            if lookup.LookupType != 1:
+                continue
+            for subtable in lookup.SubTable:
+                st = (subtable.ExtSubTable if hasattr(subtable, "ExtSubTable")
+                      else subtable)
+                mapping = getattr(st, "mapping", None)
+                if not mapping or src_name not in mapping or dst_name in mapping:
+                    continue
+                mapping[dst_name] = mapping[src_name]
+                coverage = getattr(st, "Coverage", None)
+                if (coverage and hasattr(coverage, "glyphs")
+                        and dst_name not in coverage.glyphs):
+                    coverage.glyphs.append(dst_name)
+
+
 # ---------------------------------------------------------------------------
 # TrueType hinting normalization
 # ---------------------------------------------------------------------------
@@ -3656,6 +3698,10 @@ def merge_fonts(config: dict) -> str:
                 merged["hmtx"].metrics[dup_name] = (
                     merged["hmtx"].metrics[merged_gname]
                 )
+            _copy_vertical_metrics(merged, merged_gname, dup_name)
+            _copy_single_substitutions_for_features(
+                merged, merged_gname, dup_name, {"vert", "vrt2"}
+            )
 
             # Repoint collateral cmap entries to the duplicate
             for table in merged["cmap"].tables:
@@ -3681,6 +3727,18 @@ def merge_fonts(config: dict) -> str:
         # merge writes outlines that already match the final head.unitsPerEm.
         upm_scale = output_upm / lat_upm
         final_lat_scale = lat_scale * upm_scale
+
+        vertical_metric_source_for_dst = {}
+        if "vmtx" in merged or "VORG" in merged:
+            for cp, lat_glyph_name in latin_glyphs_to_copy.items():
+                base_glyph_name = merged_cmap.get(cp)
+                if not base_glyph_name:
+                    continue
+                dst_name = lat_to_merged_name.get(lat_glyph_name, lat_glyph_name)
+                if dst_name not in existing_names:
+                    vertical_metric_source_for_dst.setdefault(
+                        dst_name, base_glyph_name
+                    )
 
         # Step 6: Copy Latin glyphs into merged font (using name mapping)
         progress("merging-glyphs", 4, f"2/{S} \u00b7 Merging glyphs...")
@@ -3800,6 +3858,13 @@ def merge_fonts(config: dict) -> str:
             convert_tt_glyphs_to_cff(lat_font, merged, unique_lat_glyphs,
                                       final_lat_scale, lat_baseline, copied,
                                       existing_names, name_map=lat_to_merged_name)
+
+        for dst_name, base_glyph_name in vertical_metric_source_for_dst.items():
+            if dst_name in existing_names:
+                _copy_vertical_metrics(merged, base_glyph_name, dst_name)
+                _copy_single_substitutions_for_features(
+                    merged, base_glyph_name, dst_name, {"vert", "vrt2"}
+                )
 
         # Sync font-level glyph order
         if merged_is_tt:

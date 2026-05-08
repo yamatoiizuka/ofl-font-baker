@@ -1768,6 +1768,77 @@ class TestSharedGlyphCollateral:
         bounds = _get_bounds(m, cmap[0x30FB])
         assert bounds is not None, "U+30FB has no outline"
 
+    def test_replaced_glyphs_preserve_base_vertical_metrics(self):
+        """Replaced glyphs must keep their original base vmtx rows.
+
+        If a copied or duplicated glyph misses vmtx, the later consistency
+        pass backfills topSideBearing=0, which moves the glyph too high in
+        vertical text.
+        """
+        m = self._merge()
+        base = TTFont(JP_STATIC)
+        try:
+            cmap = m.getBestCmap()
+            base_cmap = base.getBestCmap()
+            for cp in (
+                0x0020, 0x002D, 0x00A0, 0x02BB, 0x0399, 0x2003,
+                0x2011, 0x2012, 0x2013, 0x2018, 0x2026, 0x24EA,
+                0x30FB, 0xFF40,
+            ):
+                merged_glyph = cmap.get(cp)
+                base_glyph = base_cmap.get(cp)
+                assert merged_glyph is not None, f"U+{cp:04X} missing"
+                assert base_glyph is not None, f"U+{cp:04X} missing in base"
+                assert m["vmtx"].metrics[merged_glyph] == (
+                    base["vmtx"].metrics[base_glyph]
+                )
+        finally:
+            base.close()
+
+    @staticmethod
+    def _single_sub_mapping_for_feature(font, feature_tag):
+        if "GSUB" not in font:
+            return {}
+        table = font["GSUB"].table
+        if not table.FeatureList or not table.LookupList:
+            return {}
+        result = {}
+        for feature_record in table.FeatureList.FeatureRecord:
+            if feature_record.FeatureTag != feature_tag:
+                continue
+            for lookup_index in feature_record.Feature.LookupListIndex:
+                lookup = table.LookupList.Lookup[lookup_index]
+                if lookup.LookupType != 1:
+                    continue
+                for subtable in lookup.SubTable:
+                    st = (subtable.ExtSubTable
+                          if hasattr(subtable, "ExtSubTable") else subtable)
+                    mapping = getattr(st, "mapping", None)
+                    if mapping:
+                        result.update(mapping)
+        return result
+
+    def test_renamed_replacements_preserve_vertical_substitution(self):
+        """Renamed replacement glyphs should stay reachable from vert/vrt2."""
+        m = self._merge()
+        base = TTFont(JP_STATIC)
+        try:
+            cmap = m.getBestCmap()
+            base_cmap = base.getBestCmap()
+            merged_glyph = cmap[0x2026]
+            base_glyph = base_cmap[0x2026]
+            assert merged_glyph != base_glyph
+
+            for tag in ("vert", "vrt2"):
+                base_mapping = self._single_sub_mapping_for_feature(base, tag)
+                merged_mapping = self._single_sub_mapping_for_feature(m, tag)
+                assert base_mapping.get(base_glyph) is not None
+                assert merged_mapping.get(merged_glyph) == (
+                    base_mapping[base_glyph]
+                )
+        finally:
+            base.close()
+
 
 
 
