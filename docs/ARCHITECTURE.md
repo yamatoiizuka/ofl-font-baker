@@ -160,6 +160,39 @@ This rename is unconditional — same glyph name with disjoint or
 partially-disjoint codepoint sets always means the two glyphs are
 unrelated, so opting out would re-expose the silent overwrite.
 
+### Glyph Renames and Vertical Layout Data
+
+Glyph names are not semantic vertical-layout markers, but they are the
+keys used by fontTools for glyph-indexed tables. When the merge engine
+renames or duplicates a glyph slot (`.sub`, `.lat`, `.orig`), every
+glyph-keyed table that should continue to describe that slot must be
+updated alongside the outline and `hmtx` row.
+
+This matters for vertical text. Noto Sans JP maps U+2027 (hyphenation
+point) and U+30FB (katakana middle dot) to the same base glyph
+`uni2027`. When Inter replaces U+2027, the merge duplicates the original
+base glyph to `uni2027.orig` and repoints U+30FB there. If only the
+outline and `hmtx` are copied, the later consistency pass backfills a
+default `vmtx` row `(advance=UPM, topSideBearing=0)`, which moves the
+middle dot too high in vertical writing.
+
+The same rule applies to renamed replacement glyphs. For example,
+cross-codepoint protection may rename Inter's U+2026 glyph to
+`ellipsis.sub`; the base Noto glyph `ellipsis` also participates in
+`vert` / `vrt2` (`ellipsis` → `uniFE19`). Without copying that
+SingleSubst mapping to `ellipsis.sub`, the replacement glyph falls out
+of vertical shaping even though the codepoint is still present.
+
+Therefore every base-derived or base-overlapping rename also carries:
+
+- `vmtx` rows
+- `VORG` origin records when present
+- `vert` / `vrt2` SingleSubst mappings for renamed inputs
+
+The rename strategy remains necessary: without splitting shared glyph
+slots, replacing one codepoint would still corrupt collateral CJK
+codepoints that happened to share the original base glyph.
+
 ### Glyph Copy Strategy
 
 | Source → Target | Method |

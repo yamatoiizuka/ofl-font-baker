@@ -158,6 +158,41 @@ base 側の codepoint (U+25CE) は元の base 字形をそのまま保持する�
 codepoint 集合がずれているなら両者は別グリフ、という前提が成り立つ
 ためで、無効化するとサイレント上書きが復活する。
 
+### グリフリネームと縦組み情報
+
+グリフ名そのものに縦組みの意味が含まれるわけではない。ただし
+fontTools 上では、グリフ名が glyph-indexed table のキーになる。
+そのため merge engine がグリフスロットをリネームまたは複製する
+場合（`.sub`, `.lat`, `.orig`）、outline と `hmtx` だけでなく、
+そのスロットを参照し続けるべき glyph-keyed table も同時に更新する
+必要がある。
+
+これは縦書きで特に問題になる。Noto Sans JP は U+2027
+(hyphenation point) と U+30FB (katakana middle dot) を同じ base
+glyph `uni2027` に割り当てている。Inter が U+2027 を置換する場合、
+merge は元の base glyph を `uni2027.orig` に複製し、U+30FB をそこへ
+向け直す。ここで outline と `hmtx` だけをコピーすると、後段の整合性
+補完で `vmtx` がデフォルト値 `(advance=UPM, topSideBearing=0)` になり、
+縦組み時に中黒が上に寄る。
+
+同じ規則は置換側グリフをリネームした場合にも適用する。たとえば
+cross-codepoint 保護によって Inter の U+2026 が `ellipsis.sub` に
+リネームされることがあるが、base 側の Noto glyph `ellipsis` は
+`vert` / `vrt2` で `ellipsis` → `uniFE19` の置換を持つ。この
+SingleSubst を `ellipsis.sub` にもコピーしないと、codepoint は残って
+いても縦組み shaping から外れる。
+
+したがって、base 由来または base codepoint と重なるリネームでは
+以下も追従させる。
+
+- `vmtx` row
+- `VORG` origin record（存在する場合）
+- `vert` / `vrt2` の SingleSubst mapping（リネームされた入力 glyph 用）
+
+リネーム戦略自体は引き続き必要である。共有 glyph slot を分割しないと、
+ある codepoint だけを置換したつもりでも、同じ base glyph を共有していた
+CJK 側の collateral codepoint を破壊してしまう。
+
 ### グリフコピー戦略
 
 | ソース → ターゲット | 方式 |
