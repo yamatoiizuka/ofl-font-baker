@@ -47,7 +47,8 @@ cat config.json | python3 merge_fonts.py
     "path": "/path/to/sub.ttf",
     "scale": 1.0,
     "baselineOffset": 0,
-    "axes": []
+    "axes": [],
+    "excludeCodepoints": ["U+2460-U+24FF", "U+203B"]
   },
   "output": {
     "familyName": "My Font",
@@ -71,7 +72,7 @@ cat config.json | python3 merge_fonts.py
 ```json
 {
   "baseFont": { "path": "/path/to/base.otf", "scale": 1.0, "baselineOffset": 0, "axes": [] },
-  "subFont": { "path": "/path/to/sub.ttf", "scale": 1.0, "baselineOffset": 0, "axes": [] },
+  "subFont": { "path": "/path/to/sub.ttf", "scale": 1.0, "baselineOffset": 0, "axes": [], "excludeCodepoints": [] },
   "output": { "familyName": "My Font" },
   "export": {
     "package": {
@@ -96,6 +97,18 @@ cat config.json | python3 merge_fonts.py
 ```
 
 進捗は stderr に JSON Lines で出力されます。
+
+### `baseFont` / `subFont`
+
+| Key                 | デフォルト | 説明 |
+| ------------------- | ---------- | ---- |
+| `path`              |            | フォントファイルのパス（必須）。 |
+| `scale`             | `1.0`      | アウトラインのスケール倍率。 |
+| `baselineOffset`    | `0`        | フォントユニット単位のベースラインオフセット。 |
+| `axes`              | `[]`       | Variable Font の軸値: `[{"tag": "wght", "currentValue": 400}, ...]`。Static フォントでは空。 |
+| `excludeCodepoints` | `[]`       | **subFont 専用。** `baseFont` 由来の字形を残したい codepoint のリスト。各エントリは `"U+XXXX"`、`"U+XXXX-U+YYYY"`（閉区間）、または整数。Latin + CJK マージで `①` `◯` `※` `Ⅰ` `℃` のような記号・囲み文字を CJK 慣習の字形のまま残したいときに使う。`baseFont` 側に書かれた場合は無視される。 |
+
+sub フォントが、base フォントが**別の codepoint で**使っているグリフ名を保持している場合（例: Inter は `U+0298 ʘ` を `uni25CE` として持っているが、Noto Sans JP は `uni25CE` を `U+25CE ◎` に使っている）、マージエンジンは sub 側のグリフを `{元のグリフ名}.sub` にリネームし、孤立する base 側 codepoint の字形を保護する。リネームのたび stderr に警告が出力される。同じグリフ名でも codepoint 集合がずれていれば両者は別グリフ、という前提で無条件に行う。
 
 ### `output`
 

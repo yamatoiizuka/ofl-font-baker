@@ -47,7 +47,8 @@ Specify output file paths explicitly via `export.path`. Only the files whose pat
     "path": "/path/to/sub.ttf",
     "scale": 1.0,
     "baselineOffset": 0,
-    "axes": []
+    "axes": [],
+    "excludeCodepoints": ["U+2460-U+24FF", "U+203B"]
   },
   "output": {
     "familyName": "My Font",
@@ -71,7 +72,7 @@ Specify `export.package` to create a complete output directory with font files a
 ```json
 {
   "baseFont": { "path": "/path/to/base.otf", "scale": 1.0, "baselineOffset": 0, "axes": [] },
-  "subFont": { "path": "/path/to/sub.ttf", "scale": 1.0, "baselineOffset": 0, "axes": [] },
+  "subFont": { "path": "/path/to/sub.ttf", "scale": 1.0, "baselineOffset": 0, "axes": [], "excludeCodepoints": [] },
   "output": { "familyName": "My Font" },
   "export": {
     "package": {
@@ -96,6 +97,18 @@ Output (JSON manifest on stdout):
 ```
 
 Progress is emitted as JSON lines on stderr.
+
+### `baseFont` / `subFont`
+
+| Key                 | Default | Description |
+| ------------------- | ------- | ----------- |
+| `path`              |         | Font file path (required). |
+| `scale`             | `1.0`   | Outline scale factor. |
+| `baselineOffset`    | `0`     | Vertical offset in font units. |
+| `axes`              | `[]`    | Variable-font axis values: `[{"tag": "wght", "currentValue": 400}, ...]`. Empty for static fonts. |
+| `excludeCodepoints` | `[]`    | **Sub-font only.** Codepoints to keep sourced from `baseFont`. Each entry is `"U+XXXX"`, `"U+XXXX-U+YYYY"` (inclusive range), or a raw integer. Useful for Latin + CJK merges that want CJK-conventional shapes for symbols (e.g. `①`, `◯`, `※`, `Ⅰ`, `℃`). Ignored on `baseFont`. |
+
+When the sub font carries a glyph name that the base font also uses but at a *different* codepoint (e.g. Inter encodes `U+0298 ʘ` as `uni25CE` while Noto Sans JP uses `uni25CE` for `U+25CE ◎`), the merge engine renames the sub-font glyph to `{name}.sub` so the base outline at the stranded codepoint stays intact. A warning is emitted to stderr for each rename. This is unconditional — same name with disjoint codepoint sets always means unrelated glyphs.
 
 ### `output`
 

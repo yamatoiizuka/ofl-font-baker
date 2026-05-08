@@ -26,6 +26,16 @@ export interface FontSource {
   sampleText: string; // Auto-detected from cmap coverage
   isVariable: boolean;
   axes: VariableAxis[]; // Empty array if static font
+  /**
+   * Sub-font only. Codepoints to keep sourced from the base font instead of
+   * being replaced by the sub font's outline. Accepts `"U+XXXX"`,
+   * `"U+XXXX-U+YYYY"` ranges, and raw integers. The Electron UI does not
+   * surface this field — it exists so programmatic callers (e.g. Latin+CJK
+   * pipelines that protect CJK-conventional symbol shapes) can pass values
+   * through `MergeConfig.subFont` without having them stripped at the IPC
+   * boundary. Ignored when set on `baseFont`.
+   */
+  excludeCodepoints?: Array<string | number>;
   // Cached metadata (loaded once, avoids re-parsing)
   copyright?: string;
   trademark?: string;

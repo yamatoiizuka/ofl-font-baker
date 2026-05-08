@@ -428,6 +428,14 @@ def build_export_config(config: dict, path_map: dict = None) -> dict:
         axes = src.get("axes")
         if axes:
             entry["axes"] = axes
+        # Persist sub-font-only options so re-running the saved config
+        # reproduces the same merge. Without this, a downstream user that
+        # protected CJK-conventional symbols via excludeCodepoints would
+        # silently lose that protection on re-export.
+        if key == "subFont":
+            exclude = src.get("excludeCodepoints")
+            if exclude:
+                entry["excludeCodepoints"] = list(exclude)
         return entry
 
     result = {}
@@ -470,6 +478,66 @@ def build_cmap(font: TTFont) -> dict:
     """Build codepoint -> glyph name mapping from a font's best cmap."""
     cmap_table = font.getBestCmap()
     return dict(cmap_table) if cmap_table else {}
+
+
+_CODEPOINT_PATTERN = re.compile(r"^U\+([0-9A-Fa-f]{1,6})$")
+
+
+def _parse_codepoint_token(token) -> int:
+    """Parse a single codepoint token into an int.
+
+    Accepts ``"U+XXXX"`` (1-6 hex digits) or a non-negative integer.
+    """
+    if isinstance(token, bool):
+        # bool is an int subclass — reject explicitly so True/False don't
+        # silently become codepoints 1 / 0.
+        raise ValueError(f"Invalid codepoint: {token!r}")
+    if isinstance(token, int):
+        cp = token
+    elif isinstance(token, str):
+        m = _CODEPOINT_PATTERN.match(token.strip())
+        if not m:
+            raise ValueError(
+                f"Invalid codepoint {token!r}: expected 'U+XXXX' or integer"
+            )
+        cp = int(m.group(1), 16)
+    else:
+        raise ValueError(f"Invalid codepoint: {token!r}")
+    if cp < 0 or cp > 0x10FFFF:
+        raise ValueError(f"Codepoint out of range: U+{cp:04X}")
+    return cp
+
+
+def parse_codepoint_list(values) -> set:
+    """Parse a config codepoint list into a set of int codepoints.
+
+    Accepted entry forms (any mix in the list):
+        "U+2460"            single codepoint
+        "U+2460-U+24FF"     inclusive range
+        0x2460              raw integer
+    """
+    if values is None:
+        return set()
+    if not isinstance(values, (list, tuple)):
+        raise ValueError(
+            f"excludeCodepoints must be a list, got {type(values).__name__}"
+        )
+    if not values:
+        return set()
+    result = set()
+    for entry in values:
+        if isinstance(entry, str) and "-" in entry and entry.strip().startswith("U+"):
+            parts = entry.split("-", 1)
+            start = _parse_codepoint_token(parts[0])
+            end = _parse_codepoint_token(parts[1])
+            if end < start:
+                raise ValueError(
+                    f"Invalid codepoint range {entry!r}: end < start"
+                )
+            result.update(range(start, end + 1))
+        else:
+            result.add(_parse_codepoint_token(entry))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -3350,6 +3418,16 @@ def merge_fonts(config: dict) -> str:
     lat_cmap = build_cmap(lat_font) if lat_font else {}
     jp_cmap = build_cmap(jp_font)
 
+    # Apply subFont.excludeCodepoints: strip codepoints the caller wants to
+    # keep sourced from baseFont. Filtering at the cmap level is enough — the
+    # downstream pipeline keys all replacement decisions off lat_cmap, so the
+    # base outline at those codepoints stays untouched.
+    if lat_font and lat_cfg:
+        excluded_cps = parse_codepoint_list(lat_cfg.get("excludeCodepoints"))
+        if excluded_cps:
+            lat_cmap = {cp: g for cp, g in lat_cmap.items()
+                        if cp not in excluded_cps}
+
     progress("analyzing", 3, f"2/{S} \u00b7 Merging glyphs...")
 
     copied = set()
@@ -3393,6 +3471,54 @@ def merge_fonts(config: dict) -> str:
         all_lat_glyphs = set(lat_font.getGlyphOrder())
         all_lat_glyphs.discard('.notdef')
         existing_names = set(merged.getGlyphOrder())
+
+        # Detect cross-codepoint glyph-name collisions. A sub-font glyph name
+        # may match a base-font glyph reachable from a *different* base
+        # codepoint — e.g. Inter encodes U+0298 (ʘ) as `uni25CE` while Noto
+        # uses `uni25CE` for U+25CE (◎). Copying Inter's `uni25CE` would
+        # silently overwrite Noto's bullseye outline, so U+25CE renders as
+        # the Latin click. Same-name-different-codepoint always means the
+        # two glyphs are unrelated, so always rename the sub glyph
+        # (`uni25CE` → `uni25CE.sub`) and let the base glyph keep its slot.
+        sub_reverse_cmap: dict[str, set[int]] = {}
+        for cp, gname in lat_cmap.items():
+            sub_reverse_cmap.setdefault(gname, set()).add(cp)
+        base_reverse_cmap: dict[str, set[int]] = {}
+        for cp, gname in merged_cmap.items():
+            base_reverse_cmap.setdefault(gname, set()).add(cp)
+
+        # Reserve set must include sub-font's own glyph names too — otherwise
+        # picking ``{g}.sub`` here could silently collide with a glyph that
+        # already exists in the sub font under that exact name (the later
+        # Latin-glyph copy would land at the same destination and clobber
+        # the renamed one).
+        reserved_for_rename = (set(existing_names)
+                               | set(lat_to_merged_name.values())
+                               | all_lat_glyphs)
+        for sub_gname, sub_cps in sub_reverse_cmap.items():
+            if sub_gname in lat_to_merged_name:
+                continue
+            base_cps = base_reverse_cmap.get(sub_gname)
+            if not base_cps:
+                continue
+            if base_cps - sub_cps:
+                new_name = f"{sub_gname}.sub"
+                i = 1
+                while new_name in reserved_for_rename:
+                    i += 1
+                    new_name = f"{sub_gname}.sub{i}"
+                lat_to_merged_name[sub_gname] = new_name
+                reserved_for_rename.add(new_name)
+                stranded = sorted(base_cps - sub_cps)
+                stranded_repr = ", ".join(f"U+{c:04X}" for c in stranded[:6])
+                if len(stranded) > 6:
+                    stranded_repr += f", ... (+{len(stranded) - 6} more)"
+                print(
+                    f"warning: glyph name collision — sub-font glyph "
+                    f"{sub_gname!r} renamed to {new_name!r} to preserve "
+                    f"base-font glyph at {stranded_repr}",
+                    file=sys.stderr,
+                )
 
         # Handle name collisions between Latin glyphs (copied as-is) and
         # existing merged-font glyphs. When a Latin glyph name already exists
@@ -3453,7 +3579,13 @@ def merge_fonts(config: dict) -> str:
 
         lat_cmap_set = set(lat_cmap.keys())
         overwritten_glyphs = set(lat_to_merged_name.values())
-        dup_budget = 65535 - len(existing_names)
+        # Inherit whatever budget the Latin-glyph allocation pass above left
+        # behind. Recomputing from ``existing_names`` would double-count the
+        # slots that the budget loop already consumed for ``.sub`` / ``.lat``
+        # / cmap-remap-NEW glyph names — none of those have been written
+        # into ``existing_names`` yet, so a fresh ``65535 - len(...)`` would
+        # over-report headroom and let near-limit CID fonts overflow.
+        dup_budget = budget
 
         for merged_gname in sorted(overwritten_glyphs):
             referencing_cps = merged_reverse_cmap.get(merged_gname, set())

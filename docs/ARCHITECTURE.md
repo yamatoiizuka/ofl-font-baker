@@ -107,6 +107,59 @@ useMerge.startMerge()
 3. Glyph count does not increase → avoids hitting the 65535 limit
 4. Only truly new glyphs are counted against the budget
 
+### `subFont.excludeCodepoints`
+
+Caller-supplied list of codepoints that must remain sourced from
+`baseFont`. Used by downstream pipelines (e.g. Latin + CJK merges that
+want to keep CJK-conventional shapes for symbols like `①`, `◯`, `※`,
+`Ⅰ`, `℃` even though the sub-font also covers them).
+
+```jsonc
+{
+  "subFont": {
+    "path": "Inter-Regular.otf",
+    "excludeCodepoints": ["U+2460-U+24FF", "U+25A0-U+25FF", "U+203B"]
+  }
+}
+```
+
+Accepted entry forms (any mix in the list): `"U+XXXX"` for a single
+codepoint, `"U+XXXX-U+YYYY"` for an inclusive range, or a raw integer.
+Entries are stripped from the sub-font cmap before any merge logic runs,
+so the base outline at those codepoints survives untouched. font-baker
+ships no opinionated default list — policy stays with the caller.
+
+The Electron UI does not surface this field; the Python engine is the
+entry point for programmatic use. `app/main/merge-engine.ts` passes
+`excludeCodepoints` through when present on `MergeConfig.subFont` but
+ignores it on `baseFont`. `build_export_config` persists the list inside
+`ExportConfig.json` (only when the package is exported with
+`bundleInputFonts: true`) so a saved config round-trips through a
+re-merge.
+
+### Cross-codepoint glyph-name collision rename
+
+A sub-font glyph may share a glyph name with a base-font glyph that is
+reachable from a *different* codepoint. The textbook case is Inter
+encoding U+0298 (`ʘ`, Latin bilabial click) with the glyph name
+`uni25CE` while Noto Sans JP uses the same name for U+25CE (`◎`,
+bullseye). Without intervention, copying Inter's `uni25CE` would
+silently overwrite Noto's bullseye outline at U+25CE — a class of bug
+that surfaces only by visual inspection of the merged font.
+
+When the sub-font's cmap codepoints for a glyph name are not a superset
+of the base-font's cmap codepoints for the same name, the merge engine
+treats the two as unrelated glyphs and renames the sub copy to
+`{name}.sub` (deduplicated to `.sub2` etc. on collision). The sub
+codepoints (Inter's U+0298) point at the renamed glyph; the stranded
+base codepoints (Noto's U+25CE) keep the original base outline. A
+warning is emitted to stderr for every rename so downstream tooling can
+log the affected glyphs.
+
+This rename is unconditional — same glyph name with disjoint or
+partially-disjoint codepoint sets always means the two glyphs are
+unrelated, so opting out would re-expose the silent overwrite.
+
 ### Glyph Copy Strategy
 
 | Source → Target | Method |

@@ -107,6 +107,57 @@ useMerge.startMerge()
 3. グリフ数が増えない → 65535 上限に抵触しない
 4. 本当に新規のグリフのみ budget でカウント
 
+### `subFont.excludeCodepoints`
+
+呼び出し側が「この codepoint は `baseFont` を優先してほしい」と宣言する
+ためのリスト。Latin + CJK マージで、`①` `◯` `※` `Ⅰ` `℃` などの
+記号・囲み文字・ローマ数字を CJK 慣習の字形のまま残したい場合に使う。
+
+```jsonc
+{
+  "subFont": {
+    "path": "Inter-Regular.otf",
+    "excludeCodepoints": ["U+2460-U+24FF", "U+25A0-U+25FF", "U+203B"]
+  }
+}
+```
+
+エントリは `"U+XXXX"` の単発、`"U+XXXX-U+YYYY"` の閉区間、生の整数の
+いずれでも可（混在可）。マージ処理に入る前に sub-font の cmap から
+これらの codepoint を取り除くだけのシンプルな仕組みなので、対象 codepoint
+のベース字形はそのまま残る。font-baker 側にデフォルトの保護リストは
+持たず、ポリシー判断は呼び出し側に委ねる。
+
+Electron UI 側ではこのフィールドを表に出さない。プログラム的な用途で
+`MergeConfig.subFont.excludeCodepoints` に値を入れた場合のみ、
+`app/main/merge-engine.ts` の IPC ブリッジが Python に pass-through する
+（`baseFont` 側に書かれたら無視）。`build_export_config` は
+`ExportConfig.json`（`bundleInputFonts: true` で export したときのみ
+書き出される）に同フィールドをそのまま残すので、保存した設定で再マージ
+してもラウンドトリップする。
+
+### グリフ名コリジョンの自動リネーム（cross-codepoint）
+
+sub フォントと base フォントが同じグリフ名を別々の codepoint で参照
+していることがある。代表例: Inter は U+0298 (`ʘ`, Latin bilabial click)
+を `uni25CE` というグリフ名で持っているが、Noto Sans JP は同じ
+`uni25CE` を U+25CE (`◎`, bullseye) に使っている。素朴に sub の
+`uni25CE` を上書きすると、Noto の U+25CE がラテンクリックで描画される
+というサイレントなバグになる（マージ後の TTF を視覚チェックしないと
+気づかない）。
+
+sub フォントの cmap codepoint 集合が base フォントの cmap codepoint
+集合のスーパーセットでない場合、両者を別グリフとみなして sub 側を
+`{元のグリフ名}.sub` にリネームする（衝突したら `.sub2` 等で重複回避）。
+sub 側の codepoint (U+0298) はリネームされたグリフを指し、孤立していた
+base 側の codepoint (U+25CE) は元の base 字形をそのまま保持する。
+リネームが発生したグリフごとに stderr に warning を出力するので、
+下流のツーリング側でログ可視化できる。
+
+このリネームは無条件に行う（オプトアウト不可）。同じグリフ名で
+codepoint 集合がずれているなら両者は別グリフ、という前提が成り立つ
+ためで、無効化するとサイレント上書きが復活する。
+
 ### グリフコピー戦略
 
 | ソース → ターゲット | 方式 |
