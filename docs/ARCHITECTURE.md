@@ -298,6 +298,51 @@ lookups and drops every ligature entry whose first input *and* every
 Component glyph is in the Latin font. Cross-script entries (any CJK input
 in the chain) are preserved so JP keeps its legitimate ligatures.
 
+### Latin Single-Glyph Substitution Preservation (Issue #23)
+
+Pan-CJK base fonts also ship Latin-script Type 1 SingleSubst (`locl`,
+`fwid`, `hwid`, `tnum`) and Type 3 AlternateSubst (`aalt`) lookups that
+map Latin digit / letter glyphs to base-font alternates. After the
+cross-codepoint rename in #20, these lookups can be classified `mixed`
+rather than `latin` (because at least one Latin-renamed glyph like
+`ellipsis.sub` is no longer in the Latin set), so they survive merging.
+The base rule then fires on Latin text — plain `0123456789` under
+`latn/en` shapes to base-font full-width / locl alternates instead of the
+Latin font's digits.
+
+`_strip_latin_owned_substitutions` is the Type 1 / Type 3 analogue of
+`_strip_latin_only_ligatures`. It walks SingleSubst (`mapping`) and
+AlternateSubst (`alternates`) subtables in surviving base-side lookups
+and drops entries whose source glyph is owned by the Latin font.
+fontTools rebuilds `Coverage` from the surviving keys at compile time,
+so updating the dicts is sufficient.
+
+The strip's preservation set is narrow on purpose: only **cross-codepoint
+`.sub` renames** opt out of stripping. When Inter's `ellipsis` collides
+with Noto's `ellipsis` at U+22EF, the merge engine renames Inter's to
+`ellipsis.sub` so the base glyph survives at U+22EF. `ellipsis.sub` then
+inherits base's `vert` / `vrt2` mapping via
+`_copy_single_substitutions_for_features`. The strip explicitly excludes
+those `.sub` rename targets (tracked as `cross_codepoint_lat_renames`
+and threaded through as `preserved_lat_names`) so vertical layout still
+works at U+2026.
+
+CID cmap remap is *not* preserved. Inter's `zero` becoming `cid00017`
+for Noto Sans CJK is a normal cmap-driven name remap, not a
+cross-codepoint rename — those entries are exactly the bug case
+(`cid00017 → cid63153`) and must be stripped. Same-name `.lat` collision
+renames (`cedilla` → `cedilla.lat`) are also not in the preservation
+set: their renamed form lives at a non-cmap address and never receives a
+vert/vrt2 cross-copy.
+
+The 65535-glyph budget fallback path also needs the strip. Previously it
+called `merge_feature_tables(None, ...)`, leaving `lat_glyph_names`
+empty so nothing was stripped. The fallback now passes a
+`lat_glyph_names_override` derived from the *post-prune* `all_lat_glyphs`
+together with `append_lat_lookups=False`, so base lookups on
+already-copied Latin glyphs get cleaned even when the Latin GSUB lookups
+themselves can't be appended.
+
 ### `ccmp` Duplicate-Tag Dedupe
 
 The same shadowing pattern that broke kern under `latn` (HarfBuzz picks

@@ -1802,6 +1802,57 @@ def _strip_latin_only_ligatures(lookup, lat_glyph_names: set):
         st.ligatures = new_ligatures
 
 
+def _strip_latin_owned_substitutions(lookup, lat_glyph_names: set,
+                                     preserved_lat_names: set = None):
+    """Drop Type 1 / Type 3 GSUB entries whose source glyph is Latin-owned.
+
+    Pan-CJK fonts (Noto Sans JP, Noto Sans CJK JP, …) ship Latin-script
+    `locl`, `aalt`, `fwid`, `hwid`, `tnum` lookups that map Latin digit /
+    letter glyphs to base-font alternates. After cross-codepoint glyph
+    rename (#20) the base-side reference set drifts so the lookup is
+    classified `mixed` rather than `latin`, and the rule survives the
+    merge. Once it survives, plain ``0123456789`` shaped under
+    ``latn/en`` shapes to base-font full-width / locl alternates instead
+    of the Latin font's digits — even when no `fwid` / `tnum` was asked
+    for, because the base-side `locl` rewrites the input first.
+
+    This is the GSUB Type 1 / Type 3 analogue of
+    ``_strip_latin_only_ligatures`` and ``_strip_latin_first_from_pairpos``.
+    Walk surviving base-side SingleSubst (Type 1) and AlternateSubst
+    (Type 3) subtables and drop entries whose source glyph is owned by
+    the Latin font. Cross-script entries (source glyph CJK-owned) are
+    preserved so JP-only behavior such as ``vert`` / ``vrt2`` keeps
+    firing on Japanese glyphs.
+
+    ``preserved_lat_names`` lists Latin glyph names the merge engine
+    renamed during cross-codepoint preservation (e.g. Inter's ``ellipsis``
+    → ``ellipsis.sub`` so Noto's ``ellipsis`` at U+22EF survives). Those
+    renamed glyphs sit at non-Latin codepoints in the merged font and
+    inherit base-side ``vert`` / ``vrt2`` mappings via
+    ``_copy_single_substitutions_for_features``; stripping them would
+    silently kill the inherited behavior.
+
+    fontTools rebuilds Coverage from the surviving ``mapping`` /
+    ``alternates`` keys at compile time, so updating those dicts is
+    sufficient.
+    """
+    if not lat_glyph_names:
+        return
+    preserve = preserved_lat_names or set()
+    for subtable in lookup.SubTable:
+        st = subtable
+        if hasattr(st, 'ExtSubTable'):
+            st = st.ExtSubTable
+        for attr in ('mapping', 'alternates'):
+            data = getattr(st, attr, None)
+            if not data:
+                continue
+            stripped = {g: v for g, v in data.items()
+                        if g not in lat_glyph_names or g in preserve}
+            if len(stripped) != len(data):
+                setattr(st, attr, stripped)
+
+
 def _strip_latin_first_from_pairpos(lookup, lat_glyph_names: set):
     """Drop Latin first-position glyphs from PairPos subtables.
 
@@ -1851,7 +1902,10 @@ def _strip_latin_first_from_pairpos(lookup, lat_glyph_names: set):
 
 def merge_feature_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont,
                          lat_scale: float = 1.0, lat_baseline: float = 0,
-                         lat_name_map: dict = None):
+                         lat_name_map: dict = None,
+                         append_lat_lookups: bool = True,
+                         preserved_lat_names: set = None,
+                         lat_glyph_names_override: set = None):
     """
     Merge GSUB/GPOS tables with correct feature separation.
 
@@ -1862,16 +1916,37 @@ def merge_feature_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont,
         because the merged slot for U+0041 is ``A``), the Latin GSUB/GPOS
         lookup glyph references must be rewritten to match so that features
         like ``calt`` keep working.
+    append_lat_lookups: when ``False``, the Latin font's GSUB/GPOS lookups
+        are NOT appended to the merged tables, but the Latin-owned glyph
+        name set is still computed and used to strip base-side mixed
+        lookups (so e.g. base ``locl`` rules on Latin digits get removed).
+        Used by the 65535-glyph budget fallback path: Latin lookups can't
+        be appended because some Latin glyphs were dropped, but base-side
+        leakage onto the digits that *did* fit must still be cleaned up.
+    preserved_lat_names: Latin merged names that the cross-codepoint
+        rename pass produced (e.g. ``ellipsis.sub``). Excluded from the
+        base-side strip so the inherited ``vert`` / ``vrt2`` mappings
+        added by ``_copy_single_substitutions_for_features`` survive.
+    lat_glyph_names_override: explicit Latin-owned merged-name set. Used
+        on the budget fallback path where some Latin glyphs were dropped
+        (so ``lat_font.getGlyphOrder()`` overstates the actually-copied
+        set). Stripping a dropped name would over-eagerly remove
+        legitimate base-side rules whose source glyph is still owned by
+        the base font.
     """
     # Remap Latin glyph names so JP lookup classification and Latin lookup
     # references both line up with the *merged* glyph space.
-    if lat_font and lat_name_map:
+    if lat_glyph_names_override is not None:
+        lat_glyph_names = lat_glyph_names_override
+    elif lat_font and lat_name_map:
         lat_glyph_names = {lat_name_map.get(g, g) for g in lat_font.getGlyphOrder()}
     else:
         lat_glyph_names = set(lat_font.getGlyphOrder()) if lat_font else set()
+    preserved_lat_names = preserved_lat_names or set()
 
     for table_tag in ('GSUB', 'GPOS'):
-        lat_table = lat_font.get(table_tag) if lat_font else None
+        lat_table = lat_font.get(table_tag) if (
+            lat_font and append_lat_lookups) else None
         jp_table = merged.get(table_tag)
 
         # If we need to rename Latin glyphs, deep-copy the Latin table first
@@ -1889,12 +1964,32 @@ def merge_feature_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont,
             continue
 
         if not lat_table:
+            # Even when we aren't appending Latin lookups (budget path) or
+            # there's no Latin GSUB/GPOS at all, base-side mixed lookups
+            # may reference Latin-owned glyph names that the merge engine
+            # placed at base codepoints (cmap CID remap, same-name
+            # overwrite). Drop the lookups that are wholly Latin-input
+            # first, then strip Latin-source entries out of the surviving
+            # mixed lookups. Reversing the order would leave the wholly-
+            # Latin lookups around as empty husks — `_classify_lookup`
+            # treats an empty lookup as ``mixed``, not ``latin``, so it
+            # would no longer be eligible for removal.
             _filter_subordinate_lookups(jp_table, lat_glyph_names)
+            if lat_glyph_names and jp_table and jp_table.table \
+                    and jp_table.table.LookupList:
+                for lookup in jp_table.table.LookupList.Lookup:
+                    if table_tag == 'GSUB':
+                        _strip_latin_only_ligatures(lookup, lat_glyph_names)
+                        _strip_latin_owned_substitutions(
+                            lookup, lat_glyph_names, preserved_lat_names)
+                    elif table_tag == 'GPOS':
+                        _strip_latin_first_from_pairpos(lookup, lat_glyph_names)
             continue
 
         _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
                            table_tag, lat_glyph_names,
-                           lat_scale=lat_scale, lat_baseline=lat_baseline)
+                           lat_scale=lat_scale, lat_baseline=lat_baseline,
+                           preserved_lat_names=preserved_lat_names)
 
 
 def _filter_subordinate_lookups(table, lat_glyph_names: set):
@@ -2112,7 +2207,8 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
 
 def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
                        table_tag, lat_glyph_names: set,
-                       lat_scale: float = 1.0, lat_baseline: float = 0):
+                       lat_scale: float = 1.0, lat_baseline: float = 0,
+                       preserved_lat_names: set = None):
     """
     Merge Latin and Japanese GSUB/GPOS tables.
 
@@ -2158,6 +2254,8 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
         elif table_tag == 'GSUB':
             for lookup in filtered_jp_lookups:
                 _strip_latin_only_ligatures(lookup, lat_glyph_names)
+                _strip_latin_owned_substitutions(
+                    lookup, lat_glyph_names, preserved_lat_names)
 
     # --- Step 2: Build merged lookup list ---
     lat_offset = len(filtered_jp_lookups)
@@ -3537,6 +3635,16 @@ def merge_fonts(config: dict) -> str:
         reserved_for_rename = (set(existing_names)
                                | set(lat_to_merged_name.values())
                                | all_lat_glyphs)
+        # Track only the *cross-codepoint* .sub renames here. The base-side
+        # GSUB strip later excludes these names from removal because
+        # `_copy_single_substitutions_for_features` will add their inherited
+        # `vert` / `vrt2` mappings after the strip runs (e.g. Inter's
+        # ``ellipsis`` → ``ellipsis.sub`` keeps base's ``ellipsis`` vert
+        # rule reachable for U+22EF). CID-style cmap remaps (e.g. Inter's
+        # ``zero`` → ``cid00017``) must NOT be in this set — those are the
+        # bug cases where base ``locl: cid00017 → cid63153`` should be
+        # stripped.
+        cross_codepoint_lat_renames: set = set()
         for sub_gname, sub_cps in sub_reverse_cmap.items():
             if sub_gname in lat_to_merged_name:
                 continue
@@ -3551,6 +3659,7 @@ def merge_fonts(config: dict) -> str:
                     new_name = f"{sub_gname}.sub{i}"
                 lat_to_merged_name[sub_gname] = new_name
                 reserved_for_rename.add(new_name)
+                cross_codepoint_lat_renames.add(new_name)
                 stranded = sorted(base_cps - sub_cps)
                 stranded_repr = ", ".join(f"U+{c:04X}" for c in stranded[:6])
                 if len(stranded) > 6:
@@ -3911,13 +4020,31 @@ def merge_fonts(config: dict) -> str:
         # CID case like Noto CJK), the Latin lookups would reference
         # non-existent glyphs. In that case, fall back to base-font-only
         # features to keep the output valid.
+        # Build the Latin-owned merged-name set from the *post-prune*
+        # ``all_lat_glyphs``, not ``lat_font.getGlyphOrder()``. The budget
+        # loop and the Step 4b collateral-cancel can both prune entries,
+        # and using the unpruned set would mark dropped / cancelled
+        # glyphs as Latin-owned — over-eagerly stripping legitimate base
+        # behavior on them.
+        lat_owned = {lat_to_merged_name.get(g, g) for g in all_lat_glyphs}
         if lat_glyphs_dropped:
+            # Latin lookups reference non-existent (dropped) glyphs and
+            # cannot be appended, but base-side ``locl`` / ``aalt`` /
+            # ``fwid`` rules on Latin-owned names must still be stripped
+            # — otherwise NotoSansCJKjp's ``cid00017 → cid63153`` (the
+            # bug case from #23) survives and plain digits shape to base
+            # CJK alternates.
             merge_feature_tables(None, jp_font, merged,
-                                 lat_scale=final_lat_scale, lat_baseline=lat_baseline)
+                                 lat_scale=final_lat_scale, lat_baseline=lat_baseline,
+                                 append_lat_lookups=False,
+                                 preserved_lat_names=cross_codepoint_lat_renames,
+                                 lat_glyph_names_override=lat_owned)
         else:
             merge_feature_tables(lat_font, jp_font, merged,
                                  lat_scale=final_lat_scale, lat_baseline=lat_baseline,
-                                 lat_name_map=lat_to_merged_name or None)
+                                 lat_name_map=lat_to_merged_name or None,
+                                 preserved_lat_names=cross_codepoint_lat_renames,
+                                 lat_glyph_names_override=lat_owned)
 
     # Step 7: Apply transforms to Japanese glyphs (always, even without Latin font)
     if (jp_scale_eff != 1.0 or jp_baseline_eff != 0) and not _jp_transform_done:
