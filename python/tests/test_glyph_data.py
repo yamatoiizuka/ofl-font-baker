@@ -9,8 +9,8 @@ from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 
 from conftest import (
-    EN_CFF, EN_FULL, EN_VAR, JP_FULL_VAR, JP_OTF, JP_STATIC, JP_VAR,
-    KAISEI, PLAYWRITE, TIKTOK_SANS,
+    EN_CFF, EN_FULL, EN_VAR, JP_FULL_VAR, JP_OTF, JP_OTF_FULL,
+    JP_STATIC, JP_VAR, KAISEI, PLAYWRITE, TIKTOK_SANS,
     _cid_glyph_for_codepoint, _get_bounds, _merge, _merge_cff_to_cff,
 )
 
@@ -755,6 +755,448 @@ class TestLatinLigaturePreservation:
             f"{offending[:5]}"
         )
 
+
+
+# ---------------------------------------------------------------------------
+# Latin digit / single-input substitution preservation
+# ---------------------------------------------------------------------------
+
+class TestLatinSingleSubstPreservation:
+    """Pan-CJK base fonts (Noto Sans JP, Noto Sans CJK JP) ship Latin-script
+    `locl`, `aalt`, `fwid`, `hwid` lookups that map Latin digit / letter
+    glyphs to base-font alternates. After cross-codepoint glyph rename
+    (#20) the lookups are classified `mixed` instead of `latin` and survive
+    the merge — so plain ``0123456789`` shaped under ``latn/en`` shapes to
+    base-font digits instead of the Latin font's. The merge engine must
+    strip those Latin-input single-glyph substitutions so the Latin font
+    owns its own digit / letter decisions; cross-script entries on JP
+    glyphs (e.g. ``vert`` / ``vrt2``) stay reachable.
+    """
+
+    DIGITS = "0123456789"
+
+    @pytest.fixture(scope="class")
+    def inter_merged_path(self, tmp_path_factory):
+        out = tmp_path_factory.mktemp("digit_inter") / "merged.ttf"
+        config = {
+            "subFont": {
+                "path": EN_VAR,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [
+                    {"tag": "opsz", "currentValue": 14},
+                    {"tag": "wght", "currentValue": 400},
+                ],
+            },
+            "baseFont": {
+                "path": JP_VAR,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "output": {"familyName": "TestDigitInter"},
+            "export": {"path": {"font": str(out)}},
+        }
+        mf.merge_fonts(config)
+        return str(out)
+
+    @pytest.fixture(scope="class")
+    def tiktok_merged_path(self, tmp_path_factory):
+        out = tmp_path_factory.mktemp("digit_tiktok") / "merged.ttf"
+        config = {
+            "subFont": {
+                "path": TIKTOK_SANS,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "baseFont": {
+                "path": JP_VAR,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "output": {"familyName": "TestDigitTikTok", "upm": 1000},
+            "export": {"path": {"font": str(out)}},
+        }
+        mf.merge_fonts(config)
+        return str(out)
+
+    def _shape(self, font_path, text, features=None,
+               script="latn", language="en"):
+        try:
+            import uharfbuzz as hb
+        except ImportError:
+            pytest.skip("uharfbuzz not installed")
+        with open(font_path, "rb") as f:
+            data = f.read()
+        face = hb.Face(data)
+        font = hb.Font(face)
+        order = TTFont(font_path).getGlyphOrder()
+        buf = hb.Buffer()
+        buf.add_str(text)
+        buf.script = script
+        buf.language = language
+        buf.guess_segment_properties()
+        hb.shape(font, buf, features or {})
+        return [order[g.codepoint] for g in buf.glyph_infos]
+
+    # Glyph indices the issue calls out as known-bad base-font digit
+    # outputs in the JP subset (lookups 1/4/5 in ``NotoSansJP-subset.ttf``
+    # before the fix). Any of these appearing for plain ``0123456789``
+    # under ``latn/en`` means base-side substitutions leaked through.
+    BASE_DIGIT_LEAKS = frozenset(
+        {f"glyph{n:05d}" for n in range(225, 235)}     # fwid digits
+        | {f"glyph{n:05d}" for n in range(320, 330)}   # hwid digits
+    )
+
+    @pytest.mark.parametrize("features,reason", [
+        (None, "default shaping"),
+        ({"tnum": True}, "tnum=1"),
+        ({"fwid": True}, "fwid=1"),
+        ({"hwid": True}, "hwid=1"),
+        ({"aalt": True}, "aalt=1"),
+        ({"locl": True}, "locl=1"),
+    ])
+    def test_inter_latn_digits_no_base_leak(
+            self, inter_merged_path, features, reason):
+        """Inter + Noto Sans JP: digits shaped under ``latn/en`` (with or
+        without ``tnum`` / ``fwid`` / ``hwid`` / ``aalt`` / ``locl``) must
+        not produce any base-font full-width / half-width digit glyph.
+
+        Pre-fix this would shape ``0`` to ``glyph00225`` (base fwid) or
+        ``glyph00320`` (base hwid) under several feature combinations.
+        """
+        shaped = self._shape(inter_merged_path, self.DIGITS, features)
+        leaked = [g for g in shaped if g in self.BASE_DIGIT_LEAKS]
+        assert not leaked, (
+            f"{reason} on Inter+NotoSansJP leaked base digit glyphs: "
+            f"{leaked} (full shape: {shaped})"
+        )
+
+    def test_inter_latn_digits_default_are_inter(self, inter_merged_path):
+        """Default ``latn/en`` shaping must reach Inter's literal ``zero``,
+        ``one``, …, ``nine`` glyph names — not any base-font alternate.
+        """
+        shaped = self._shape(inter_merged_path, self.DIGITS)
+        expected = ["zero", "one", "two", "three", "four", "five",
+                    "six", "seven", "eight", "nine"]
+        assert shaped == expected, f"merged default shaping: {shaped}"
+
+    def test_inter_latn_tnum_reaches_inter_tabular(self, inter_merged_path):
+        """``tnum=1`` on Inter + Noto Sans JP must reach Inter's tabular
+        figures (``zero.tf``..``nine.tf`` in the unsubset font, renamed
+        to ``glyph00080``..``glyph00089`` in this subset). Pre-fix,
+        base-side `locl` (or `aalt` / `fwid`) rewrote the digits to
+        base-font glyphs *before* Inter's `tnum` ran, so Inter's `tnum`
+        silently no-op'd, leaving merged tnum identical to merged default.
+
+        Compare merged tnum vs Inter solo tnum, normalizing the ``.lat``
+        suffix the merge engine appends when an Inter glyph name collides
+        with a base-font glyph (Inter's ``glyph00081`` collides with Noto
+        Sans JP's, so it becomes ``glyph00081.lat``).
+        """
+        merged_default = self._shape(inter_merged_path, self.DIGITS)
+        merged_tnum = self._shape(inter_merged_path, self.DIGITS,
+                                  {"tnum": True})
+        solo_tnum = self._shape(EN_VAR, self.DIGITS, {"tnum": True})
+
+        def normalize(g):
+            return g[:-4] if g.endswith(".lat") else g
+
+        assert merged_tnum != merged_default, (
+            f"tnum=1 silently no-op'd — Inter's tnum did not reach the "
+            f"buffer (default={merged_default} tnum={merged_tnum})"
+        )
+        assert [normalize(g) for g in merged_tnum] == solo_tnum, (
+            f"merged tnum={merged_tnum} (normalized: "
+            f"{[normalize(g) for g in merged_tnum]}) "
+            f"!= Inter solo tnum={solo_tnum}"
+        )
+
+    def test_tiktok_latn_digits_no_base_leak(self, tiktok_merged_path):
+        """Non-Inter regression: TikTok Sans + Noto Sans JP digits under
+        ``latn/en`` (default and ``tnum=1``) must not leak base digit
+        glyphs."""
+        for features, label in [(None, "default"), ({"tnum": True}, "tnum")]:
+            shaped = self._shape(tiktok_merged_path, self.DIGITS, features)
+            leaked = [g for g in shaped if g in self.BASE_DIGIT_LEAKS]
+            assert not leaked, (
+                f"TikTok {label} leaked base digit glyphs: {leaked} "
+                f"(full shape: {shaped})"
+            )
+
+    def test_tiktok_latn_digits_default_match_solo(self, tiktok_merged_path):
+        """TikTok Sans default ``latn/en`` digit shaping must equal solo
+        — TikTok and Noto Sans JP share no digit glyph names that get
+        rename-suffixed in this subset, so a direct equality check works.
+        """
+        merged = self._shape(tiktok_merged_path, self.DIGITS)
+        solo = self._shape(TIKTOK_SANS, self.DIGITS)
+        assert merged == solo, (
+            f"TikTok default: merged={merged} vs solo={solo}"
+        )
+
+    def test_no_latin_input_in_base_singlesubst(self, inter_merged_path):
+        """Structural: no surviving base-side Type 1 / Type 3 subtable
+        should map a Latin-owned digit (``zero``..``nine``) to a base-font
+        glyph. The bug: Noto Sans JP `locl` (Type 1 SingleSubst) and `aalt`
+        (Type 3 AlternateSubst) keep mappings like ``zero -> glyph00225``
+        on Latin-input names that the Latin font now owns.
+
+        Latin-origin lookups (the sub-font's own `locl` / `aalt` / `tnum`)
+        are tolerated — digits are legitimate Latin sources for those —
+        so the test only flags subtables whose outputs include glyphs the
+        Latin font does *not* know about, identifying the rule as
+        base-side.
+        """
+        merged = TTFont(inter_merged_path)
+        # Latin-owned merged glyph names — anything named in Inter solo
+        # plus the rename-suffix variants the merge engine introduces on
+        # name collisions. We only need a *superset* here: false negatives
+        # in this set would mistakenly clear a Latin output, preventing
+        # the lookup from registering as base-side; false positives are
+        # harmless. Keep the set conservative.
+        lat_solo = set(TTFont(EN_VAR).getGlyphOrder())
+        merged_glyphs = set(merged.getGlyphOrder())
+        lat_owned = {g for g in merged_glyphs
+                     if g in lat_solo or g.endswith(".lat")
+                     or g.rsplit(".", 1)[0] in lat_solo}
+        digit_inputs = {"zero", "one", "two", "three", "four",
+                        "five", "six", "seven", "eight", "nine"}
+        gsub = merged["GSUB"].table
+        offending = []
+        for li, lk in enumerate(gsub.LookupList.Lookup):
+            for sti, st in enumerate(lk.SubTable):
+                ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+                for attr in ("mapping", "alternates"):
+                    data = getattr(ext, attr, None)
+                    if not data:
+                        continue
+                    # Output set for this subtable. If at least one output
+                    # is a glyph the Latin font does not own, the
+                    # subtable is base-side.
+                    outs = set()
+                    for v in data.values():
+                        if isinstance(v, (list, tuple)):
+                            outs.update(v)
+                        else:
+                            outs.add(v)
+                    if outs and outs.issubset(lat_owned):
+                        continue  # Latin-origin subtable
+                    for src in data:
+                        if src in digit_inputs:
+                            offending.append(
+                                (li, sti, attr, src, data[src]))
+        assert not offending, (
+            "Base-side Type 1/3 GSUB still maps Latin digit inputs "
+            f"to base-font outputs: {offending[:10]}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# CID base font: digit substitution leakage (NotoSansCJKjp-style)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(
+    not os.path.exists(JP_OTF),
+    reason="NotoSansCJKjp-subset.otf not present",
+)
+class TestCidBaseDigitNoLeak:
+    """CID base fonts (NotoSansCJKjp / Source Han Sans) reference Latin
+    digits by CID name (e.g. ``cid00017`` for U+0030). Inter's `zero`
+    glyph is renamed to ``cid00017`` during cmap-driven copy, so the
+    base GSUB rules ``cid00017 -> cid63153`` (`locl`), ``cid00017 ->
+    cid59062`` (`fwid`) etc. all fire on the Latin design unless the
+    merge engine strips them. This test pins the regression for #23 on
+    the CID/CFF path — the bare TTF subset path uses semantic glyph
+    names and doesn't catch this CID-specific failure mode.
+    """
+
+    DIGITS = "0123456789"
+
+    @pytest.fixture(scope="class")
+    def merged_path(self, tmp_path_factory):
+        out = tmp_path_factory.mktemp("digit_cid") / "merged.otf"
+        config = {
+            "subFont": {
+                "path": EN_CFF,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "baseFont": {
+                "path": JP_OTF,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "output": {"familyName": "TestDigitCid"},
+            "export": {"path": {"font": str(out)}},
+        }
+        mf.merge_fonts(config)
+        return str(out)
+
+    def _shape(self, font_path, text, features=None):
+        try:
+            import uharfbuzz as hb
+        except ImportError:
+            pytest.skip("uharfbuzz not installed")
+        with open(font_path, "rb") as f:
+            data = f.read()
+        face = hb.Face(data)
+        font = hb.Font(face)
+        order = TTFont(font_path).getGlyphOrder()
+        buf = hb.Buffer()
+        buf.add_str(text)
+        buf.script = "latn"
+        buf.language = "en"
+        buf.guess_segment_properties()
+        hb.shape(font, buf, features or {})
+        return [order[g.codepoint] for g in buf.glyph_infos]
+
+    @pytest.mark.parametrize("features,reason", [
+        (None, "default"),
+        ({"locl": True}, "locl=1"),
+        ({"tnum": True}, "tnum=1"),
+        ({"fwid": True}, "fwid=1"),
+        ({"hwid": True}, "hwid=1"),
+        ({"aalt": True}, "aalt=1"),
+    ])
+    def test_cid_digits_no_base_alternate_leak(
+            self, merged_path, features, reason):
+        """For each feature combination, the merged font's digit shaping
+        under ``latn/en`` must produce stable CID digit names — not the
+        base font's full-width / half-width / locl alternate CIDs.
+
+        The merged Latin digits live at ``cid00017``..``cid00026``. The
+        bug case from the issue: base ``locl`` rewrites those to
+        ``cid63153``..``cid63162`` (and similar large-CID alternates).
+        After the fix, no entry in the base GSUB should map any of
+        ``cid00017``..``cid00026`` to a different CID, so all six feature
+        combinations shape to the same merged digit CIDs.
+        """
+        shaped = self._shape(merged_path, self.DIGITS, features)
+        latin_cids = {f"cid{n:05d}" for n in range(17, 27)}  # cid00017..00026
+        unexpected = [g for g in shaped if g not in latin_cids]
+        assert not unexpected, (
+            f"{reason} on Inter+NotoSansCJKjp leaked non-Latin CIDs: "
+            f"{unexpected} (full shape: {shaped})"
+        )
+
+    def test_cid_locl_lookup_stripped_for_latin_cids(self, merged_path):
+        """Structural: no surviving base-side Type 1 / Type 3 subtable
+        should keep ``cid00017``..``cid00026`` as a source key. Those CID
+        names are now Latin-owned (Inter's digit glyphs sit there) and
+        any base-side rewrite is the bug from #23."""
+        merged = TTFont(merged_path)
+        latin_cids = {f"cid{n:05d}" for n in range(17, 27)}
+        gsub = merged["GSUB"].table
+        offending = []
+        for li, lk in enumerate(gsub.LookupList.Lookup):
+            for sti, st in enumerate(lk.SubTable):
+                ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
+                for attr in ("mapping", "alternates"):
+                    data = getattr(ext, attr, None)
+                    if not data:
+                        continue
+                    for src in data:
+                        if src in latin_cids:
+                            offending.append(
+                                (li, sti, attr, src, data[src]))
+        assert not offending, (
+            "Base-side Type 1/3 GSUB still maps Latin CID digits "
+            f"(cid00017..cid00026) to alternates: {offending[:10]}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# CID base font: budget-path digit leak (full NotoSansCJKjp-Regular.otf)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(
+    not os.path.exists(JP_OTF_FULL),
+    reason="NotoSansCJKjp-Regular.otf not present",
+)
+class TestCidBudgetPathDigitNoLeak:
+    """The 65535-glyph budget fallback path (`merge_feature_tables(None,
+    ...)`) used to skip base-side Latin-source stripping entirely because
+    `lat_glyph_names` was empty there. Result: full NotoSansCJKjp-Regular
+    + Inter shaped ``0123456789`` to ``cid63153..cid63162`` (locl
+    alternates). This test pins the regression on the actual budget path
+    by merging the unsubsetted Noto Sans CJK JP. It's slow (~10–30 s),
+    so it's class-scoped and only runs when the full font fixture is
+    available.
+    """
+
+    DIGITS = "0123456789"
+
+    @pytest.fixture(scope="class")
+    def merged_path(self, tmp_path_factory):
+        out = tmp_path_factory.mktemp("digit_cid_budget") / "merged.otf"
+        config = {
+            "subFont": {
+                "path": EN_CFF,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "baseFont": {
+                "path": JP_OTF_FULL,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "output": {"familyName": "TestDigitCidBudget"},
+            "export": {"path": {"font": str(out)}},
+        }
+        mf.merge_fonts(config)
+        return str(out)
+
+    def _shape(self, font_path, text, features=None):
+        try:
+            import uharfbuzz as hb
+        except ImportError:
+            pytest.skip("uharfbuzz not installed")
+        with open(font_path, "rb") as f:
+            data = f.read()
+        face = hb.Face(data)
+        font = hb.Font(face)
+        order = TTFont(font_path).getGlyphOrder()
+        buf = hb.Buffer()
+        buf.add_str(text)
+        buf.script = "latn"
+        buf.language = "en"
+        buf.guess_segment_properties()
+        hb.shape(font, buf, features or {})
+        return [order[g.codepoint] for g in buf.glyph_infos]
+
+    def test_full_cid_default_digits_are_latin(self, merged_path):
+        """Default ``latn/en`` digit shaping on the full NotoSansCJKjp
+        merge must reach Latin-owned CID slots, not base ``cidNNNN``
+        alternates with names that hint at vertical / fullwidth /
+        locl variants (cid63153..cid63162 for Noto Sans CJK locl).
+        """
+        shaped = self._shape(merged_path, self.DIGITS)
+        leak_cids = {f"cid{n:05d}" for n in range(63153, 63163)}
+        leaked = [g for g in shaped if g in leak_cids]
+        assert not leaked, (
+            f"Default latn/en digits leaked Noto CJK locl alternates: "
+            f"{leaked} (full shape: {shaped})"
+        )
+
+    def test_full_cid_tnum_digits_no_leak(self, merged_path):
+        """``tnum=1`` on the full CJK budget path must also avoid the
+        locl leak. ``tnum`` is the visible trigger from the issue
+        report: it makes the leak observable even when default shaping
+        looks right by accident."""
+        shaped = self._shape(merged_path, self.DIGITS, {"tnum": True})
+        leak_cids = {f"cid{n:05d}" for n in range(63153, 63163)}
+        leaked = [g for g in shaped if g in leak_cids]
+        assert not leaked, (
+            f"tnum=1 latn/en leaked Noto CJK locl alternates: "
+            f"{leaked} (full shape: {shaped})"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -295,6 +295,49 @@ Illustrator / InDesign で「任意の合字」(`dlig`) を ON にすると、
 リガチャエントリを削除する。クロススクリプトのエントリ（入力鎖のどこかに
 CJK グリフが含まれるもの）は保持されるので、JP 側の正規リガチャは生き残る。
 
+### Latin 1入力 GSUB 置換の保持 (Issue #23)
+
+Pan-CJK ベース書体は Type 1 SingleSubst (`locl` / `fwid` / `hwid` /
+`tnum`) や Type 3 AlternateSubst (`aalt`) でも Latin の数字・文字グリフを
+ベース書体側の代替へ写すルールを持っている。#20 のクロスコードポイント
+リネーム以降、これらの lookup は `latin` ではなく `mixed` に分類されて
+merge を生き残るようになり（`ellipsis.sub` のように Latin 由来のリネーム
+グリフが Latin 集合から外れるため）、Latin テキストにベース側ルールが発火する。
+結果として `0123456789` を `latn/en` で組むと、Latin フォントの数字ではなく
+ベース書体の全角／locl 代替に化ける。
+
+`_strip_latin_owned_substitutions` は `_strip_latin_only_ligatures` の
+Type 1 / Type 3 版。生き残ったベース側 lookup の SingleSubst (`mapping`)
+／AlternateSubst (`alternates`) サブテーブルを歩き、source グリフが
+Latin フォント所有のものは削除する。`Coverage` は fontTools が compile 時に
+`mapping` / `alternates` のキーから再構築するので、辞書を更新するだけで足りる。
+
+ストリップの保護セットは意図的に狭い：**クロスコードポイントの `.sub`
+リネームだけ**を除外対象にする。Inter の `ellipsis` が Noto の U+22EF
+にある `ellipsis` と名前衝突した場合、merge エンジンは Inter 側を
+`ellipsis.sub` にリネームしてベース側の glyph を U+22EF に残す。
+`_copy_single_substitutions_for_features` がベース側の `vert` / `vrt2`
+マッピングを `ellipsis.sub` に複写するので、ストリップは `.sub` リネーム
+対象だけは保護対象として除外する（`cross_codepoint_lat_renames` として
+収集し `preserved_lat_names` で渡す）。これで U+2026 の縦書きも引き続き
+機能する。
+
+CID 系の cmap リネームは保護しない。Inter の `zero` が Noto Sans CJK で
+`cid00017` に写るのは通常の cmap 駆動リネームであって、クロスコード
+ポイントリネームではない — `cid00017 → cid63153` のようなエントリこそ
+Issue #23 のバグなので必ず削除する。同名衝突回避の `.lat` リネーム
+(`cedilla` → `cedilla.lat` 等) も保護セットに含めない：これらは cmap に
+載らない位置に居住するため vert/vrt2 のクロスコピーが走ることもない。
+
+65535 グリフ予算に当たる fallback 経路でもストリップが必要になる。
+従来は `merge_feature_tables(None, ...)` を呼んで `lat_glyph_names` が
+空のまま走らせていたため、ストリップが no-op になりベース側の Latin
+入力ルールが残っていた。修正後は `append_lat_lookups=False` と
+（budget loop と Step 4b のキャンセルを反映した *post-prune* な
+`all_lat_glyphs` 由来の）`lat_glyph_names_override` を渡すので、
+Latin GSUB の append が無理でも、実際にコピーされた Latin グリフ名に
+対するベース側ルールはストリップされる。
+
 ### `ccmp` の重複タグ排除
 
 kern を `latn` 配下で壊していた shadowing パターン（HarfBuzz は重複タグの
