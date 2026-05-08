@@ -82,8 +82,22 @@ export function runMerge(
       copyright: src.copyright ?? '',
     });
 
+    // excludeCodepoints is a sub-font-only option. The current GUI does not
+    // expose it; this pass-through exists so programmatic callers that build
+    // a MergeConfig themselves don't see the field stripped at the IPC
+    // boundary. Drop it on baseFont — the Python engine ignores it there.
+    const subFontSource = config.subFont
+      ? (() => {
+          const entry: Record<string, unknown> = fontSource(config.subFont);
+          if (config.subFont.excludeCodepoints && config.subFont.excludeCodepoints.length > 0) {
+            entry.excludeCodepoints = config.subFont.excludeCodepoints;
+          }
+          return entry;
+        })()
+      : null;
+
     const pythonInput: Record<string, unknown> = {
-      ...(config.subFont ? { subFont: fontSource(config.subFont) } : {}),
+      ...(subFontSource ? { subFont: subFontSource } : {}),
       baseFont: fontSource(config.baseFont),
       output: config.output,
       export: config.export,

@@ -504,11 +504,20 @@ class TestLatinKernPreservation:
     @pytest.mark.parametrize("glyph", ADVANCE_GLYPHS)
     def test_latin_advance_width_preserved(self, src_font, merged_font, glyph):
         """Advance widths for Latin glyphs match the source — no SinglePos
-        from the JP base shifts them sideways."""
-        assert merged_font["hmtx"].metrics[glyph] == src_font["hmtx"].metrics[glyph], (
-            f"hmtx[{glyph}] changed: "
-            f"source={src_font['hmtx'].metrics[glyph]}, "
-            f"merged={merged_font['hmtx'].metrics[glyph]}"
+        from the JP base shifts them sideways. Look the merged glyph up via
+        cmap because cross-codepoint name collisions (e.g. base reuses
+        ``hyphen`` for U+2011 too) auto-rename the sub-font copy."""
+        src_cmap_rev = {g: cp for cp, g in src_font.getBestCmap().items()}
+        cp = src_cmap_rev.get(glyph)
+        assert cp is not None, f"{glyph} not in source cmap"
+        merged_glyph = merged_font.getBestCmap().get(cp)
+        assert merged_glyph is not None, (
+            f"U+{cp:04X} ({glyph}) missing from merged cmap"
+        )
+        assert merged_font["hmtx"].metrics[merged_glyph] == src_font["hmtx"].metrics[glyph], (
+            f"hmtx for U+{cp:04X} changed: "
+            f"source[{glyph}]={src_font['hmtx'].metrics[glyph]}, "
+            f"merged[{merged_glyph}]={merged_font['hmtx'].metrics[merged_glyph]}"
         )
 
     def test_jp_pairpos_strips_latin_first_glyph(self, src_font, merged_font):
