@@ -1092,6 +1092,80 @@ class TestUINameIDCollision:
                 if os.path.exists(p):
                     os.remove(p)
 
+    def test_inter_ss02_and_ss03_keep_distinct_labels(self):
+        """Issue #26: when Inter `ss02` UINameID 257 collides with
+        NotoSansJP nameID 257, the buggy allocator picked 258 as the
+        remap target — but Inter's `ss03` already used 258, so both
+        labels collapsed onto the same nameID and Illustrator's
+        OpenType panel showed two stylistic sets sharing the same
+        text.
+
+        After the fix the allocator reserves the entire Latin
+        feature-label namespace before allocating, so `ss02` and
+        `ss03` retain distinct UINameIDs and their original labels
+        ("Disambiguation" / "Round quotes & commas").
+        """
+        if not os.path.exists(EN_CFF_FULL):
+            pytest.skip("Inter Regular.otf (full) not present")
+        en = TTFont(EN_CFF_FULL)
+        gsub_en = en["GSUB"].table
+        inter_labels = {}
+        for fr in gsub_en.FeatureList.FeatureRecord:
+            if fr.FeatureTag not in ("ss02", "ss03"):
+                continue
+            fp = fr.Feature.FeatureParams
+            if fp and hasattr(fp, "UINameID"):
+                inter_labels[fr.FeatureTag] = (
+                    fp.UINameID, en["name"].getDebugName(fp.UINameID))
+        if "ss02" not in inter_labels or "ss03" not in inter_labels:
+            pytest.skip("Inter fixture has no ss02 / ss03 UINameIDs")
+
+        out = tempfile.mktemp(suffix=".otf")
+        config = {
+            "subFont": {"path": EN_CFF_FULL, "scale": 1.0,
+                        "baselineOffset": 0, "axes": []},
+            "baseFont": {"path": JP_VAR, "scale": 1.0,
+                         "baselineOffset": 0, "axes": []},
+            "output": {"familyName": "TestUI"},
+            "export": {"path": {"font": out}},
+        }
+        try:
+            mf.merge_fonts(config)
+            m = TTFont(out)
+            merged_labels = {}
+            for fr in m["GSUB"].table.FeatureList.FeatureRecord:
+                if fr.FeatureTag not in ("ss02", "ss03"):
+                    continue
+                fp = fr.Feature.FeatureParams
+                if fp and hasattr(fp, "UINameID"):
+                    merged_labels[fr.FeatureTag] = (
+                        fp.UINameID,
+                        m["name"].getDebugName(fp.UINameID),
+                    )
+            assert "ss02" in merged_labels and "ss03" in merged_labels, (
+                f"Merged font lost ssXX UINameIDs: {merged_labels}"
+            )
+            ss02_id, ss02_label = merged_labels["ss02"]
+            ss03_id, ss03_label = merged_labels["ss03"]
+            assert ss02_id != ss03_id, (
+                f"ss02 and ss03 ended up with the same UINameID "
+                f"({ss02_id}); the allocator overwrote ss03's slot "
+                f"when remapping ss02. Labels: ss02={ss02_label!r}, "
+                f"ss03={ss03_label!r}."
+            )
+            assert ss02_label == inter_labels["ss02"][1], (
+                f"ss02 label changed: expected "
+                f"{inter_labels['ss02'][1]!r}, got {ss02_label!r}"
+            )
+            assert ss03_label == inter_labels["ss03"][1], (
+                f"ss03 label changed: expected "
+                f"{inter_labels['ss03'][1]!r}, got {ss03_label!r}"
+            )
+        finally:
+            for p in (out, out.replace(".otf", ".woff2")):
+                if os.path.exists(p):
+                    os.remove(p)
+
 
 # ---------------------------------------------------------------------------
 # Character Variant labels (cvXX) — regression for Codex review of #7
