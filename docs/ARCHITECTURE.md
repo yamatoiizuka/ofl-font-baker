@@ -368,6 +368,87 @@ LangSys for a given explicit Latin script (e.g. `grek` when the Latin
 sub doesn't ship Greek), the JP-side `ccmp` for that script stays put
 — there's nothing to shadow it.
 
+### Latin User Features Reachable from CJK Scripts
+
+Apps such as Adobe Illustrator may shape mixed Latin/CJK runs through
+the `kana` or `hani` script's LangSys instead of splitting into a
+separate `latn` run (the split depends on composer, language attribute,
+style runs, document defaults, and font cache state). When the run is
+shaped under a CJK LangSys, only features that LangSys references are
+reachable — so toggling `ss02` / `tnum` / etc. silently no-ops on the
+Latin glyphs as soon as the run also contains a Japanese character.
+
+`CJK_LATIN_USER_FEATURE_ALLOWLIST` exposes a narrow set of explicit
+Latin user features (`ss01..ss20`, `cv01..cv99`, `salt`, `zero`,
+`tnum`, `pnum`, `frac`, `numr`, `dnom`, `sups`, `subs`, `sinf`, `ordn`)
+under CJK script LangSys records when the Latin font defines them.
+Default-on / context-sensitive Latin tags (`aalt`, `locl`, `ccmp`,
+`liga`, `dlig`, `calt`, `case`) and CJK-meaningful tags (`fwid`,
+`hwid`, `vert`, `vrt2`, GPOS defaults) are intentionally excluded —
+exposing them under CJK scripts could rewrite text the user never
+asked to change.
+
+The candidate set is restricted to features the *Latin font* exposes
+under its `latn` / `DFLT` DefaultLangSys. Iterating the full Latin
+FeatureList would also pick up orphan features and named-LangSys-only
+ones (e.g. a `latn/TUR ` Turkish-specific `tnum`), and promoting those
+to `kana/dflt` would expose locale-specific behavior across every
+Japanese run. Each surviving candidate is then passed through
+`_latin_feature_safe_for_cjk_promotion`, which transitively walks the
+feature's lookups — including subordinate lookups reached through
+Context / ChainContext `SubstLookupRecord` references — and refuses any
+whose input set reaches outside `lat_glyph_names`. This is a
+defense-in-depth check so `tnum=1` can never rewrite Japanese glyphs
+even if a future Latin source ships a chain-context lookup whose
+top-level coverage looks Latin-only but whose subordinate substitution
+hits a base glyph.
+
+**Budget path limitation.** The 65535-glyph fallback path
+(`merge_feature_tables(None, ...)` in `merge_fonts.merge_fonts`) does
+not append Latin lookups at all because the dropped Latin glyphs leave
+dangling references. Promotion is therefore unavailable on that path —
+both `latn` and CJK scripts lose Latin user features for full
+NotoSansCJKjp-class CID merges. Re-enabling it requires lookup pruning
++ chain-context reference remap + feature/LangSys cleanup with
+non-trivial regression risk; tracked as a follow-up rather than
+shipped with the initial CJK fix. Subset CID merges
+(`NotoSansCJKjp-subset.otf`) stay under budget and do get the
+promotion.
+
+The pre-computed allowlist is built once per `_merge_ot_table_v2` call
+and threaded into `_build_lang_sys` through `cjk_extra_lat_features`.
+For each CJK LangSys:
+
+- If the allowlist tag is **not** already on the JP side, the Latin
+  feature record is appended directly.
+- If the JP side already exposes the same tag (e.g. a CJK font that
+  ships its own `tnum` or `salt` for CJK glyphs), creating a second
+  feature record would let HarfBuzz shadow one of them — the same
+  pattern that bites `ccmp` / `kern` under `latn`. Instead a fresh
+  combined `FeatureRecord` (JP lookups + Latin lookups) is appended to
+  the merged FeatureList and this LangSys references the new index in
+  place of the bare JP one. The combined record is cached by
+  `(jp_idx, lat_idx)` so other LangSys that need the same combination
+  reuse it. The original JP record stays pristine, so a Latin
+  named-only lookup (e.g. `latn/JPN ` `tnum`) cannot leak into
+  `kana/dflt` even when both sides reference the same JP feature
+  record by index.
+
+Named LangSys handling: `cjk_extras_named[lang_tag]` adds candidates
+unique to Latin's `latn/<lang_tag>` (and `DFLT/<lang_tag>`) on top of
+the defaults, and CJK scripts auto-create a matching named LangSys
+(e.g. `kana/JPN `) whenever Latin contributes unique allowlist
+features for that tag — even if neither side defines that tag under
+this CJK script. Without this, an Inter `latn/JPN`-only `tnum` would
+be unreachable from any Japanese run shaped under `kana/JPN`.
+
+Plain Japanese text shaped under `kana` / `hani` stays unchanged when
+these features are toggled — the safety check
+(`_latin_feature_safe_for_cjk_promotion`) walks every reachable
+lookup, including Context / ChainContext subordinate lookups and
+Format 1 rule input sequences and Format 2 ClassDef glyph keys, and
+refuses any whose input set reaches outside `lat_glyph_names`.
+
 ### Metrics
 
 - `head.unitsPerEm` = `outputUpm` (user-set, default 1000)

@@ -362,6 +362,80 @@ Latin script の LangSys を持たない場合（例: Latin サブが Greek 非�
 なのに base に grek LangSys がある場合）、JP 側 `ccmp` はそのまま残る
 — shadowing する相手がいないため。
 
+### CJK script から到達可能にする Latin ユーザー機能
+
+Adobe Illustrator などのアプリは、Latin と CJK が混在するランを `latn`
+の Latin ランに分割せず、`kana` / `hani` の LangSys 配下でまとめて
+shaping することがある（分割の挙動は composer・言語属性・スタイルラン・
+ドキュメントデフォルト・font cache 状態で変わる）。CJK LangSys 配下で
+shaping すると、その LangSys が参照する feature しか使えなくなるため、
+ユーザーが `ss02` / `tnum` 等を ON にしても、ランに日本語が 1 文字でも
+入った瞬間に Latin glyph 側で何も起きなくなる。
+
+`CJK_LATIN_USER_FEATURE_ALLOWLIST` は明示的な Latin ユーザー機能
+（`ss01..ss20`, `cv01..cv99`, `salt`, `zero`, `tnum`, `pnum`, `frac`,
+`numr`, `dnom`, `sups`, `subs`, `sinf`, `ordn`）に絞ったホワイトリスト
+で、Latin 側が定義しているこれらの feature を CJK script の LangSys
+からも到達可能にする。default-on / 文脈依存の Latin タグ（`aalt`,
+`locl`, `ccmp`, `liga`, `dlig`, `calt`, `case`）と CJK 固有の意味を
+持つタグ（`fwid`, `hwid`, `vert`, `vrt2`, GPOS のデフォルト群）は
+意図的に除外している — これらを CJK script 配下にぶら下げると、
+ユーザーが頼んでいないテキスト書き換えが発生し得るため。
+
+候補集合は **Latin font 自身が `latn` / `DFLT` DefaultLangSys に
+持っている** feature に限定する。Latin の FeatureList を全件舐めると
+孤立 feature や named LangSys 専用 feature（例: `latn/TUR ` 専用
+`tnum`）まで拾ってしまい、ロケール固有の挙動を `kana/dflt` 経由で
+全 Japanese ランに露出させてしまうため。生き残った候補はさらに
+`_latin_feature_safe_for_cjk_promotion` で各 lookup を再帰的に walk
+し（Context / ChainContext の `SubstLookupRecord` が指す subordinate
+lookup まで含めて）、入力 glyph 集合が `lat_glyph_names` に収まらない
+feature は除外する。多層防御: 将来の Latin source が「上位 coverage は
+Latin だが subordinate lookup が JP glyph を書き換える」chain context
+lookup を出してきても、`tnum=1` で日本語が書き換わらないようにする。
+
+**Budget path の制限**: 65535 glyph フォールバック経路
+（`merge_fonts.merge_fonts` 内の `merge_feature_tables(None, ...)`）
+では Latin glyph がドロップされるため Latin lookup を append できず、
+そもそも Latin user feature が `latn` / CJK 両方で使えない。promotion
+を有効化するには lookup pruning + chain context reference remap +
+feature/LangSys cleanup が必要で、初期 CJK promotion 修正とは別の
+PR で対応するのが安全と判断した。Subset CID merge
+（`NotoSansCJKjp-subset.otf`）は budget に収まるので promotion
+が効く。
+
+事前計算は `_merge_ot_table_v2` 内で 1 度だけ行い、
+`cjk_extra_lat_features` として `_build_lang_sys` に渡す。各 CJK
+LangSys の挙動:
+
+- allowlist タグが JP 側に存在しない場合: Latin feature record をその
+  まま追加。
+- JP 側に同タグが既に存在する場合（CJK フォントが独自に `tnum` /
+  `salt` 等を CJK glyph 用に出している等）: 同タグを 2 本ぶら下げる
+  と HarfBuzz の shadowing で片方が無視される（`ccmp` / `kern` を
+  `latn` で潰したのと同じパターン）。代わりに **JP lookup + Latin
+  lookup の合成 FeatureRecord** を新たに 1 本作って merged
+  FeatureList に追加し、当該 LangSys はそれを参照する（元の JP
+  record は触らない）。同じ `(jp_idx, lat_idx)` の組み合わせを必要
+  とする他の LangSys 用に cache する。これにより Latin の named-only
+  lookup（例: `latn/JPN ` 専用 `tnum`）が、同じ JP record を index
+  で共有している `kana/dflt` 等に leak しない。
+
+Named LangSys 対応: `cjk_extras_named[lang_tag]` には Latin
+`latn/<lang_tag>` (および `DFLT/<lang_tag>`) 固有の候補を default に
+重ねて持たせ、CJK script 側でも Latin が固有 allowlist 機能を
+持ち込む lang_tag については対応する named LangSys
+（例: `kana/JPN`）を自動生成する。両側ともその CJK script で
+当該 lang_tag を定義していなくても作る。これがないと Inter の
+`latn/JPN` 専用 `tnum` が `kana/JPN` の日本語ランから到達できない。
+
+CJK script で素の日本語を shaping したときに allowlist 機能を ON
+しても結果は変わらない — 安全チェック
+`_latin_feature_safe_for_cjk_promotion` が Context / ChainContext の
+subordinate lookup・Format 1 の SubRule.Input・Format 2 の ClassDef
+glyph キーを含めた到達可能な全 lookup を再帰的に walk し、入力 glyph
+が `lat_glyph_names` に収まらない feature を除外している。
+
 ### メトリクス
 
 - `head.unitsPerEm` = `outputUpm`（ユーザー設定、デフォルト 1000）
