@@ -1460,6 +1460,40 @@ def _collect_lookup_glyphs(lookup) -> set:
                 glyph_names.update(st.mapping.keys())
             if hasattr(st, 'alternates') and st.alternates:
                 glyph_names.update(st.alternates.keys())
+            # Format 1 Context / ChainContext rule-based subtables stash
+            # the input/backtrack/lookahead sequences as raw glyph-name
+            # lists inside SubRule / ChainSubRule / PosRule / ChainPosRule
+            # records. Without this walk the safety check missed any
+            # non-Latin glyph reachable only through Format 1 rules.
+            for ruleset_attr in ('SubRuleSet', 'ChainSubRuleSet',
+                                 'PosRuleSet', 'ChainPosRuleSet'):
+                rulesets = getattr(st, ruleset_attr, None)
+                if not rulesets:
+                    continue
+                for ruleset in rulesets:
+                    if not ruleset:
+                        continue
+                    for rule_attr in ('SubRule', 'ChainSubRule',
+                                      'PosRule', 'ChainPosRule'):
+                        rules = getattr(ruleset, rule_attr, None)
+                        if not rules:
+                            continue
+                        for rule in rules:
+                            for cov_attr in ('Backtrack', 'Input',
+                                             'LookAhead'):
+                                seq = getattr(rule, cov_attr, None)
+                                if seq:
+                                    glyph_names.update(seq)
+            # Format 2 Context / ChainContext class-based subtables
+            # describe input glyphs through ClassDef.classDefs (a
+            # {glyph_name: class_id} dict). Coverage covers only the
+            # first input position; later positions live in the ClassDef
+            # tables and would otherwise be invisible.
+            for cd_attr in ('ClassDef', 'BacktrackClassDef',
+                            'InputClassDef', 'LookAheadClassDef'):
+                cd = getattr(st, cd_attr, None)
+                if cd is not None and getattr(cd, 'classDefs', None):
+                    glyph_names.update(cd.classDefs.keys())
     except Exception:
         pass  # Malformed subtable; return partial results for classification
     return glyph_names
@@ -2104,9 +2138,113 @@ CJK_SCRIPTS = {'kana', 'hani', 'hang', 'bopo', 'yi  '}
 GSUB_LATN_DEDUPE_TAGS = frozenset({'ccmp', 'dlig'})
 
 
+# Latin user-toggle GSUB features that should also be reachable from CJK
+# script LangSys records (`kana` / `hani` / ...). Apps such as Adobe
+# Illustrator may shape mixed Latin/CJK runs through a CJK script's
+# LangSys instead of splitting into a separate `latn` run; without this
+# allowlist the user's `ss02` / `tnum` toggle silently no-ops on Latin
+# glyphs whenever the run also contains a Japanese character.
+#
+# Restricted to explicit *user* features. Default-on / context-sensitive
+# tags (`aalt`, `locl`, `ccmp`, `liga`, `dlig`, `calt`, `case`) and
+# CJK-meaningful tags (`fwid`, `hwid`, `vert`, `vrt2`) are intentionally
+# excluded — exposing them under CJK scripts could rewrite text the user
+# never asked to change. See `docs/CJK_LATIN_USER_FEATURES_PLAN.md`.
+CJK_LATIN_USER_FEATURE_ALLOWLIST = frozenset(
+    {f'ss{n:02d}' for n in range(1, 21)}    # ss01..ss20
+    | {f'cv{n:02d}' for n in range(1, 100)}  # cv01..cv99
+    | {'salt', 'zero', 'tnum', 'pnum', 'frac', 'numr', 'dnom',
+       'sups', 'subs', 'sinf', 'ordn'}
+)
+
+
+def _collect_subordinate_lookup_indices(lookup) -> set:
+    """Collect every lookup index reachable from *lookup* via Context /
+    ChainContext SubstLookupRecord / PosLookupRecord, including nested
+    rule sets (Format 1/2). Does not include *lookup* itself."""
+    indices = set()
+    for subtable in lookup.SubTable:
+        st = subtable
+        if hasattr(st, 'ExtSubTable'):
+            st = st.ExtSubTable
+        if hasattr(st, 'SubstLookupRecord') and st.SubstLookupRecord:
+            for rec in st.SubstLookupRecord:
+                indices.add(rec.LookupListIndex)
+        if hasattr(st, 'PosLookupRecord') and st.PosLookupRecord:
+            for rec in st.PosLookupRecord:
+                indices.add(rec.LookupListIndex)
+        for attr in ('SubRuleSet', 'SubClassSet',
+                     'ChainSubRuleSet', 'ChainSubClassSet',
+                     'PosRuleSet', 'PosClassSet',
+                     'ChainPosRuleSet', 'ChainPosClassSet'):
+            ruleset_list = getattr(st, attr, None)
+            if not ruleset_list:
+                continue
+            for ruleset in ruleset_list:
+                if not ruleset:
+                    continue
+                for attr2 in ('SubRule', 'SubClassRule',
+                              'ChainSubRule', 'ChainSubClassRule',
+                              'PosRule', 'PosClassRule',
+                              'ChainPosRule', 'ChainPosClassRule'):
+                    rules = getattr(ruleset, attr2, None)
+                    if not rules:
+                        continue
+                    for rule in rules:
+                        if hasattr(rule, 'SubstLookupRecord') \
+                                and rule.SubstLookupRecord:
+                            for rec in rule.SubstLookupRecord:
+                                indices.add(rec.LookupListIndex)
+                        if hasattr(rule, 'PosLookupRecord') \
+                                and rule.PosLookupRecord:
+                            for rec in rule.PosLookupRecord:
+                                indices.add(rec.LookupListIndex)
+    return indices
+
+
+def _latin_feature_safe_for_cjk_promotion(feat_record, merged_lookups,
+                                          lat_glyph_names):
+    """Return True if every glyph referenced by *feat_record*'s lookups —
+    transitively, including subordinate lookups reached through Context /
+    ChainContext records — is in *lat_glyph_names*. The feature is then
+    safe to expose under a CJK script's LangSys: it can only rewrite
+    Latin-owned glyphs.
+
+    A lookup with no detectable input glyphs is treated as safe (the same
+    convention `_classify_lookup` uses for its `mixed` fallback): an empty
+    lookup is a no-op.
+    """
+    feat = feat_record.Feature
+    pending = list(feat.LookupListIndex or [])
+    visited = set()
+    while pending:
+        li = pending.pop()
+        if li in visited:
+            continue
+        visited.add(li)
+        if li < 0 or li >= len(merged_lookups):
+            return False
+        lookup = merged_lookups[li]
+        glyphs = _collect_lookup_glyphs(lookup)
+        if glyphs:
+            for g in glyphs:
+                if g not in lat_glyph_names:
+                    return False
+        # Walk Context / ChainContext subordinate lookups too: a top-level
+        # coverage that's all-Latin can still drive a subordinate lookup
+        # that touches non-Latin glyphs.
+        for sub_li in _collect_subordinate_lookup_indices(lookup):
+            if sub_li not in visited:
+                pending.append(sub_li)
+    return True
+
+
 def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
                     jp_feat_index_map, lat_feat_index_map,
-                    jp_feature_records, lat_feature_records):
+                    jp_feature_records, lat_feature_records,
+                    cjk_extra_lat_features=None,
+                    merged_feature_records=None,
+                    combined_record_cache=None):
     """Build a merged LangSys with correct feature references.
 
     Parameters:
@@ -2118,6 +2256,23 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
         lat_feat_index_map: old EN feature index -> new merged feature index
         jp_feature_records: JP FeatureList.FeatureRecord (for tag lookup)
         lat_feature_records: EN FeatureList.FeatureRecord (for tag lookup)
+        cjk_extra_lat_features: list of (tag, new_merged_idx) for allowlisted
+            Latin user features (ss02, tnum, ...). Only consulted when
+            script_tag is in CJK_SCRIPTS.
+        merged_feature_records: the merged FeatureList.FeatureRecord list
+            (jp_features + lat_features, in the same order as the merged
+            FeatureList). Required to support the duplicate-tag merge in
+            CJK_SCRIPTS: when an allowlist tag already lives on the JP
+            side of the current LangSys, a fresh combined FeatureRecord
+            (JP lookups + Latin lookups) is appended to this list and the
+            LangSys references the new index. The original JP record is
+            left untouched, so a Latin named-only lookup never leaks into
+            the JP DefaultLangSys (or any other LangSys that shares the
+            same JP record by index).
+        combined_record_cache: dict keyed by (jp_merged_idx, lat_merged_idx)
+            mapping to the cached combined FeatureRecord index. Lets every
+            LangSys that needs the same combination reuse the same
+            appended record.
     """
     from fontTools.ttLib.tables import otTables
 
@@ -2140,11 +2295,75 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
                 lat_tags_in_langsys.add(lat_feature_records[old_idx].FeatureTag)
 
     if script_tag in CJK_SCRIPTS:
-        # CJK script: use JP features only
+        # CJK script: use JP features, plus a narrow allowlist of Latin-side
+        # user features (ss02, tnum, ...) so apps that shape mixed Latin/CJK
+        # runs through a CJK LangSys can still reach them. Default-on /
+        # context-sensitive Latin tags are intentionally excluded.
+        jp_tags_in_langsys = set()
+        jp_tag_to_merged_idx = {}
         if jp_lang_sys and jp_lang_sys.FeatureIndex:
             for old_idx in jp_lang_sys.FeatureIndex:
                 if old_idx in jp_feat_index_map:
-                    feat_indices.append(jp_feat_index_map[old_idx])
+                    merged_idx = jp_feat_index_map[old_idx]
+                    feat_indices.append(merged_idx)
+                    if old_idx < len(jp_feature_records):
+                        tag = jp_feature_records[old_idx].FeatureTag
+                        jp_tags_in_langsys.add(tag)
+                        jp_tag_to_merged_idx.setdefault(tag, merged_idx)
+        # Latin user features live under Latin's `latn`/`DFLT` LangSys, not
+        # the (typically nonexistent) Latin `kana`/`hani` LangSys, so iterate
+        # the pre-computed list collected in `_merge_ot_table_v2` rather than
+        # `lat_lang_sys` (which is None for CJK script tags).
+        if table_tag == 'GSUB' and cjk_extra_lat_features:
+            for tag, new_idx in cjk_extra_lat_features:
+                if tag not in jp_tags_in_langsys:
+                    feat_indices.append(new_idx)
+                    continue
+                # Duplicate tag: HarfBuzz would only fire one of two
+                # `tnum` records (the shadowing pattern that bites
+                # GSUB_LATN_DEDUPE_TAGS under `latn`). Instead of
+                # dropping the Latin promotion *or* mutating the shared
+                # JP record (which would leak the Latin lookups into
+                # every LangSys that references the same JP record by
+                # index — for example a Latin named-only `tnum`
+                # leaking into `kana/dflt`), build a fresh combined
+                # FeatureRecord (JP lookups + Latin lookups), cache it
+                # by `(jp_idx, lat_idx)` so other LangSys reuse it, and
+                # have this LangSys reference the combined index in
+                # place of the bare JP one.
+                if (merged_feature_records is None
+                        or combined_record_cache is None):
+                    continue
+                jp_merged_idx = jp_tag_to_merged_idx.get(tag)
+                if jp_merged_idx is None:
+                    continue
+                if jp_merged_idx >= len(merged_feature_records):
+                    continue
+                if new_idx >= len(merged_feature_records):
+                    continue
+                cache_key = (jp_merged_idx, new_idx)
+                combined_idx = combined_record_cache.get(cache_key)
+                if combined_idx is None:
+                    jp_rec = merged_feature_records[jp_merged_idx]
+                    lat_rec = merged_feature_records[new_idx]
+                    combined_rec = copy.deepcopy(jp_rec)
+                    seen = set(combined_rec.Feature.LookupListIndex or [])
+                    for li in (lat_rec.Feature.LookupListIndex or []):
+                        if li not in seen:
+                            combined_rec.Feature.LookupListIndex.append(li)
+                            seen.add(li)
+                    combined_rec.Feature.LookupCount = len(
+                        combined_rec.Feature.LookupListIndex)
+                    combined_idx = len(merged_feature_records)
+                    merged_feature_records.append(combined_rec)
+                    combined_record_cache[cache_key] = combined_idx
+                # Replace the bare JP index in feat_indices with the
+                # combined index. (feat_indices was filled in the JP
+                # loop above; replace the first occurrence.)
+                for i, fi in enumerate(feat_indices):
+                    if fi == jp_merged_idx:
+                        feat_indices[i] = combined_idx
+                        break
     elif script_tag in LATIN_SCRIPTS:
         # Latin script: use EN features, plus JP CJK-only features
         # (some features like vert, vrt2 should still be available)
@@ -2342,6 +2561,12 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
     merged_feature_list.FeatureRecord = [f[1] for f in all_features]
     merged_feature_list.FeatureCount = len(all_features)
 
+    # Cache for per-LangSys CJK duplicate-tag combined records, keyed by
+    # (jp_merged_idx, lat_merged_idx). Same combination across LangSys
+    # reuses the same appended FeatureRecord rather than producing a new
+    # one each time.
+    combined_record_cache = {}
+
     # --- Step 4: Build merged ScriptList ---
     # Collect all script tags from both fonts
     all_script_tags = set()
@@ -2361,6 +2586,80 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
     jp_feature_records = jp_ot.FeatureList.FeatureRecord if jp_ot.FeatureList else []
     lat_feature_records = lat_ot.FeatureList.FeatureRecord if lat_ot.FeatureList else []
 
+    # Pre-compute allowlisted Latin user GSUB features (ss02, tnum, ...) so
+    # CJK-script LangSys records can re-expose them. Two restrictions:
+    #
+    #   1. Only features reachable from the Latin font's `latn` / `DFLT`
+    #      LangSys (default or named) are eligible. Iterating all of
+    #      `lat_feat_index_map` would also pick up orphan features that
+    #      no LangSys references at all.
+    #   2. Each candidate's lookups must only touch glyphs the Latin font
+    #      owns — including subordinate lookups reached via Context /
+    #      ChainContext records. Pan-CJK base fonts ship Latin-script
+    #      lookups too, but those live in `jp_features`, not
+    #      `lat_features`; the check still pins the invariant in case the
+    #      Latin source ever ships an allowlist tag whose lookup reaches
+    #      outside its own glyph set.
+    #
+    # Named LangSys handling: a feature only reachable through Latin's
+    # `latn/JAN` (and missing from the default) should still be reachable
+    # through CJK `kana/JAN` — Issue #12-style locale fallback.
+    # `cjk_extras_default` is the union of Latin `latn` / `DFLT` defaults
+    # (used by every CJK DefaultLangSys), and `cjk_extras_named[lang_tag]`
+    # adds the union of `latn/<lang_tag>` and `DFLT/<lang_tag>` named
+    # LangSys candidates on top of the defaults (used by every CJK named
+    # LangSys with that tag).
+    def _collect_lat_user_candidates(feat_indices, seen_tags):
+        out = []
+        for old_idx in feat_indices or []:
+            if old_idx not in lat_feat_index_map:
+                continue
+            if old_idx >= len(lat_feature_records):
+                continue
+            tag = lat_feature_records[old_idx].FeatureTag
+            if tag not in CJK_LATIN_USER_FEATURE_ALLOWLIST:
+                continue
+            # Per OpenType spec a LangSys has at most one FeatureRecord
+            # per tag, so winner-takes-all on the first occurrence is
+            # safe. If a malformed Latin source ever ships multiple
+            # `tnum` records under the same LangSys, the first wins and
+            # later duplicates are skipped here (matches HarfBuzz's
+            # behaviour for the same shape).
+            if tag in seen_tags:
+                continue
+            new_merged_idx = lat_feat_index_map[old_idx]
+            merged_feat = all_features[new_merged_idx][1]
+            if not _latin_feature_safe_for_cjk_promotion(
+                    merged_feat, merged_lookups, lat_glyph_names):
+                continue
+            seen_tags.add(tag)
+            out.append((tag, new_merged_idx))
+        return out
+
+    cjk_extras_default = []  # [(tag, new_merged_idx)]
+    cjk_extras_named = {}    # lang_tag -> [(tag, new_merged_idx)]
+    if table_tag == 'GSUB' and lat_ot.ScriptList:
+        default_seen = set()
+        for sr in lat_ot.ScriptList.ScriptRecord:
+            if sr.ScriptTag not in ('latn', 'DFLT'):
+                continue
+            ds = sr.Script.DefaultLangSys
+            if ds:
+                cjk_extras_default.extend(
+                    _collect_lat_user_candidates(ds.FeatureIndex, default_seen))
+        for sr in lat_ot.ScriptList.ScriptRecord:
+            if sr.ScriptTag not in ('latn', 'DFLT'):
+                continue
+            for lsr in (sr.Script.LangSysRecord or []):
+                tag_key = lsr.LangSysTag
+                merged_extras = cjk_extras_named.get(tag_key)
+                if merged_extras is None:
+                    merged_extras = list(cjk_extras_default)
+                    cjk_extras_named[tag_key] = merged_extras
+                seen = {t for t, _ in merged_extras}
+                merged_extras.extend(
+                    _collect_lat_user_candidates(lsr.LangSys.FeatureIndex, seen))
+
     # Build merged script records
     merged_script_records = []
     for script_tag in sorted(all_script_tags):
@@ -2377,7 +2676,10 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
         new_sr.Script.DefaultLangSys = _build_lang_sys(
             jp_default, lat_default, script_tag, table_tag,
             jp_feat_index_map, lat_feat_index_map,
-            jp_feature_records, lat_feature_records)
+            jp_feature_records, lat_feature_records,
+            cjk_extra_lat_features=cjk_extras_default,
+            merged_feature_records=merged_feature_list.FeatureRecord,
+            combined_record_cache=combined_record_cache)
 
         # Named LangSys records
         lang_sys_tags = set()
@@ -2391,6 +2693,16 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
             for lsr in lat_sr.Script.LangSysRecord:
                 lang_sys_tags.add(lsr.LangSysTag)
                 lat_lang_map[lsr.LangSysTag] = lsr.LangSys
+        # For CJK scripts, also create a named LangSys for any tag that
+        # Latin's matching named LangSys (e.g. `latn/JAN`) contributes
+        # allowlist features for, even if neither side defines that tag
+        # under this CJK script. Without this, an Inter `latn/JAN`-only
+        # `tnum` is unreachable from any Japanese run shaped under
+        # `kana/JAN`.
+        if script_tag in CJK_SCRIPTS and table_tag == 'GSUB':
+            for tag_key, extras in cjk_extras_named.items():
+                if extras and extras != cjk_extras_default:
+                    lang_sys_tags.add(tag_key)
 
         new_lang_records = []
         for lang_tag in sorted(lang_sys_tags):
@@ -2402,12 +2714,16 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
             # not shadow the missing side's default features.
             jp_lang_sys = jp_lang_map.get(lang_tag, jp_default)
             lat_lang_sys = lat_lang_map.get(lang_tag, lat_default)
+            extras = cjk_extras_named.get(lang_tag, cjk_extras_default)
             new_lsr.LangSys = _build_lang_sys(
                 jp_lang_sys,
                 lat_lang_sys,
                 script_tag, table_tag,
                 jp_feat_index_map, lat_feat_index_map,
-                jp_feature_records, lat_feature_records)
+                jp_feature_records, lat_feature_records,
+                cjk_extra_lat_features=extras,
+                merged_feature_records=merged_feature_list.FeatureRecord,
+                combined_record_cache=combined_record_cache)
             new_lang_records.append(new_lsr)
 
         new_sr.Script.LangSysRecord = new_lang_records if new_lang_records else []
@@ -2417,6 +2733,11 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
     merged_script_list = otTables.ScriptList()
     merged_script_list.ScriptRecord = merged_script_records
     merged_script_list.ScriptCount = len(merged_script_records)
+
+    # CJK duplicate-tag merge may have appended combined FeatureRecords
+    # to merged_feature_list.FeatureRecord; refresh the count so it
+    # matches the final list.
+    merged_feature_list.FeatureCount = len(merged_feature_list.FeatureRecord)
 
     # --- Step 5: Apply to merged font ---
     jp_ot.LookupList.Lookup = merged_lookups
@@ -4034,6 +4355,15 @@ def merge_fonts(config: dict) -> str:
             # — otherwise NotoSansCJKjp's ``cid00017 → cid63153`` (the
             # bug case from #23) survives and plain digits shape to base
             # CJK alternates.
+            #
+            # Limitation: this branch also bypasses Latin user-feature
+            # promotion (`ss02` / `tnum` / ... reachable from CJK
+            # scripts). Filtering the Latin GSUB to lookups whose
+            # post-rename inputs all survived would re-enable promotion
+            # here, but it requires lookup pruning + chain-context
+            # reference remap + feature/LangSys cleanup with non-trivial
+            # regression risk. Out of scope for the initial CJK-promotion
+            # fix; tracked as a follow-up.
             merge_feature_tables(None, jp_font, merged,
                                  lat_scale=final_lat_scale, lat_baseline=lat_baseline,
                                  append_lat_lookups=False,
