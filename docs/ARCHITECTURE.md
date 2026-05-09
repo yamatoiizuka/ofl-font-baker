@@ -631,7 +631,8 @@ Test code is split across four files under `python/tests/`:
 | Metadata correctness | 39 | familyName / copyright / version / Manufacturer / Trademark / nameID hygiene |
 | Metadata (base only) | 5 | familyName, OFL, copyright, designer, "Built with" |
 | Output weight | 4 | usWeightClass, nameID 2 / 4 / 17 |
-| UINameID collision | 1 | Inter `ss02` UINameID 257 vs NotoSansJP nameID 257 remap |
+| UINameID collision | 2 | Inter `ss02` UINameID 257 vs NotoSansJP nameID 257 remap; ss02/ss03 keep distinct UINameIDs after collision (Issue #26) |
+| FeatureParams nameID allocator | 6 | Single-collision + multi-collision label preservation, distinct targets |
 | Character variant labels | 2 | Charis `cv13` label preserved as sub & as base |
 | Build OFL text | 4 | source copyright concat, user addition, fallback |
 | Build settings text | 3 | summary line, sources line, dimensions |

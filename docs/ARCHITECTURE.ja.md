@@ -618,7 +618,8 @@ python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テ
 | Metadata correctness | 39 | familyName / copyright / version / Manufacturer / Trademark / nameID hygiene |
 | Metadata (base only) | 5 | familyName、OFL、copyright、designer、"Built with" |
 | Output weight | 4 | usWeightClass、nameID 2 / 4 / 17 |
-| UINameID collision | 1 | Inter `ss02` UINameID 257 と NotoSansJP nameID 257 の remap |
+| UINameID collision | 2 | Inter `ss02` UINameID 257 と NotoSansJP nameID 257 の remap、衝突後も ss02 / ss03 が別 UINameID に保たれる (Issue #26) |
+| FeatureParams nameID allocator | 6 | 単一衝突・多重衝突ラベル保持、ターゲット重複なし |
 | Character variant labels | 2 | Charis `cv13` ラベル保持（sub / base 両方）|
 | Build OFL text | 4 | source copyright 結合、ユーザー追記、フォールバック |
 | Build settings text | 3 | サマリ行、sources 行、寸法 |

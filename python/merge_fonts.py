@@ -3550,8 +3550,12 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
         # Older fontTools versions also expose `NamedParameters`. The
         # collector has to walk all of these so cvXX labels survive merge
         # (Issue #2 #7).
+        # `SubfamilyNameID` is used by the `size` FeatureParams
+        # (`FeatureParamsSize`) to label the size-instance subfamily.
+        # Without it the same collision/leak class hits that shape.
         SCALAR_ATTRS = ('UINameID', 'FeatUILabelNameID',
-                        'FeatUITooltipTextNameID', 'SampleTextNameID')
+                        'FeatUITooltipTextNameID', 'SampleTextNameID',
+                        'SubfamilyNameID')
 
         def _collect_feat_param_nameids(fp):
             ids = set()
@@ -3586,12 +3590,95 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
         # that the merged name table is already using to a fresh ID. Without
         # this, a Latin label that happens to clash with a base-font name
         # record would silently inherit the base's text (Issue #2 #7).
+        #
+        # The reserved set must include both the base/merged name IDs *and*
+        # every Latin feature-label ID that will be copied unchanged
+        # (Issue #26): otherwise the allocator can pick a target that is
+        # already in use by another Latin feature label, collapsing two
+        # different stylistic sets onto the same UINameID and producing
+        # duplicate / misleading entries in the OpenType UI panel.
         existing_nameids = {r.nameID for r in name_table.names}
-        next_free = max(existing_nameids | {255}) + 1
+        reserved_nameids = set(existing_nameids) | set(lat_feat_name_ids)
+        next_free = max(reserved_nameids | {255}) + 1
+
+        def _alloc_contiguous(size):
+            """Reserve and return the start of a contiguous block of
+            *size* fresh nameIDs."""
+            nonlocal next_free
+            while True:
+                if all(next_free + i not in reserved_nameids
+                       for i in range(size)):
+                    start = next_free
+                    for i in range(size):
+                        reserved_nameids.add(start + i)
+                    next_free = start + size
+                    return start
+                next_free += 1
+
         nameid_remap: dict[int, int] = {}
+
+        # Pre-pass: cvXX parameter-label ranges
+        # (`FirstParamUILabelNameID..+NumNamedParameters`) are read by
+        # the font as `first + offset`. If only some IDs in the range
+        # collide, moving them individually fragments the block — the
+        # offsets that didn't collide stay at the original positions
+        # while the moved ones land elsewhere, so the FeatureParams
+        # ends up pointing at the wrong labels (or at base records).
+        #
+        # Two cv FeatureRecords may also reference overlapping but
+        # non-identical ranges (e.g. cv01 covers 300..302 while cv02
+        # covers 300..304). Treating each range independently would
+        # let one cv take a short mapped block and leave the other's
+        # tail IDs un-relocated. To stay correct in all shapes,
+        # collect every cv range first, **union overlapping ranges
+        # into maximal blocks**, and atomically allocate one fresh
+        # contiguous block per colliding union.
+        cv_ranges = []
+        for tag in ('GSUB', 'GPOS'):
+            lat_ot = lat_font.get(tag)
+            if not lat_ot or not hasattr(lat_ot, 'table') or not lat_ot.table:
+                continue
+            ot = lat_ot.table
+            if not ot.FeatureList:
+                continue
+            for feat_rec in ot.FeatureList.FeatureRecord:
+                fp = feat_rec.Feature.FeatureParams
+                if not fp:
+                    continue
+                num = (getattr(fp, 'NumNamedParameters', None)
+                       or getattr(fp, 'NamedParameters', None))
+                first = getattr(fp, 'FirstParamUILabelNameID', None)
+                if not first or not num:
+                    continue
+                cv_ranges.append((first, first + num))
+
+        # Merge overlapping intervals.
+        cv_blocks: list[tuple[int, int]] = []
+        for s, e in sorted(cv_ranges):
+            if cv_blocks and s <= cv_blocks[-1][1]:
+                cv_blocks[-1] = (cv_blocks[-1][0], max(cv_blocks[-1][1], e))
+            else:
+                cv_blocks.append((s, e))
+
+        for block_start, block_end in cv_blocks:
+            block_ids = list(range(block_start, block_end))
+            if not any(rid in existing_nameids for rid in block_ids):
+                continue  # No collision; block stays put.
+            new_start = _alloc_contiguous(block_end - block_start)
+            for offset, rid in enumerate(block_ids):
+                nameid_remap[rid] = new_start + offset
+
+        # Per-scalar allocation for everything else.
         for old_id in sorted(lat_feat_name_ids):
+            if old_id in nameid_remap:
+                continue  # Handled by the range pass above.
             if old_id in existing_nameids:
+                # Skip past anything already reserved or previously
+                # handed out so two collisions never share a target.
+                while next_free in reserved_nameids:
+                    next_free += 1
                 nameid_remap[old_id] = next_free
+                reserved_nameids.add(next_free)
                 next_free += 1
 
         for record in lat_name.names:
