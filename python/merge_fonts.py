@@ -2564,9 +2564,11 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
         lat_feat_index_map: old EN feature index -> new merged feature index
         jp_feature_records: JP FeatureList.FeatureRecord (for tag lookup)
         lat_feature_records: EN FeatureList.FeatureRecord (for tag lookup)
-        cjk_extra_lat_features: list of (tag, new_merged_idx) for allowlisted
-            Latin user features (ss02, tnum, ...). Only consulted when
-            script_tag is in CJK_SCRIPTS.
+        cjk_extra_lat_features: list of (tag, new_merged_idx) for Latin/sub
+            features promoted into CJK LangSys records. This includes
+            allowlisted explicit user features (ss02, tnum, ...) and strict
+            sub-font-confined default GSUB features such as calt. Only
+            consulted when script_tag is in CJK_SCRIPTS.
         merged_feature_records: the merged FeatureList.FeatureRecord list
             (jp_features + lat_features, in the same order as the merged
             FeatureList). Required to support the duplicate-tag merge in
@@ -2603,10 +2605,11 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
                 lat_tags_in_langsys.add(lat_feature_records[old_idx].FeatureTag)
 
     if script_tag in CJK_SCRIPTS:
-        # CJK script: use JP features, plus a narrow allowlist of Latin-side
-        # user features (ss02, tnum, ...) so apps that shape mixed Latin/CJK
-        # runs through a CJK LangSys can still reach them. Default-on /
-        # context-sensitive Latin tags are intentionally excluded.
+        # CJK script: use JP features, plus narrow Latin-side promotions so
+        # apps that shape mixed Latin/CJK runs through a CJK LangSys can still
+        # reach them. Explicit user features use the allowlist; default-on /
+        # context-sensitive Latin tags stay excluded unless they pass the
+        # separate strict sub-font-confined policy, currently limited to calt.
         jp_tags_in_langsys = set()
         jp_tag_to_merged_idx = {}
         if jp_lang_sys and jp_lang_sys.FeatureIndex:
@@ -2894,8 +2897,9 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
     jp_feature_records = jp_ot.FeatureList.FeatureRecord if jp_ot.FeatureList else []
     lat_feature_records = lat_ot.FeatureList.FeatureRecord if lat_ot.FeatureList else []
 
-    # Pre-compute allowlisted Latin user GSUB features (ss02, tnum, ...) so
-    # CJK-script LangSys records can re-expose them. Two restrictions:
+    # Pre-compute Latin/sub GSUB promotions so CJK-script LangSys records can
+    # re-expose explicit user features and strict default features. Two
+    # restrictions:
     #
     #   1. Only features reachable from the Latin font's `latn` / `DFLT`
     #      LangSys (default or named) are eligible. Iterating all of

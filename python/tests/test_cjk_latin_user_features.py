@@ -1236,6 +1236,17 @@ class TestStrictCaltSafetyHelper:
         assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
             feat_rec, [lookup], {"A", "colon", "A.alt"}) is False
 
+    def test_accepts_context_format2_nonzero_sub_owned_classes(self):
+        lookup = _make_context_subst_format2(
+            coverage_glyphs=["A"],
+            class_defs={"A": 1, "colon": 2},
+            class_set_index=1,
+            input_classes=[2],
+        )
+        feat_rec = _make_feature_record("calt", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
+            feat_rec, [lookup], {"A", "colon"}) is True
+
     def test_accepts_chain_context_format2_nonzero_sub_owned_classes(self):
         sub = _make_single_subst("A", "A.alt")
         chain = _make_chain_context_format2(
