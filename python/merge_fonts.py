@@ -1538,6 +1538,14 @@ def _add_coverage_domain_glyphs(glyph_names: set, coverage) -> bool:
     return False
 
 
+def _coverage_domain_has_glyphs(coverage) -> bool:
+    if coverage is None:
+        return False
+    if isinstance(coverage, list):
+        return any(_coverage_domain_has_glyphs(cov) for cov in coverage)
+    return bool(getattr(coverage, 'glyphs', None))
+
+
 def _classdef_glyphs_by_class(class_def) -> dict[int, set[str]]:
     out = {}
     class_defs = getattr(class_def, 'classDefs', None) or {}
@@ -1617,6 +1625,8 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
                      'LookAheadCoverage'):
         unknown = _add_coverage_domain_glyphs(
             glyph_names, getattr(st, cov_attr, None)) or unknown
+    has_input_coverage = _coverage_domain_has_glyphs(
+        getattr(st, 'Coverage', None))
 
     if lookup_type == 1:
         mapping = getattr(st, 'mapping', None)
@@ -1625,8 +1635,11 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
             for out_glyph in mapping.values():
                 unknown = _add_substitution_output_glyphs(
                     glyph_names, out_glyph) or unknown
+        substitute = getattr(st, 'Substitute', None)
+        if substitute is not None and not mapping and not has_input_coverage:
+            unknown = True
         unknown = _add_substitution_output_glyphs(
-            glyph_names, getattr(st, 'Substitute', None)) or unknown
+            glyph_names, substitute) or unknown
 
     elif lookup_type == 2:
         mapping = getattr(st, 'mapping', None)
@@ -1635,7 +1648,10 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
             for sequence in mapping.values():
                 unknown = _add_substitution_output_glyphs(
                     glyph_names, sequence) or unknown
-        for sequence in (getattr(st, 'Sequence', None) or []):
+        sequences = getattr(st, 'Sequence', None) or []
+        if sequences and not has_input_coverage:
+            unknown = True
+        for sequence in sequences:
             unknown = _add_substitution_output_glyphs(
                 glyph_names, getattr(sequence, 'Substitute', None)) or unknown
 
@@ -1646,7 +1662,10 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
             for alt_set in alternates.values():
                 unknown = _add_substitution_output_glyphs(
                     glyph_names, alt_set) or unknown
-        for alt_set in (getattr(st, 'AlternateSet', None) or []):
+        alt_sets = getattr(st, 'AlternateSet', None) or []
+        if alt_sets and not has_input_coverage:
+            unknown = True
+        for alt_set in alt_sets:
             unknown = _add_substitution_output_glyphs(
                 glyph_names, getattr(alt_set, 'Alternate', None)) or unknown
 
@@ -1660,7 +1679,10 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
                         glyph_names, getattr(lig, 'Component', None)) or unknown
                     unknown = _add_glyph(
                         glyph_names, getattr(lig, 'LigGlyph', None)) or unknown
-        for lig_set in (getattr(st, 'LigatureSet', None) or []):
+        lig_sets = getattr(st, 'LigatureSet', None) or []
+        if lig_sets and not has_input_coverage:
+            unknown = True
+        for lig_set in lig_sets:
             for lig in (getattr(lig_set, 'Ligature', None) or []):
                 unknown = _add_glyph_sequence(
                     glyph_names, getattr(lig, 'Component', None)) or unknown
@@ -1731,8 +1753,11 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
         unknown = True
 
     elif lookup_type == 8:
+        substitute = getattr(st, 'Substitute', None)
+        if substitute is not None and not has_input_coverage:
+            unknown = True
         unknown = _add_substitution_output_glyphs(
-            glyph_names, getattr(st, 'Substitute', None)) or unknown
+            glyph_names, substitute) or unknown
 
     else:
         unknown = True
@@ -2401,18 +2426,12 @@ CJK_SCRIPTS = {'kana', 'hani', 'hang', 'bopo', 'yi  '}
 GSUB_LATN_DEDUPE_TAGS = frozenset({'ccmp', 'dlig'})
 
 
-# Latin user-toggle GSUB features that should also be reachable from CJK
-# script LangSys records (`kana` / `hani` / ...). Apps such as Adobe
-# Illustrator may shape mixed Latin/CJK runs through a CJK script's
-# LangSys instead of splitting into a separate `latn` run; without this
-# allowlist the user's `ss02` / `tnum` toggle silently no-ops on Latin
-# glyphs whenever the run also contains a Japanese character.
-#
-# Restricted to explicit *user* features. Default-on, context-sensitive, or
-# semantically special GSUB tags (`calt`, `liga`, `ccmp`, `case`, `dlig`)
-# remain out of this allowlist and use the strict full-domain policy below.
-# Language/alternate/CJK-layout tags (`locl`, `aalt`, `fwid`, `hwid`, `vert`,
-# `vrt2`) remain out of scope for cross-script Latin/sub promotion.
+# Restricted to explicit user-selected Latin/sub features. Default-on,
+# context-sensitive, or semantically special GSUB tags (`calt`, `liga`,
+# `ccmp`, `case`, `dlig`) remain out of this allowlist and use the strict
+# full-domain GSUB promotion policy below. Language/alternate/CJK-layout
+# tags (`locl`, `aalt`, `fwid`, `hwid`, `vert`, `vrt2`) remain out of scope
+# for cross-script Latin/sub promotion.
 # See `docs/CJK_LATIN_USER_FEATURES_PLAN.md`.
 CJK_LATIN_USER_FEATURE_ALLOWLIST = frozenset(
     {f'ss{n:02d}' for n in range(1, 21)}    # ss01..ss20

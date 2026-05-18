@@ -569,6 +569,28 @@ class TestLatinUserFeaturesUnderCjkScripts:
             f"prefix: {script}={cjk[:len(latn)]} vs latn={latn}"
         )
 
+    @pytest.mark.parametrize("feature,latin_text", [
+        ("case", "()"),
+        ("dlig", "fi"),
+    ])
+    @pytest.mark.parametrize("script,language", [("kana", "ja"), ("hani", "ja")])
+    def test_case_and_dlig_under_cjk_are_not_default_on(
+            self, merged_inter_path, feature, latin_text, script, language):
+        mixed_text = f"{latin_text} 日本語"
+        latn_default = _shape(merged_inter_path, latin_text, "latn", "en")
+        latn_enabled = _shape(
+            merged_inter_path, latin_text, "latn", "en", {feature: True})
+        assert latn_default != latn_enabled, (
+            f"fixture sanity: {feature}=1 should affect {latin_text!r}"
+        )
+
+        cjk_default = _shape(merged_inter_path, mixed_text, script, language)
+        assert cjk_default[:len(latn_default)] == latn_default, (
+            f"{script}/{language} default shaping unexpectedly enabled "
+            f"{feature}: {script}={cjk_default[:len(latn_default)]} "
+            f"vs latn default={latn_default}"
+        )
+
 
 class TestCjkScriptShapingUnchangedForJapanese:
     """Plain Japanese text shaped under CJK scripts must not be affected by
@@ -1437,6 +1459,61 @@ class TestStrictCaltSafetyHelper:
         feat_rec = _make_feature_record("calt", [1])
         assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
             feat_rec, [sub, chain], {"A", "A.alt", "colon"}) is True
+
+    def test_rejects_multiple_subst_sequence_without_coverage(self):
+        from fontTools.ttLib.tables import otTables
+        sequence = otTables.Sequence()
+        sequence.Substitute = ["M", "gravecomb"]
+        sequence.GlyphCount = len(sequence.Substitute)
+        st = otTables.MultipleSubst()
+        st.Sequence = [sequence]
+        st.SequenceCount = len(st.Sequence)
+        lookup = otTables.Lookup()
+        lookup.LookupType = 2
+        lookup.LookupFlag = 0
+        lookup.SubTable = [st]
+        lookup.SubTableCount = 1
+        feat_rec = _make_feature_record("ccmp", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_gsub_promotion(
+            feat_rec, [lookup], {"M", "gravecomb"}) is False
+
+    def test_rejects_alternate_subst_set_without_coverage(self):
+        from fontTools.ttLib.tables import otTables
+        alt_set = otTables.AlternateSet()
+        alt_set.Alternate = ["A.alt"]
+        alt_set.AlternateCount = len(alt_set.Alternate)
+        st = otTables.AlternateSubst()
+        st.AlternateSet = [alt_set]
+        st.AlternateSetCount = len(st.AlternateSet)
+        lookup = otTables.Lookup()
+        lookup.LookupType = 3
+        lookup.LookupFlag = 0
+        lookup.SubTable = [st]
+        lookup.SubTableCount = 1
+        feat_rec = _make_feature_record("salt", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_gsub_promotion(
+            feat_rec, [lookup], {"A.alt"}) is False
+
+    def test_rejects_ligature_subst_set_without_coverage(self):
+        from fontTools.ttLib.tables import otTables
+        lig = otTables.Ligature()
+        lig.Component = ["i"]
+        lig.CompCount = len(lig.Component) + 1
+        lig.LigGlyph = "f_i"
+        lig_set = otTables.LigatureSet()
+        lig_set.Ligature = [lig]
+        lig_set.LigatureCount = len(lig_set.Ligature)
+        st = otTables.LigatureSubst()
+        st.LigatureSet = [lig_set]
+        st.LigatureSetCount = len(st.LigatureSet)
+        lookup = otTables.Lookup()
+        lookup.LookupType = 4
+        lookup.LookupFlag = 0
+        lookup.SubTable = [st]
+        lookup.SubTableCount = 1
+        feat_rec = _make_feature_record("liga", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_gsub_promotion(
+            feat_rec, [lookup], {"i", "f_i"}) is False
 
 
 class TestStrictCaltPromotionStructure:
