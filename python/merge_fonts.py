@@ -30,6 +30,7 @@ import shutil
 import struct
 import subprocess
 import sys
+from typing import NamedTuple
 
 from fontTools.misc.timeTools import timestampNow
 from fontTools.ttLib import TTFont
@@ -1499,6 +1500,268 @@ def _collect_lookup_glyphs(lookup) -> set:
     return glyph_names
 
 
+class LookupGlyphDomain(NamedTuple):
+    glyphs: set[str]
+    unknown: bool = False
+
+
+def _add_glyph(glyph_names: set, glyph) -> bool:
+    if glyph is None:
+        return False
+    if isinstance(glyph, str):
+        glyph_names.add(glyph)
+        return False
+    return True
+
+
+def _add_glyph_sequence(glyph_names: set, glyphs) -> bool:
+    if glyphs is None:
+        return False
+    unknown = False
+    for glyph in glyphs:
+        unknown = _add_glyph(glyph_names, glyph) or unknown
+    return unknown
+
+
+def _add_coverage_domain_glyphs(glyph_names: set, coverage) -> bool:
+    if coverage is None:
+        return False
+    if isinstance(coverage, list):
+        unknown = False
+        for cov in coverage:
+            unknown = _add_coverage_domain_glyphs(glyph_names, cov) or unknown
+        return unknown
+    glyphs = getattr(coverage, 'glyphs', None)
+    if glyphs is None:
+        return True
+    glyph_names.update(glyphs)
+    return False
+
+
+def _classdef_glyphs_by_class(class_def) -> dict[int, set[str]]:
+    out = {}
+    class_defs = getattr(class_def, 'classDefs', None) or {}
+    for glyph, class_id in class_defs.items():
+        out.setdefault(class_id, set()).add(glyph)
+    return out
+
+
+def _add_class_sequence_domain(glyph_names: set, class_ids,
+                               glyphs_by_class: dict[int, set[str]]) -> bool:
+    """Return True when a class sequence cannot be proven sub-font-confined."""
+    if class_ids is None:
+        return False
+
+    unknown = False
+    for class_id in class_ids:
+        if class_id == 0:
+            unknown = True
+            continue
+
+        members = glyphs_by_class.get(class_id)
+        if not members:
+            unknown = True
+            continue
+
+        glyph_names.update(members)
+
+    return unknown
+
+
+def _add_class_set_domain(glyph_names: set, class_set_index: int, rules,
+                          glyphs_by_class: dict[int, set[str]]) -> bool:
+    if not rules:
+        return False
+    if class_set_index == 0:
+        return True
+    members = glyphs_by_class.get(class_set_index)
+    if not members:
+        return True
+    glyph_names.update(members)
+    return False
+
+
+def _context_rule_input_classes(rule):
+    input_classes = getattr(rule, 'Input', None)
+    if input_classes is not None:
+        return input_classes
+    return getattr(rule, 'Class', None)
+
+
+def _add_substitution_output_glyphs(glyph_names: set, value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        glyph_names.add(value)
+        return False
+    try:
+        return _add_glyph_sequence(glyph_names, value)
+    except TypeError:
+        return True
+
+
+def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
+        -> LookupGlyphDomain:
+    """Collect every glyph a supported GSUB subtable can match or emit."""
+    glyph_names = set()
+    unknown = False
+    st = subtable
+
+    if hasattr(st, 'ExtSubTable'):
+        lookup_type = getattr(st, 'ExtensionLookupType', lookup_type)
+        st = st.ExtSubTable
+        if st is None:
+            return LookupGlyphDomain(glyph_names, True)
+
+    for cov_attr in ('Coverage', 'BacktrackCoverage', 'InputCoverage',
+                     'LookAheadCoverage'):
+        unknown = _add_coverage_domain_glyphs(
+            glyph_names, getattr(st, cov_attr, None)) or unknown
+
+    if lookup_type == 1:
+        mapping = getattr(st, 'mapping', None)
+        if mapping:
+            glyph_names.update(mapping.keys())
+            for out_glyph in mapping.values():
+                unknown = _add_substitution_output_glyphs(
+                    glyph_names, out_glyph) or unknown
+        unknown = _add_substitution_output_glyphs(
+            glyph_names, getattr(st, 'Substitute', None)) or unknown
+
+    elif lookup_type == 2:
+        mapping = getattr(st, 'mapping', None)
+        if mapping:
+            glyph_names.update(mapping.keys())
+            for sequence in mapping.values():
+                unknown = _add_substitution_output_glyphs(
+                    glyph_names, sequence) or unknown
+        for sequence in (getattr(st, 'Sequence', None) or []):
+            unknown = _add_substitution_output_glyphs(
+                glyph_names, getattr(sequence, 'Substitute', None)) or unknown
+
+    elif lookup_type == 3:
+        alternates = getattr(st, 'alternates', None)
+        if alternates:
+            glyph_names.update(alternates.keys())
+            for alt_set in alternates.values():
+                unknown = _add_substitution_output_glyphs(
+                    glyph_names, alt_set) or unknown
+        for alt_set in (getattr(st, 'AlternateSet', None) or []):
+            unknown = _add_substitution_output_glyphs(
+                glyph_names, getattr(alt_set, 'Alternate', None)) or unknown
+
+    elif lookup_type == 4:
+        ligatures = getattr(st, 'ligatures', None)
+        if ligatures:
+            glyph_names.update(ligatures.keys())
+            for lig_list in ligatures.values():
+                for lig in (lig_list or []):
+                    unknown = _add_glyph_sequence(
+                        glyph_names, getattr(lig, 'Component', None)) or unknown
+                    unknown = _add_glyph(
+                        glyph_names, getattr(lig, 'LigGlyph', None)) or unknown
+        for lig_set in (getattr(st, 'LigatureSet', None) or []):
+            for lig in (getattr(lig_set, 'Ligature', None) or []):
+                unknown = _add_glyph_sequence(
+                    glyph_names, getattr(lig, 'Component', None)) or unknown
+                unknown = _add_glyph(
+                    glyph_names, getattr(lig, 'LigGlyph', None)) or unknown
+
+    elif lookup_type == 5:
+        fmt = getattr(st, 'Format', None)
+        if fmt == 1:
+            for ruleset in (getattr(st, 'SubRuleSet', None) or []):
+                for rule in (getattr(ruleset, 'SubRule', None) or []):
+                    unknown = _add_glyph_sequence(
+                        glyph_names, getattr(rule, 'Input', None)) or unknown
+        elif fmt == 2:
+            glyphs_by_class = _classdef_glyphs_by_class(
+                getattr(st, 'ClassDef', None))
+            for class_set_index, class_set in enumerate(
+                    getattr(st, 'SubClassSet', None) or []):
+                rules = getattr(class_set, 'SubClassRule', None) or []
+                unknown = _add_class_set_domain(
+                    glyph_names, class_set_index, rules,
+                    glyphs_by_class) or unknown
+                for rule in rules:
+                    unknown = _add_class_sequence_domain(
+                        glyph_names,
+                        _context_rule_input_classes(rule),
+                        glyphs_by_class,
+                    ) or unknown
+        elif fmt != 3:
+            unknown = True
+
+    elif lookup_type == 6:
+        fmt = getattr(st, 'Format', None)
+        if fmt == 1:
+            for ruleset in (getattr(st, 'ChainSubRuleSet', None) or []):
+                for rule in (getattr(ruleset, 'ChainSubRule', None) or []):
+                    for seq_attr in ('Backtrack', 'Input', 'LookAhead'):
+                        unknown = _add_glyph_sequence(
+                            glyph_names, getattr(rule, seq_attr, None)
+                        ) or unknown
+        elif fmt == 2:
+            backtrack_by_class = _classdef_glyphs_by_class(
+                getattr(st, 'BacktrackClassDef', None))
+            input_by_class = _classdef_glyphs_by_class(
+                getattr(st, 'InputClassDef', None))
+            lookahead_by_class = _classdef_glyphs_by_class(
+                getattr(st, 'LookAheadClassDef', None))
+            for class_set_index, class_set in enumerate(
+                    getattr(st, 'ChainSubClassSet', None) or []):
+                rules = getattr(class_set, 'ChainSubClassRule', None) or []
+                unknown = _add_class_set_domain(
+                    glyph_names, class_set_index, rules,
+                    input_by_class) or unknown
+                for rule in rules:
+                    unknown = _add_class_sequence_domain(
+                        glyph_names, getattr(rule, 'Backtrack', None),
+                        backtrack_by_class) or unknown
+                    unknown = _add_class_sequence_domain(
+                        glyph_names, getattr(rule, 'Input', None),
+                        input_by_class) or unknown
+                    unknown = _add_class_sequence_domain(
+                        glyph_names, getattr(rule, 'LookAhead', None),
+                        lookahead_by_class) or unknown
+        elif fmt != 3:
+            unknown = True
+
+    elif lookup_type == 7:
+        unknown = True
+
+    elif lookup_type == 8:
+        unknown = _add_substitution_output_glyphs(
+            glyph_names, getattr(st, 'Substitute', None)) or unknown
+
+    else:
+        unknown = True
+
+    return LookupGlyphDomain(glyph_names, unknown)
+
+
+def _collect_gsub_lookup_full_domain(lookup) -> LookupGlyphDomain:
+    """Collect input, context, and output glyphs for a GSUB lookup.
+
+    Unknown or malformed subtable shapes are marked unsafe instead of being
+    treated as empty no-ops; this collector is used for default-on promotion
+    safety, not broad lookup classification.
+    """
+    glyph_names = set()
+    unknown = False
+    try:
+        lookup_type = getattr(lookup, 'LookupType', None)
+        if lookup_type is None:
+            return LookupGlyphDomain(glyph_names, True)
+        for subtable in (getattr(lookup, 'SubTable', None) or []):
+            domain = _collect_gsub_subtable_full_domain(lookup_type, subtable)
+            glyph_names.update(domain.glyphs)
+            unknown = domain.unknown or unknown
+    except Exception:
+        unknown = True
+    return LookupGlyphDomain(glyph_names, unknown)
+
+
 def _classify_lookup(lookup, lat_glyph_names: set) -> str:
     """
     Classify a Japanese font's lookup as 'latin', 'japanese', or 'mixed'.
@@ -2145,17 +2408,23 @@ GSUB_LATN_DEDUPE_TAGS = frozenset({'ccmp', 'dlig'})
 # allowlist the user's `ss02` / `tnum` toggle silently no-ops on Latin
 # glyphs whenever the run also contains a Japanese character.
 #
-# Restricted to explicit *user* features. Default-on / context-sensitive
-# tags (`aalt`, `locl`, `ccmp`, `liga`, `dlig`, `calt`, `case`) and
-# CJK-meaningful tags (`fwid`, `hwid`, `vert`, `vrt2`) are intentionally
-# excluded — exposing them under CJK scripts could rewrite text the user
-# never asked to change. See `docs/CJK_LATIN_USER_FEATURES_PLAN.md`.
+# Restricted to explicit *user* features. Most default-on /
+# context-sensitive tags (`aalt`, `locl`, `ccmp`, `liga`, `dlig`, `case`)
+# and CJK-meaningful tags (`fwid`, `hwid`, `vert`, `vrt2`) are
+# intentionally excluded — exposing them under CJK scripts could rewrite
+# text the user never asked to change. `calt` remains excluded from this
+# explicit user-feature allowlist; it is handled by the stricter
+# sub-font-confined default GSUB promotion path below.
+# See `docs/CJK_LATIN_USER_FEATURES_PLAN.md`.
 CJK_LATIN_USER_FEATURE_ALLOWLIST = frozenset(
     {f'ss{n:02d}' for n in range(1, 21)}    # ss01..ss20
     | {f'cv{n:02d}' for n in range(1, 100)}  # cv01..cv99
     | {'salt', 'zero', 'tnum', 'pnum', 'frac', 'numr', 'dnom',
        'sups', 'subs', 'sinf', 'ordn'}
 )
+
+
+CJK_LATIN_STRICT_GSUB_PROMOTION_TAGS = frozenset({'calt'})
 
 
 def _collect_subordinate_lookup_indices(lookup) -> set:
@@ -2239,6 +2508,45 @@ def _latin_feature_safe_for_cjk_promotion(feat_record, merged_lookups,
     return True
 
 
+def _sub_feature_strictly_safe_for_cjk_default_promotion(
+        feat_record, merged_lookups, sub_owned_glyphs):
+    """Return True only when a GSUB feature is sub-font-confined.
+
+    Unlike the explicit user-feature safety helper, this checks every glyph
+    reachable from the lookup closure: inputs, backtrack/lookahead context,
+    class definitions, and substitution outputs. Unknown lookup shapes are
+    unsafe because this path exposes default-on contextual features.
+    """
+    feat = feat_record.Feature
+    pending = list(feat.LookupListIndex or [])
+    visited = set()
+    saw_glyph = False
+
+    while pending:
+        li = pending.pop()
+        if li in visited:
+            continue
+        visited.add(li)
+
+        if li < 0 or li >= len(merged_lookups):
+            return False
+
+        lookup = merged_lookups[li]
+        domain = _collect_gsub_lookup_full_domain(lookup)
+        if domain.unknown:
+            return False
+        if domain.glyphs:
+            saw_glyph = True
+            if not domain.glyphs <= sub_owned_glyphs:
+                return False
+
+        for sub_li in _collect_subordinate_lookup_indices(lookup):
+            if sub_li not in visited:
+                pending.append(sub_li)
+
+    return saw_glyph
+
+
 def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
                     jp_feat_index_map, lat_feat_index_map,
                     jp_feature_records, lat_feature_records,
@@ -2256,9 +2564,11 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
         lat_feat_index_map: old EN feature index -> new merged feature index
         jp_feature_records: JP FeatureList.FeatureRecord (for tag lookup)
         lat_feature_records: EN FeatureList.FeatureRecord (for tag lookup)
-        cjk_extra_lat_features: list of (tag, new_merged_idx) for allowlisted
-            Latin user features (ss02, tnum, ...). Only consulted when
-            script_tag is in CJK_SCRIPTS.
+        cjk_extra_lat_features: list of (tag, new_merged_idx) for Latin/sub
+            features promoted into CJK LangSys records. This includes
+            allowlisted explicit user features (ss02, tnum, ...) and strict
+            sub-font-confined default GSUB features such as calt. Only
+            consulted when script_tag is in CJK_SCRIPTS.
         merged_feature_records: the merged FeatureList.FeatureRecord list
             (jp_features + lat_features, in the same order as the merged
             FeatureList). Required to support the duplicate-tag merge in
@@ -2295,10 +2605,11 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
                 lat_tags_in_langsys.add(lat_feature_records[old_idx].FeatureTag)
 
     if script_tag in CJK_SCRIPTS:
-        # CJK script: use JP features, plus a narrow allowlist of Latin-side
-        # user features (ss02, tnum, ...) so apps that shape mixed Latin/CJK
-        # runs through a CJK LangSys can still reach them. Default-on /
-        # context-sensitive Latin tags are intentionally excluded.
+        # CJK script: use JP features, plus narrow Latin-side promotions so
+        # apps that shape mixed Latin/CJK runs through a CJK LangSys can still
+        # reach them. Explicit user features use the allowlist; default-on /
+        # context-sensitive Latin tags stay excluded unless they pass the
+        # separate strict sub-font-confined policy, currently limited to calt.
         jp_tags_in_langsys = set()
         jp_tag_to_merged_idx = {}
         if jp_lang_sys and jp_lang_sys.FeatureIndex:
@@ -2586,8 +2897,9 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
     jp_feature_records = jp_ot.FeatureList.FeatureRecord if jp_ot.FeatureList else []
     lat_feature_records = lat_ot.FeatureList.FeatureRecord if lat_ot.FeatureList else []
 
-    # Pre-compute allowlisted Latin user GSUB features (ss02, tnum, ...) so
-    # CJK-script LangSys records can re-expose them. Two restrictions:
+    # Pre-compute Latin/sub GSUB promotions so CJK-script LangSys records can
+    # re-expose explicit user features and strict default features. Two
+    # restrictions:
     #
     #   1. Only features reachable from the Latin font's `latn` / `DFLT`
     #      LangSys (default or named) are eligible. Iterating all of
@@ -2636,6 +2948,33 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
             out.append((tag, new_merged_idx))
         return out
 
+    def _collect_lat_strict_gsub_candidates(feat_indices, seen_tags):
+        out = []
+        for old_idx in feat_indices or []:
+            if old_idx not in lat_feat_index_map:
+                continue
+            if old_idx >= len(lat_feature_records):
+                continue
+            tag = lat_feature_records[old_idx].FeatureTag
+            if tag not in CJK_LATIN_STRICT_GSUB_PROMOTION_TAGS:
+                continue
+            if tag in seen_tags:
+                continue
+            new_merged_idx = lat_feat_index_map[old_idx]
+            merged_feat = all_features[new_merged_idx][1]
+            if not _sub_feature_strictly_safe_for_cjk_default_promotion(
+                    merged_feat, merged_lookups, lat_glyph_names):
+                continue
+            seen_tags.add(tag)
+            out.append((tag, new_merged_idx))
+        return out
+
+    def _collect_lat_cjk_extra_candidates(feat_indices, seen_tags):
+        out = []
+        out.extend(_collect_lat_user_candidates(feat_indices, seen_tags))
+        out.extend(_collect_lat_strict_gsub_candidates(feat_indices, seen_tags))
+        return out
+
     cjk_extras_default = []  # [(tag, new_merged_idx)]
     cjk_extras_named = {}    # lang_tag -> [(tag, new_merged_idx)]
     if table_tag == 'GSUB' and lat_ot.ScriptList:
@@ -2646,7 +2985,8 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
             ds = sr.Script.DefaultLangSys
             if ds:
                 cjk_extras_default.extend(
-                    _collect_lat_user_candidates(ds.FeatureIndex, default_seen))
+                    _collect_lat_cjk_extra_candidates(
+                        ds.FeatureIndex, default_seen))
         for sr in lat_ot.ScriptList.ScriptRecord:
             if sr.ScriptTag not in ('latn', 'DFLT'):
                 continue
@@ -2658,7 +2998,8 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
                     cjk_extras_named[tag_key] = merged_extras
                 seen = {t for t, _ in merged_extras}
                 merged_extras.extend(
-                    _collect_lat_user_candidates(lsr.LangSys.FeatureIndex, seen))
+                    _collect_lat_cjk_extra_candidates(
+                        lsr.LangSys.FeatureIndex, seen))
 
     # Build merged script records
     merged_script_records = []
