@@ -1538,6 +1538,14 @@ def _add_coverage_domain_glyphs(glyph_names: set, coverage) -> bool:
     return False
 
 
+def _coverage_domain_has_glyphs(coverage) -> bool:
+    if coverage is None:
+        return False
+    if isinstance(coverage, list):
+        return any(_coverage_domain_has_glyphs(cov) for cov in coverage)
+    return bool(getattr(coverage, 'glyphs', None))
+
+
 def _classdef_glyphs_by_class(class_def) -> dict[int, set[str]]:
     out = {}
     class_defs = getattr(class_def, 'classDefs', None) or {}
@@ -1617,6 +1625,8 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
                      'LookAheadCoverage'):
         unknown = _add_coverage_domain_glyphs(
             glyph_names, getattr(st, cov_attr, None)) or unknown
+    has_input_coverage = _coverage_domain_has_glyphs(
+        getattr(st, 'Coverage', None))
 
     if lookup_type == 1:
         mapping = getattr(st, 'mapping', None)
@@ -1625,8 +1635,11 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
             for out_glyph in mapping.values():
                 unknown = _add_substitution_output_glyphs(
                     glyph_names, out_glyph) or unknown
+        substitute = getattr(st, 'Substitute', None)
+        if substitute is not None and not mapping and not has_input_coverage:
+            unknown = True
         unknown = _add_substitution_output_glyphs(
-            glyph_names, getattr(st, 'Substitute', None)) or unknown
+            glyph_names, substitute) or unknown
 
     elif lookup_type == 2:
         mapping = getattr(st, 'mapping', None)
@@ -1635,7 +1648,10 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
             for sequence in mapping.values():
                 unknown = _add_substitution_output_glyphs(
                     glyph_names, sequence) or unknown
-        for sequence in (getattr(st, 'Sequence', None) or []):
+        sequences = getattr(st, 'Sequence', None) or []
+        if sequences and not has_input_coverage:
+            unknown = True
+        for sequence in sequences:
             unknown = _add_substitution_output_glyphs(
                 glyph_names, getattr(sequence, 'Substitute', None)) or unknown
 
@@ -1646,7 +1662,10 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
             for alt_set in alternates.values():
                 unknown = _add_substitution_output_glyphs(
                     glyph_names, alt_set) or unknown
-        for alt_set in (getattr(st, 'AlternateSet', None) or []):
+        alt_sets = getattr(st, 'AlternateSet', None) or []
+        if alt_sets and not has_input_coverage:
+            unknown = True
+        for alt_set in alt_sets:
             unknown = _add_substitution_output_glyphs(
                 glyph_names, getattr(alt_set, 'Alternate', None)) or unknown
 
@@ -1660,7 +1679,10 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
                         glyph_names, getattr(lig, 'Component', None)) or unknown
                     unknown = _add_glyph(
                         glyph_names, getattr(lig, 'LigGlyph', None)) or unknown
-        for lig_set in (getattr(st, 'LigatureSet', None) or []):
+        lig_sets = getattr(st, 'LigatureSet', None) or []
+        if lig_sets and not has_input_coverage:
+            unknown = True
+        for lig_set in lig_sets:
             for lig in (getattr(lig_set, 'Ligature', None) or []):
                 unknown = _add_glyph_sequence(
                     glyph_names, getattr(lig, 'Component', None)) or unknown
@@ -1731,8 +1753,11 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
         unknown = True
 
     elif lookup_type == 8:
+        substitute = getattr(st, 'Substitute', None)
+        if substitute is not None and not has_input_coverage:
+            unknown = True
         unknown = _add_substitution_output_glyphs(
-            glyph_names, getattr(st, 'Substitute', None)) or unknown
+            glyph_names, substitute) or unknown
 
     else:
         unknown = True
@@ -2401,20 +2426,12 @@ CJK_SCRIPTS = {'kana', 'hani', 'hang', 'bopo', 'yi  '}
 GSUB_LATN_DEDUPE_TAGS = frozenset({'ccmp', 'dlig'})
 
 
-# Latin user-toggle GSUB features that should also be reachable from CJK
-# script LangSys records (`kana` / `hani` / ...). Apps such as Adobe
-# Illustrator may shape mixed Latin/CJK runs through a CJK script's
-# LangSys instead of splitting into a separate `latn` run; without this
-# allowlist the user's `ss02` / `tnum` toggle silently no-ops on Latin
-# glyphs whenever the run also contains a Japanese character.
-#
-# Restricted to explicit *user* features. Most default-on /
-# context-sensitive tags (`aalt`, `locl`, `ccmp`, `liga`, `dlig`, `case`)
-# and CJK-meaningful tags (`fwid`, `hwid`, `vert`, `vrt2`) are
-# intentionally excluded — exposing them under CJK scripts could rewrite
-# text the user never asked to change. `calt` remains excluded from this
-# explicit user-feature allowlist; it is handled by the stricter
-# sub-font-confined default GSUB promotion path below.
+# Restricted to explicit user-selected Latin/sub features. Default-on,
+# context-sensitive, or semantically special GSUB tags (`calt`, `liga`,
+# `ccmp`, `case`, `dlig`) remain out of this allowlist and use the strict
+# full-domain GSUB promotion policy below. Language/alternate/CJK-layout
+# tags (`locl`, `aalt`, `fwid`, `hwid`, `vert`, `vrt2`) remain out of scope
+# for cross-script Latin/sub promotion.
 # See `docs/CJK_LATIN_USER_FEATURES_PLAN.md`.
 CJK_LATIN_USER_FEATURE_ALLOWLIST = frozenset(
     {f'ss{n:02d}' for n in range(1, 21)}    # ss01..ss20
@@ -2424,7 +2441,34 @@ CJK_LATIN_USER_FEATURE_ALLOWLIST = frozenset(
 )
 
 
-CJK_LATIN_STRICT_GSUB_PROMOTION_TAGS = frozenset({'calt'})
+# Latin/sub GSUB tags that may be exposed under CJK LangSys only after the
+# strict sub-font-confined full-domain check passes. This policy includes
+# default-on, context-sensitive, or semantically special tags whose inputs,
+# context, outputs, and subordinate lookup closure must all stay sub-owned.
+CJK_LATIN_STRICT_GSUB_PROMOTION_POLICIES = {
+    'calt': {
+        'kind': 'default_contextual',
+        'scope': 'default_and_named',
+    },
+    'liga': {
+        'kind': 'default_ligature',
+        'scope': 'default_and_named',
+    },
+    'ccmp': {
+        'kind': 'required_composition',
+        'scope': 'default_and_named',
+    },
+    'case': {
+        'kind': 'app_or_user_enabled',
+        'scope': 'default_and_named',
+    },
+    'dlig': {
+        'kind': 'user_enabled_ligature',
+        'scope': 'default_and_named',
+    },
+}
+CJK_LATIN_STRICT_GSUB_PROMOTION_TAGS = frozenset(
+    CJK_LATIN_STRICT_GSUB_PROMOTION_POLICIES)
 
 
 def _collect_subordinate_lookup_indices(lookup) -> set:
@@ -2508,7 +2552,7 @@ def _latin_feature_safe_for_cjk_promotion(feat_record, merged_lookups,
     return True
 
 
-def _sub_feature_strictly_safe_for_cjk_default_promotion(
+def _sub_feature_strictly_safe_for_cjk_gsub_promotion(
         feat_record, merged_lookups, sub_owned_glyphs):
     """Return True only when a GSUB feature is sub-font-confined.
 
@@ -2547,6 +2591,13 @@ def _sub_feature_strictly_safe_for_cjk_default_promotion(
     return saw_glyph
 
 
+def _sub_feature_strictly_safe_for_cjk_default_promotion(
+        feat_record, merged_lookups, sub_owned_glyphs):
+    """Backward-compatible wrapper for the Phase 1 `calt` helper name."""
+    return _sub_feature_strictly_safe_for_cjk_gsub_promotion(
+        feat_record, merged_lookups, sub_owned_glyphs)
+
+
 def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
                     jp_feat_index_map, lat_feat_index_map,
                     jp_feature_records, lat_feature_records,
@@ -2567,12 +2618,12 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
         cjk_extra_lat_features: list of (tag, new_merged_idx) for Latin/sub
             features promoted into CJK LangSys records. This includes
             allowlisted explicit user features (ss02, tnum, ...) and strict
-            sub-font-confined default GSUB features such as calt. Only
-            consulted when script_tag is in CJK_SCRIPTS.
+            sub-font-confined GSUB features such as calt, liga, ccmp, case,
+            and dlig. Only consulted when script_tag is in CJK_SCRIPTS.
         merged_feature_records: the merged FeatureList.FeatureRecord list
             (jp_features + lat_features, in the same order as the merged
             FeatureList). Required to support the duplicate-tag merge in
-            CJK_SCRIPTS: when an allowlist tag already lives on the JP
+            CJK_SCRIPTS: when a promoted tag already lives on the JP
             side of the current LangSys, a fresh combined FeatureRecord
             (JP lookups + Latin lookups) is appended to this list and the
             LangSys references the new index. The original JP record is
@@ -2609,7 +2660,7 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
         # apps that shape mixed Latin/CJK runs through a CJK LangSys can still
         # reach them. Explicit user features use the allowlist; default-on /
         # context-sensitive Latin tags stay excluded unless they pass the
-        # separate strict sub-font-confined policy, currently limited to calt.
+        # separate strict sub-font-confined GSUB policy.
         jp_tags_in_langsys = set()
         jp_tag_to_merged_idx = {}
         if jp_lang_sys and jp_lang_sys.FeatureIndex:
@@ -2621,20 +2672,21 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
                         tag = jp_feature_records[old_idx].FeatureTag
                         jp_tags_in_langsys.add(tag)
                         jp_tag_to_merged_idx.setdefault(tag, merged_idx)
-        # Latin user features live under Latin's `latn`/`DFLT` LangSys, not
-        # the (typically nonexistent) Latin `kana`/`hani` LangSys, so iterate
-        # the pre-computed list collected in `_merge_ot_table_v2` rather than
-        # `lat_lang_sys` (which is None for CJK script tags).
+        # Latin-side promoted features live under Latin's `latn`/`DFLT`
+        # LangSys, not the (typically nonexistent) Latin `kana`/`hani`
+        # LangSys, so iterate the pre-computed list collected in
+        # `_merge_ot_table_v2` rather than `lat_lang_sys` (which is None for
+        # CJK script tags).
         if table_tag == 'GSUB' and cjk_extra_lat_features:
             for tag, new_idx in cjk_extra_lat_features:
                 if tag not in jp_tags_in_langsys:
                     feat_indices.append(new_idx)
                     continue
                 # Duplicate tag: HarfBuzz would only fire one of two
-                # `tnum` records (the shadowing pattern that bites
-                # GSUB_LATN_DEDUPE_TAGS under `latn`). Instead of
-                # dropping the Latin promotion *or* mutating the shared
-                # JP record (which would leak the Latin lookups into
+                # same-tag records (the shadowing pattern that bites `tnum`
+                # under CJK and GSUB_LATN_DEDUPE_TAGS under `latn`). Instead
+                # of dropping the Latin promotion *or* mutating the shared JP
+                # record (which would leak the Latin lookups into
                 # every LangSys that references the same JP record by
                 # index — for example a Latin named-only `tnum`
                 # leaking into `kana/dflt`), build a fresh combined
@@ -2962,7 +3014,7 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
                 continue
             new_merged_idx = lat_feat_index_map[old_idx]
             merged_feat = all_features[new_merged_idx][1]
-            if not _sub_feature_strictly_safe_for_cjk_default_promotion(
+            if not _sub_feature_strictly_safe_for_cjk_gsub_promotion(
                     merged_feat, merged_lookups, lat_glyph_names):
                 continue
             seen_tags.add(tag)

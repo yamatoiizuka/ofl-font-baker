@@ -11,13 +11,18 @@ Background:
     See ``docs/CJK_LATIN_USER_FEATURES_PLAN.md``.
 """
 
+import os
+
 import pytest
 
 from fontTools.ttLib import TTFont
 
-from conftest import EN_VAR, JP_VAR
+from conftest import EN_VAR, FONTS, JP_VAR
 
 import merge_fonts as mf
+
+
+CHARIS = os.path.join(FONTS, "Charis_SIL", "CharisSIL-Regular.ttf")
 
 
 def _coverage(*glyphs):
@@ -33,6 +38,34 @@ def _make_single_subst(input_glyph, output_glyph):
     st.mapping = {input_glyph: output_glyph}
     lk = otTables.Lookup()
     lk.LookupType = 1
+    lk.LookupFlag = 0
+    lk.SubTable = [st]
+    lk.SubTableCount = 1
+    return lk
+
+
+def _make_multiple_subst(input_glyph, output_glyphs):
+    from fontTools.ttLib.tables import otTables
+    st = otTables.MultipleSubst()
+    st.mapping = {input_glyph: list(output_glyphs)}
+    lk = otTables.Lookup()
+    lk.LookupType = 2
+    lk.LookupFlag = 0
+    lk.SubTable = [st]
+    lk.SubTableCount = 1
+    return lk
+
+
+def _make_ligature_subst(first_glyph, component_glyphs, ligature_glyph):
+    from fontTools.ttLib.tables import otTables
+    lig = otTables.Ligature()
+    lig.Component = list(component_glyphs)
+    lig.CompCount = len(lig.Component) + 1
+    lig.LigGlyph = ligature_glyph
+    st = otTables.LigatureSubst()
+    st.ligatures = {first_glyph: [lig]}
+    lk = otTables.Lookup()
+    lk.LookupType = 4
     lk.LookupFlag = 0
     lk.SubTable = [st]
     lk.SubTableCount = 1
@@ -270,6 +303,35 @@ def _feature_indices_for_tag(gsub, langsys, tag):
     ]
 
 
+PHASE2_STRICT_GSUB_TAGS = ("liga", "ccmp", "case", "dlig")
+
+
+def _safe_lookup_for_strict_tag(tag):
+    if tag in ("liga", "dlig"):
+        return _make_ligature_subst("f", ["i"], "f_i"), {"f", "i", "f_i"}
+    if tag == "ccmp":
+        return _make_multiple_subst(
+            "Mgrave", ["M", "gravecomb"]), {"Mgrave", "M", "gravecomb"}
+    if tag == "case":
+        return _make_single_subst(
+            "parenleft", "parenleft.case"), {"parenleft", "parenleft.case"}
+    if tag == "calt":
+        return _make_single_subst("A", "A.alt"), {"A", "A.alt"}
+    raise AssertionError(f"unknown strict tag fixture: {tag}")
+
+
+def _unsafe_lookup_for_strict_tag(tag):
+    if tag in ("liga", "dlig"):
+        return _make_ligature_subst("f", ["i"], "uni65E5"), {"f", "i"}
+    if tag == "ccmp":
+        return _make_multiple_subst("Mgrave", ["M", "uni65E5"]), {"Mgrave", "M"}
+    if tag == "case":
+        return _make_single_subst("parenleft", "uni65E5"), {"parenleft"}
+    if tag == "calt":
+        return _make_single_subst("A", "uni65E5"), {"A"}
+    raise AssertionError(f"unknown strict tag fixture: {tag}")
+
+
 # ---------------------------------------------------------------------------
 # Shared HarfBuzz helper
 # ---------------------------------------------------------------------------
@@ -315,6 +377,30 @@ def merged_inter_path(tmp_path_factory):
             "axes": [{"tag": "wght", "currentValue": 400}],
         },
         "output": {"familyName": "TestCjkLatinFeatures"},
+        "export": {"path": {"font": str(out)}},
+    }
+    mf.merge_fonts(config)
+    return str(out)
+
+
+@pytest.fixture(scope="module")
+def merged_charis_path(tmp_path_factory):
+    """Merge Charis SIL onto Noto Sans JP for a standard-liga fixture."""
+    out = tmp_path_factory.mktemp("cjk_latin_liga") / "merged.ttf"
+    config = {
+        "subFont": {
+            "path": CHARIS,
+            "scale": 1.0,
+            "baselineOffset": 0,
+            "axes": [],
+        },
+        "baseFont": {
+            "path": JP_VAR,
+            "scale": 1.0,
+            "baselineOffset": 0,
+            "axes": [{"tag": "wght", "currentValue": 400}],
+        },
+        "output": {"familyName": "TestCjkLatinLiga"},
         "export": {"path": {"font": str(out)}},
     }
     mf.merge_fonts(config)
@@ -416,6 +502,95 @@ class TestLatinUserFeaturesUnderCjkScripts:
             f"prefix: {script}={cjk[:len(latn)]} vs latn={latn}"
         )
 
+    @pytest.mark.parametrize("script,language", [("kana", "ja"), ("hani", "ja")])
+    def test_liga_under_cjk_matches_latn_prefix(
+            self, merged_charis_path, script, language):
+        latin_text = "office"
+        mixed_text = f"{latin_text} 日本語"
+        latn = _shape(merged_charis_path, latin_text, "latn", "en")
+        latn_without_liga = _shape(
+            merged_charis_path, latin_text, "latn", "en", {"liga": False})
+        assert latn != latn_without_liga, (
+            "fixture sanity: Charis liga should affect 'office' under latn"
+        )
+        cjk = _shape(merged_charis_path, mixed_text, script, language)
+        assert cjk[:len(latn)] == latn, (
+            f"{script}/{language} liga differs from latn/en for the Latin "
+            f"prefix: {script}={cjk[:len(latn)]} vs latn={latn}"
+        )
+
+    @pytest.mark.parametrize("script,language", [("kana", "ja"), ("hani", "ja")])
+    def test_ccmp_under_cjk_matches_latn_prefix(
+            self, merged_inter_path, script, language):
+        latin_text = "M̀"
+        mixed_text = f"{latin_text} 日本語"
+        latn = _shape(merged_inter_path, latin_text, "latn", "en")
+        cjk = _shape(merged_inter_path, mixed_text, script, language)
+        assert cjk[:len(latn)] == latn, (
+            f"{script}/{language} ccmp differs from latn/en for the Latin "
+            f"prefix: {script}={cjk[:len(latn)]} vs latn={latn}"
+        )
+
+    @pytest.mark.parametrize("script,language", [("kana", "ja"), ("hani", "ja")])
+    def test_case_under_cjk_when_enabled_matches_latn_prefix(
+            self, merged_inter_path, script, language):
+        latin_text = "()"
+        mixed_text = f"{latin_text} 日本語"
+        latn = _shape(merged_inter_path, latin_text, "latn", "en",
+                      {"case": True})
+        latn_without_case = _shape(
+            merged_inter_path, latin_text, "latn", "en", {"case": False})
+        assert latn != latn_without_case, (
+            "fixture sanity: Inter case should affect parentheses under latn"
+        )
+        cjk = _shape(merged_inter_path, mixed_text, script, language,
+                     {"case": True})
+        assert cjk[:len(latn)] == latn, (
+            f"{script}/{language} case=1 differs from latn/en for the Latin "
+            f"prefix: {script}={cjk[:len(latn)]} vs latn={latn}"
+        )
+
+    @pytest.mark.parametrize("script,language", [("kana", "ja"), ("hani", "ja")])
+    def test_dlig_under_cjk_when_enabled_matches_latn_prefix(
+            self, merged_inter_path, script, language):
+        latin_text = "fi"
+        mixed_text = f"{latin_text} 日本語"
+        latn = _shape(merged_inter_path, latin_text, "latn", "en",
+                      {"dlig": True})
+        latn_without_dlig = _shape(
+            merged_inter_path, latin_text, "latn", "en", {"dlig": False})
+        assert latn != latn_without_dlig, (
+            "fixture sanity: Inter dlig should affect 'fi' under latn"
+        )
+        cjk = _shape(merged_inter_path, mixed_text, script, language,
+                     {"dlig": True})
+        assert cjk[:len(latn)] == latn, (
+            f"{script}/{language} dlig=1 differs from latn/en for the Latin "
+            f"prefix: {script}={cjk[:len(latn)]} vs latn={latn}"
+        )
+
+    @pytest.mark.parametrize("feature,latin_text", [
+        ("case", "()"),
+        ("dlig", "fi"),
+    ])
+    @pytest.mark.parametrize("script,language", [("kana", "ja"), ("hani", "ja")])
+    def test_case_and_dlig_under_cjk_are_not_default_on(
+            self, merged_inter_path, feature, latin_text, script, language):
+        mixed_text = f"{latin_text} 日本語"
+        latn_default = _shape(merged_inter_path, latin_text, "latn", "en")
+        latn_enabled = _shape(
+            merged_inter_path, latin_text, "latn", "en", {feature: True})
+        assert latn_default != latn_enabled, (
+            f"fixture sanity: {feature}=1 should affect {latin_text!r}"
+        )
+
+        cjk_default = _shape(merged_inter_path, mixed_text, script, language)
+        assert cjk_default[:len(latn_default)] == latn_default, (
+            f"{script}/{language} default shaping unexpectedly enabled "
+            f"{feature}: {script}={cjk_default[:len(latn_default)]} "
+            f"vs latn default={latn_default}"
+        )
+
 
 class TestCjkScriptShapingUnchangedForJapanese:
     """Plain Japanese text shaped under CJK scripts must not be affected by
@@ -430,6 +605,8 @@ class TestCjkScriptShapingUnchangedForJapanese:
         {"ss02": True},
         {"tnum": True},
         {"ss01": True, "ss02": True, "tnum": True, "zero": True},
+        {"case": True},
+        {"dlig": True, "liga": True},
     ])
     @pytest.mark.parametrize("script,language", [("kana", "ja"), ("hani", "ja")])
     def test_japanese_text_unchanged(self, merged_inter_path,
@@ -500,32 +677,55 @@ class TestCjkLangSysIncludesAllowlistedLatinFeatures:
             )
 
 
-class TestCjkLangSysIncludesStrictSafeCalt:
-    """Strictly sub-font-confined Latin ``calt`` may be promoted to CJK
-    LangSys records even though it is not a user-feature allowlist tag."""
+class TestCjkLangSysIncludesStrictSafeGsubTags:
+    """Strictly sub-font-confined Latin GSUB tags may be promoted to CJK
+    LangSys records even though they are not user-feature allowlist tags."""
 
     @pytest.mark.parametrize("script", ["kana", "hani"])
-    def test_inter_calt_promoted_under_cjk_default(self, merged_inter_path,
-                                                  script):
+    def test_inter_strict_gsub_tags_promoted_under_cjk_default(
+            self, merged_inter_path, script):
         merged = TTFont(merged_inter_path)
         gsub = merged["GSUB"].table
         ls = _langsys(gsub, script)
         assert ls is not None, f"merged font has no {script} DefaultLangSys"
         tags = set(_tags_for_langsys(gsub, ls))
-        assert "calt" in tags, (
-            f"{script} DefaultLangSys missing strict Latin calt promotion "
-            f"(tags={sorted(tags)})"
+        inter = TTFont(EN_VAR)
+        inter_gsub = inter["GSUB"].table
+        inter_features = inter_gsub.FeatureList.FeatureRecord
+        inter_latn_default_tags = set()
+        for sr in inter_gsub.ScriptList.ScriptRecord:
+            if sr.ScriptTag not in ("latn", "DFLT"):
+                continue
+            ds = sr.Script.DefaultLangSys
+            if ds:
+                inter_latn_default_tags.update(
+                    inter_features[i].FeatureTag
+                    for i in (ds.FeatureIndex or [])
+                )
+        expected_tags = (
+            mf.CJK_LATIN_STRICT_GSUB_PROMOTION_TAGS
+            & inter_latn_default_tags
         )
+        assert expected_tags, "fixture must expose strict GSUB tags"
+        for expected in expected_tags:
+            assert expected in tags, (
+                f"{script} DefaultLangSys missing strict Latin {expected} "
+                f"promotion (tags={sorted(tags)})"
+            )
 
-    def test_calt_stays_out_of_user_allowlist(self):
-        assert "calt" not in mf.CJK_LATIN_USER_FEATURE_ALLOWLIST
+    @pytest.mark.parametrize("tag", ("calt",) + PHASE2_STRICT_GSUB_TAGS)
+    def test_strict_gsub_tags_stay_out_of_user_allowlist(self, tag):
+        assert tag not in mf.CJK_LATIN_USER_FEATURE_ALLOWLIST
+
+    def test_strict_gsub_policy_tags_are_phase2_scope(self):
+        assert mf.CJK_LATIN_STRICT_GSUB_PROMOTION_TAGS == frozenset(
+            ("calt",) + PHASE2_STRICT_GSUB_TAGS)
 
 
 class TestCjkLangSysExcludesAvoidedTags:
     """The fix must not blindly copy every Latin feature into CJK LangSys
-    records. Defaults / context-sensitive features other than strictly safe
-    ``calt`` must not become reachable from CJK scripts unless they were
-    already on the JP side.
+    records. Tags still outside the strict policy must not become reachable
+    from CJK scripts unless they were already on the JP side.
     """
 
     # Full avoid list from docs/CJK_LATIN_USER_FEATURES_PLAN.md. Tags the
@@ -533,7 +733,6 @@ class TestCjkLangSysExcludesAvoidedTags:
     # (preserving JP-owned `fwid` / `vert` is correct); the test only
     # flags tags newly inherited from the Latin side.
     AVOIDED_TAGS = (
-        "case", "ccmp", "liga", "dlig",
         "aalt", "locl", "fwid", "hwid", "vert", "vrt2",
     )
 
@@ -1261,6 +1460,61 @@ class TestStrictCaltSafetyHelper:
         assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
             feat_rec, [sub, chain], {"A", "A.alt", "colon"}) is True
 
+    def test_rejects_multiple_subst_sequence_without_coverage(self):
+        from fontTools.ttLib.tables import otTables
+        sequence = otTables.Sequence()
+        sequence.Substitute = ["M", "gravecomb"]
+        sequence.GlyphCount = len(sequence.Substitute)
+        st = otTables.MultipleSubst()
+        st.Sequence = [sequence]
+        st.SequenceCount = len(st.Sequence)
+        lookup = otTables.Lookup()
+        lookup.LookupType = 2
+        lookup.LookupFlag = 0
+        lookup.SubTable = [st]
+        lookup.SubTableCount = 1
+        feat_rec = _make_feature_record("ccmp", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_gsub_promotion(
+            feat_rec, [lookup], {"M", "gravecomb"}) is False
+
+    def test_rejects_alternate_subst_set_without_coverage(self):
+        from fontTools.ttLib.tables import otTables
+        alt_set = otTables.AlternateSet()
+        alt_set.Alternate = ["A.alt"]
+        alt_set.AlternateCount = len(alt_set.Alternate)
+        st = otTables.AlternateSubst()
+        st.AlternateSet = [alt_set]
+        st.AlternateSetCount = len(st.AlternateSet)
+        lookup = otTables.Lookup()
+        lookup.LookupType = 3
+        lookup.LookupFlag = 0
+        lookup.SubTable = [st]
+        lookup.SubTableCount = 1
+        feat_rec = _make_feature_record("salt", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_gsub_promotion(
+            feat_rec, [lookup], {"A.alt"}) is False
+
+    def test_rejects_ligature_subst_set_without_coverage(self):
+        from fontTools.ttLib.tables import otTables
+        lig = otTables.Ligature()
+        lig.Component = ["i"]
+        lig.CompCount = len(lig.Component) + 1
+        lig.LigGlyph = "f_i"
+        lig_set = otTables.LigatureSet()
+        lig_set.Ligature = [lig]
+        lig_set.LigatureCount = len(lig_set.Ligature)
+        st = otTables.LigatureSubst()
+        st.LigatureSet = [lig_set]
+        st.LigatureSetCount = len(st.LigatureSet)
+        lookup = otTables.Lookup()
+        lookup.LookupType = 4
+        lookup.LookupFlag = 0
+        lookup.SubTable = [st]
+        lookup.SubTableCount = 1
+        feat_rec = _make_feature_record("liga", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_gsub_promotion(
+            feat_rec, [lookup], {"i", "f_i"}) is False
+
 
 class TestStrictCaltPromotionStructure:
     """Synthetic GSUB tables exercise promotion scoping without the cost of
@@ -1341,6 +1595,106 @@ class TestStrictCaltPromotionStructure:
         assert "calt" not in _tags_for_langsys(gsub, default_ls)
         assert named_ls is not None
         assert "calt" in _tags_for_langsys(gsub, named_ls)
+
+
+class TestStrictPhase2GsubPromotionStructure:
+    """Phase 2 tags reuse the strict full-domain promotion policy."""
+
+    @staticmethod
+    def _latn_default_gsub_for_tag(tag, lookup, lat_glyph_names):
+        return _merge_minimal_gsub(
+            [lookup],
+            [_make_feature_record(tag, [0])],
+            [_make_script_record("latn", [0])],
+            lat_glyph_names=lat_glyph_names,
+        )
+
+    @pytest.mark.parametrize("tag", PHASE2_STRICT_GSUB_TAGS)
+    @pytest.mark.parametrize("script", ["kana", "hani"])
+    def test_safe_feature_is_promoted_to_cjk_default(self, tag, script):
+        lookup, sub_owned = _safe_lookup_for_strict_tag(tag)
+        gsub = self._latn_default_gsub_for_tag(tag, lookup, sub_owned)
+        ls = _langsys(gsub, script)
+        assert tag in _tags_for_langsys(gsub, ls)
+
+    @pytest.mark.parametrize("tag", PHASE2_STRICT_GSUB_TAGS)
+    @pytest.mark.parametrize("script", ["kana", "hani"])
+    def test_unsafe_output_feature_is_not_promoted(self, tag, script):
+        lookup, sub_owned = _unsafe_lookup_for_strict_tag(tag)
+        gsub = self._latn_default_gsub_for_tag(tag, lookup, sub_owned)
+        ls = _langsys(gsub, script)
+        assert tag not in _tags_for_langsys(gsub, ls)
+
+    @pytest.mark.parametrize("tag", ["liga", "dlig"])
+    @pytest.mark.parametrize("script", ["kana", "hani"])
+    def test_unsafe_ligature_component_is_not_promoted(self, tag, script):
+        lookup = _make_ligature_subst("f", ["uni65E5"], "f_uni65E5")
+        gsub = self._latn_default_gsub_for_tag(
+            tag, lookup, {"f", "f_uni65E5"})
+        ls = _langsys(gsub, script)
+        assert tag not in _tags_for_langsys(gsub, ls)
+
+    @pytest.mark.parametrize("tag", PHASE2_STRICT_GSUB_TAGS)
+    @pytest.mark.parametrize("script", ["kana", "hani"])
+    def test_duplicate_tag_combines_without_mutating_jp_record(
+            self, tag, script):
+        jp_lookup = _make_single_subst("uni65E5", "uni65E5.alt")
+        lat_lookup, sub_owned = _safe_lookup_for_strict_tag(tag)
+        gsub = _merge_minimal_gsub(
+            [lat_lookup],
+            [_make_feature_record(tag, [0])],
+            [_make_script_record("latn", [0])],
+            jp_lookups=[jp_lookup],
+            jp_features=[_make_feature_record(tag, [0])],
+            jp_scripts=[
+                _make_script_record("kana", [0]),
+                _make_script_record("hani", [0]),
+            ],
+            lat_glyph_names=sub_owned,
+        )
+        ls = _langsys(gsub, script)
+        tags = _tags_for_langsys(gsub, ls)
+        assert tags.count(tag) == 1
+        [combined_idx] = _feature_indices_for_tag(gsub, ls, tag)
+        combined_lookups = (
+            gsub.FeatureList.FeatureRecord[combined_idx]
+            .Feature.LookupListIndex
+        )
+        assert combined_lookups == [0, 1]
+        original_jp_lookups = (
+            gsub.FeatureList.FeatureRecord[0].Feature.LookupListIndex
+        )
+        assert original_jp_lookups == [0]
+
+    @pytest.mark.parametrize("tag", PHASE2_STRICT_GSUB_TAGS)
+    @pytest.mark.parametrize("script", ["kana", "hani"])
+    def test_named_only_feature_does_not_leak_to_cjk_default(
+            self, tag, script):
+        lookup, sub_owned = _safe_lookup_for_strict_tag(tag)
+        gsub = _merge_minimal_gsub(
+            [lookup],
+            [_make_feature_record(tag, [0])],
+            [_make_script_record("latn", [], named={"JPN ": [0]})],
+            lat_glyph_names=sub_owned,
+        )
+        default_ls = _langsys(gsub, script)
+        named_ls = _langsys(gsub, script, "JPN ")
+        assert tag not in _tags_for_langsys(gsub, default_ls)
+        assert named_ls is not None
+        assert tag in _tags_for_langsys(gsub, named_ls)
+
+    @pytest.mark.parametrize("tag", PHASE2_STRICT_GSUB_TAGS)
+    @pytest.mark.parametrize("script", ["kana", "hani"])
+    def test_orphan_feature_record_is_not_promoted(self, tag, script):
+        lookup, sub_owned = _safe_lookup_for_strict_tag(tag)
+        gsub = _merge_minimal_gsub(
+            [lookup],
+            [_make_feature_record(tag, [0])],
+            [_make_script_record("latn", [])],
+            lat_glyph_names=sub_owned,
+        )
+        ls = _langsys(gsub, script)
+        assert tag not in _tags_for_langsys(gsub, ls)
 
 
 class TestSafetyHelperRecursesIntoSubordinateLookups:
