@@ -547,9 +547,11 @@ def parse_codepoint_list(values) -> set:
 
 def convert_cff_glyphs_to_tt(src_font: TTFont, dst_font: TTFont,
                               glyph_names: list, scale: float, dy: float,
-                              on_progress=None, name_map: dict = None):
+                              on_progress=None, copied: set = None,
+                              name_map: dict = None):
     """
     Batch-convert CFF glyphs from src_font into dst_font's glyf table.
+    copied: optional set of destination names already owned by the sub font.
     name_map: optional dict mapping src glyph names to dst glyph names.
     """
     from fontTools.pens.cu2quPen import Cu2QuPen
@@ -577,6 +579,8 @@ def convert_cff_glyphs_to_tt(src_font: TTFont, dst_font: TTFont,
             glyph = TTGlyph()
 
         dst_font["glyf"][dst_name] = glyph
+        if copied is not None:
+            copied.add(dst_name)
 
         if glyph_name in src_font["hmtx"].metrics:
             orig_aw, orig_lsb = src_font["hmtx"].metrics[glyph_name]
@@ -4273,6 +4277,31 @@ def _scale_jp_metrics(merged: TTFont, ratio: float):
             if v is not None:
                 setattr(hhea, attr, _r(v))
 
+    vhea = merged.get("vhea")
+    if vhea is not None:
+        for attr in ("ascent", "descent", "lineGap",
+                     "advanceHeightMax",
+                     "minTopSideBearing", "minBottomSideBearing",
+                     "yMaxExtent", "caretOffset"):
+            v = getattr(vhea, attr, None)
+            if v is not None:
+                setattr(vhea, attr, _r(v))
+
+    vmtx = merged.get("vmtx")
+    if vmtx is not None:
+        for gname, (advance, tsb) in list(vmtx.metrics.items()):
+            vmtx.metrics[gname] = (_r(advance), _r(tsb))
+
+    vorg = merged.get("VORG")
+    if vorg is not None:
+        default_y = getattr(vorg, "defaultVertOriginY", None)
+        if default_y is not None:
+            vorg.defaultVertOriginY = _r(default_y)
+        records = getattr(vorg, "VOriginRecords", None)
+        if records is not None:
+            for gname, y_origin in list(records.items()):
+                records[gname] = _r(y_origin)
+
     post = merged.get("post")
     if post is not None:
         for attr in ("underlinePosition", "underlineThickness"):
@@ -4666,6 +4695,7 @@ def merge_fonts(config: dict) -> str:
                 copied.add(dst)
             convert_cff_glyphs_to_tt(lat_font, merged, unique_lat_glyphs,
                                       final_lat_scale, lat_baseline,
+                                      copied=copied,
                                       name_map=lat_to_merged_name)
 
         elif not lat_is_cff and merged_is_tt:
@@ -4859,11 +4889,10 @@ def merge_fonts(config: dict) -> str:
     # Step 7: Apply transforms to Japanese glyphs (always, even without Latin font)
     if (jp_scale_eff != 1.0 or jp_baseline_eff != 0) and not _jp_transform_done:
         progress("merging-glyphs", 6, f"3/{S} \u00b7 Merging features...")
-        merged_cmap = build_cmap(merged)
-        jp_glyph_names = set()
-        for cp, gname in merged_cmap.items():
-            if gname not in copied:
-                jp_glyph_names.add(gname)
+        jp_glyph_names = [
+            gname for gname in merged.getGlyphOrder()
+            if gname not in copied
+        ]
 
         if merged_is_tt:
             for gname in jp_glyph_names:
