@@ -1538,14 +1538,54 @@ def _add_coverage_domain_glyphs(glyph_names: set, coverage) -> bool:
     return False
 
 
-def _add_classdef_domain_glyphs(glyph_names: set, class_def) -> bool:
-    if class_def is None:
+def _classdef_glyphs_by_class(class_def) -> dict[int, set[str]]:
+    out = {}
+    class_defs = getattr(class_def, 'classDefs', None) or {}
+    for glyph, class_id in class_defs.items():
+        out.setdefault(class_id, set()).add(glyph)
+    return out
+
+
+def _add_class_sequence_domain(glyph_names: set, class_ids,
+                               glyphs_by_class: dict[int, set[str]]) -> bool:
+    """Return True when a class sequence cannot be proven sub-font-confined."""
+    if class_ids is None:
         return False
-    class_defs = getattr(class_def, 'classDefs', None)
-    if class_defs is None:
+
+    unknown = False
+    for class_id in class_ids:
+        if class_id == 0:
+            unknown = True
+            continue
+
+        members = glyphs_by_class.get(class_id)
+        if not members:
+            unknown = True
+            continue
+
+        glyph_names.update(members)
+
+    return unknown
+
+
+def _add_class_set_domain(glyph_names: set, class_set_index: int, rules,
+                          glyphs_by_class: dict[int, set[str]]) -> bool:
+    if not rules:
         return False
-    glyph_names.update(class_defs.keys())
+    if class_set_index == 0:
+        return True
+    members = glyphs_by_class.get(class_set_index)
+    if not members:
+        return True
+    glyph_names.update(members)
     return False
+
+
+def _context_rule_input_classes(rule):
+    input_classes = getattr(rule, 'Input', None)
+    if input_classes is not None:
+        return input_classes
+    return getattr(rule, 'Class', None)
 
 
 def _add_substitution_output_glyphs(glyph_names: set, value) -> bool:
@@ -1635,8 +1675,20 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
                     unknown = _add_glyph_sequence(
                         glyph_names, getattr(rule, 'Input', None)) or unknown
         elif fmt == 2:
-            unknown = _add_classdef_domain_glyphs(
-                glyph_names, getattr(st, 'ClassDef', None)) or unknown
+            glyphs_by_class = _classdef_glyphs_by_class(
+                getattr(st, 'ClassDef', None))
+            for class_set_index, class_set in enumerate(
+                    getattr(st, 'SubClassSet', None) or []):
+                rules = getattr(class_set, 'SubClassRule', None) or []
+                unknown = _add_class_set_domain(
+                    glyph_names, class_set_index, rules,
+                    glyphs_by_class) or unknown
+                for rule in rules:
+                    unknown = _add_class_sequence_domain(
+                        glyph_names,
+                        _context_rule_input_classes(rule),
+                        glyphs_by_class,
+                    ) or unknown
         elif fmt != 3:
             unknown = True
 
@@ -1650,10 +1702,28 @@ def _collect_gsub_subtable_full_domain(lookup_type: int, subtable) \
                             glyph_names, getattr(rule, seq_attr, None)
                         ) or unknown
         elif fmt == 2:
-            for cd_attr in ('BacktrackClassDef', 'InputClassDef',
-                            'LookAheadClassDef'):
-                unknown = _add_classdef_domain_glyphs(
-                    glyph_names, getattr(st, cd_attr, None)) or unknown
+            backtrack_by_class = _classdef_glyphs_by_class(
+                getattr(st, 'BacktrackClassDef', None))
+            input_by_class = _classdef_glyphs_by_class(
+                getattr(st, 'InputClassDef', None))
+            lookahead_by_class = _classdef_glyphs_by_class(
+                getattr(st, 'LookAheadClassDef', None))
+            for class_set_index, class_set in enumerate(
+                    getattr(st, 'ChainSubClassSet', None) or []):
+                rules = getattr(class_set, 'ChainSubClassRule', None) or []
+                unknown = _add_class_set_domain(
+                    glyph_names, class_set_index, rules,
+                    input_by_class) or unknown
+                for rule in rules:
+                    unknown = _add_class_sequence_domain(
+                        glyph_names, getattr(rule, 'Backtrack', None),
+                        backtrack_by_class) or unknown
+                    unknown = _add_class_sequence_domain(
+                        glyph_names, getattr(rule, 'Input', None),
+                        input_by_class) or unknown
+                    unknown = _add_class_sequence_domain(
+                        glyph_names, getattr(rule, 'LookAhead', None),
+                        lookahead_by_class) or unknown
         elif fmt != 3:
             unknown = True
 

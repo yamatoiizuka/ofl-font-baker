@@ -69,6 +69,103 @@ def _make_chain_context_format3(input_glyphs, subordinate_index=None,
     return lk
 
 
+def _class_def(mapping):
+    from fontTools.ttLib.tables import otTables
+    cd = otTables.ClassDef()
+    cd.classDefs = dict(mapping)
+    return cd
+
+
+def _make_sub_class_set(index, input_classes=()):
+    from fontTools.ttLib.tables import otTables
+    rule = otTables.SubClassRule()
+    rule.GlyphCount = len(input_classes) + 1
+    rule.Class = list(input_classes)
+    rule.SubstLookupRecord = []
+    rule.SubstCount = 0
+
+    class_set = otTables.SubClassSet()
+    class_set.SubClassRule = [rule]
+    class_set.SubClassRuleCount = 1
+    class_sets = [None] * (index + 1)
+    class_sets[index] = class_set
+    return class_sets
+
+
+def _make_context_subst_format2(coverage_glyphs, class_defs,
+                                class_set_index, input_classes=()):
+    from fontTools.ttLib.tables import otTables
+    st = otTables.ContextSubst()
+    st.Format = 2
+    st.Coverage = _coverage(*coverage_glyphs)
+    st.ClassDef = _class_def(class_defs)
+    st.SubClassSet = _make_sub_class_set(class_set_index, input_classes)
+    st.SubClassSetCount = len(st.SubClassSet)
+
+    lk = otTables.Lookup()
+    lk.LookupType = 5
+    lk.LookupFlag = 0
+    lk.SubTable = [st]
+    lk.SubTableCount = 1
+    return lk
+
+
+def _make_chain_sub_class_set(index, backtrack=(), input_classes=(),
+                              lookahead=(), subordinate_index=None):
+    from fontTools.ttLib.tables import otTables
+    rule = otTables.ChainSubClassRule()
+    rule.Backtrack = list(backtrack)
+    rule.BacktrackGlyphCount = len(rule.Backtrack)
+    rule.Input = list(input_classes)
+    rule.InputGlyphCount = len(rule.Input) + 1
+    rule.LookAhead = list(lookahead)
+    rule.LookAheadGlyphCount = len(rule.LookAhead)
+    if subordinate_index is None:
+        rule.SubstLookupRecord = []
+    else:
+        rec = otTables.SubstLookupRecord()
+        rec.SequenceIndex = 0
+        rec.LookupListIndex = subordinate_index
+        rule.SubstLookupRecord = [rec]
+    rule.SubstCount = len(rule.SubstLookupRecord)
+
+    class_set = otTables.ChainSubClassSet()
+    class_set.ChainSubClassRule = [rule]
+    class_set.ChainSubClassRuleCount = 1
+    class_sets = [None] * (index + 1)
+    class_sets[index] = class_set
+    return class_sets
+
+
+def _make_chain_context_format2(coverage_glyphs, input_class_defs,
+                                class_set_index, backtrack_class_defs=None,
+                                lookahead_class_defs=None, backtrack=(),
+                                input_classes=(), lookahead=(),
+                                subordinate_index=None):
+    from fontTools.ttLib.tables import otTables
+    st = otTables.ChainContextSubst()
+    st.Format = 2
+    st.Coverage = _coverage(*coverage_glyphs)
+    st.BacktrackClassDef = _class_def(backtrack_class_defs or {})
+    st.InputClassDef = _class_def(input_class_defs)
+    st.LookAheadClassDef = _class_def(lookahead_class_defs or {})
+    st.ChainSubClassSet = _make_chain_sub_class_set(
+        class_set_index,
+        backtrack=backtrack,
+        input_classes=input_classes,
+        lookahead=lookahead,
+        subordinate_index=subordinate_index,
+    )
+    st.ChainSubClassSetCount = len(st.ChainSubClassSet)
+
+    lk = otTables.Lookup()
+    lk.LookupType = 6
+    lk.LookupFlag = 0
+    lk.SubTable = [st]
+    lk.SubTableCount = 1
+    return lk
+
+
 def _make_feature_record(tag, lookup_indices):
     from fontTools.ttLib.tables import otTables
     feat = otTables.Feature()
@@ -1090,6 +1187,68 @@ class TestStrictCaltSafetyHelper:
         feat_rec = _make_feature_record("calt", [0])
         assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
             feat_rec, [lookup], set()) is False
+
+    def test_rejects_context_format2_first_input_class_zero(self):
+        lookup = _make_context_subst_format2(
+            coverage_glyphs=["A"],
+            class_defs={"A": 1},
+            class_set_index=0,
+        )
+        feat_rec = _make_feature_record("calt", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
+            feat_rec, [lookup], {"A", "A.alt"}) is False
+
+    def test_rejects_context_format2_input_class_zero(self):
+        lookup = _make_context_subst_format2(
+            coverage_glyphs=["A"],
+            class_defs={"A": 1, "colon": 2},
+            class_set_index=1,
+            input_classes=[0],
+        )
+        feat_rec = _make_feature_record("calt", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
+            feat_rec, [lookup], {"A", "colon", "A.alt"}) is False
+
+    def test_rejects_chain_context_format2_first_input_class_zero(self):
+        lookup = _make_chain_context_format2(
+            coverage_glyphs=["A"],
+            input_class_defs={"A": 1},
+            class_set_index=0,
+        )
+        feat_rec = _make_feature_record("calt", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
+            feat_rec, [lookup], {"A", "A.alt"}) is False
+
+    @pytest.mark.parametrize("seq_name,seq_kwargs", [
+        ("backtrack", {"backtrack": [0], "backtrack_class_defs": {"colon": 2}}),
+        ("input", {"input_classes": [0]}),
+        ("lookahead", {"lookahead": [0], "lookahead_class_defs": {"colon": 2}}),
+    ])
+    def test_rejects_chain_context_format2_class_zero_sequence(
+            self, seq_name, seq_kwargs):
+        lookup = _make_chain_context_format2(
+            coverage_glyphs=["A"],
+            input_class_defs={"A": 1, "colon": 2},
+            class_set_index=1,
+            **seq_kwargs,
+        )
+        feat_rec = _make_feature_record("calt", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
+            feat_rec, [lookup], {"A", "colon", "A.alt"}) is False
+
+    def test_accepts_chain_context_format2_nonzero_sub_owned_classes(self):
+        sub = _make_single_subst("A", "A.alt")
+        chain = _make_chain_context_format2(
+            coverage_glyphs=["A"],
+            input_class_defs={"A": 1},
+            class_set_index=1,
+            lookahead_class_defs={"colon": 2},
+            lookahead=[2],
+            subordinate_index=0,
+        )
+        feat_rec = _make_feature_record("calt", [1])
+        assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
+            feat_rec, [sub, chain], {"A", "A.alt", "colon"}) is True
 
 
 class TestStrictCaltPromotionStructure:
