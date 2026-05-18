@@ -20,6 +20,159 @@ from conftest import EN_VAR, JP_VAR
 import merge_fonts as mf
 
 
+def _coverage(*glyphs):
+    from fontTools.ttLib.tables import otTables
+    cov = otTables.Coverage()
+    cov.glyphs = list(glyphs)
+    return cov
+
+
+def _make_single_subst(input_glyph, output_glyph):
+    from fontTools.ttLib.tables import otTables
+    st = otTables.SingleSubst()
+    st.mapping = {input_glyph: output_glyph}
+    lk = otTables.Lookup()
+    lk.LookupType = 1
+    lk.LookupFlag = 0
+    lk.SubTable = [st]
+    lk.SubTableCount = 1
+    return lk
+
+
+def _make_chain_context_format3(input_glyphs, subordinate_index=None,
+                                backtrack=(), lookahead=(),
+                                sequence_index=0):
+    from fontTools.ttLib.tables import otTables
+
+    st = otTables.ChainContextSubst()
+    st.Format = 3
+    st.BacktrackCoverage = [_coverage(g) for g in backtrack]
+    st.BacktrackGlyphCount = len(st.BacktrackCoverage)
+    st.InputCoverage = [_coverage(g) for g in input_glyphs]
+    st.InputGlyphCount = len(st.InputCoverage)
+    st.LookAheadCoverage = [_coverage(g) for g in lookahead]
+    st.LookAheadGlyphCount = len(st.LookAheadCoverage)
+    if subordinate_index is None:
+        st.SubstLookupRecord = []
+    else:
+        rec = otTables.SubstLookupRecord()
+        rec.SequenceIndex = sequence_index
+        rec.LookupListIndex = subordinate_index
+        st.SubstLookupRecord = [rec]
+    st.SubstCount = len(st.SubstLookupRecord)
+
+    lk = otTables.Lookup()
+    lk.LookupType = 6
+    lk.LookupFlag = 0
+    lk.SubTable = [st]
+    lk.SubTableCount = 1
+    return lk
+
+
+def _make_feature_record(tag, lookup_indices):
+    from fontTools.ttLib.tables import otTables
+    feat = otTables.Feature()
+    feat.FeatureParams = None
+    feat.LookupListIndex = list(lookup_indices)
+    feat.LookupCount = len(feat.LookupListIndex)
+    rec = otTables.FeatureRecord()
+    rec.FeatureTag = tag
+    rec.Feature = feat
+    return rec
+
+
+def _make_langsys(feature_indices):
+    from fontTools.ttLib.tables import otTables
+    ls = otTables.LangSys()
+    ls.LookupOrder = None
+    ls.ReqFeatureIndex = 0xFFFF
+    ls.FeatureIndex = list(feature_indices)
+    ls.FeatureCount = len(ls.FeatureIndex)
+    return ls
+
+
+def _make_script_record(script_tag, default_feature_indices=(), named=None):
+    from fontTools.ttLib.tables import otTables
+    sr = otTables.ScriptRecord()
+    sr.ScriptTag = script_tag
+    sr.Script = otTables.Script()
+    sr.Script.DefaultLangSys = _make_langsys(default_feature_indices)
+    records = []
+    for tag, feature_indices in (named or {}).items():
+        lsr = otTables.LangSysRecord()
+        lsr.LangSysTag = tag
+        lsr.LangSys = _make_langsys(feature_indices)
+        records.append(lsr)
+    records.sort(key=lambda lsr: lsr.LangSysTag)
+    sr.Script.LangSysRecord = records
+    sr.Script.LangSysCount = len(records)
+    return sr
+
+
+def _make_gsub_table(lookups, feature_records, script_records):
+    from fontTools.ttLib import newTable
+    from fontTools.ttLib.tables import otTables
+
+    table = newTable("GSUB")
+    gsub = otTables.GSUB()
+    gsub.Version = 0x00010000
+    lookup_list = otTables.LookupList()
+    lookup_list.Lookup = list(lookups)
+    lookup_list.LookupCount = len(lookup_list.Lookup)
+    gsub.LookupList = lookup_list
+    feature_list = otTables.FeatureList()
+    feature_list.FeatureRecord = list(feature_records)
+    feature_list.FeatureCount = len(feature_list.FeatureRecord)
+    gsub.FeatureList = feature_list
+    script_list = otTables.ScriptList()
+    script_list.ScriptRecord = list(script_records)
+    script_list.ScriptCount = len(script_list.ScriptRecord)
+    gsub.ScriptList = script_list
+    table.table = gsub
+    return table
+
+
+def _merge_minimal_gsub(lat_lookups, lat_features, lat_scripts,
+                        jp_lookups=None, jp_features=None, jp_scripts=None,
+                        lat_glyph_names=None):
+    jp_scripts = jp_scripts or [
+        _make_script_record("kana"),
+        _make_script_record("hani"),
+    ]
+    lat_table = _make_gsub_table(lat_lookups, lat_features, lat_scripts)
+    jp_table = _make_gsub_table(
+        jp_lookups or [], jp_features or [], jp_scripts)
+    mf._merge_ot_table_v2(
+        lat_table, jp_table, None, None, {}, "GSUB",
+        lat_glyph_names or set(),
+    )
+    return jp_table.table
+
+
+def _langsys(gsub, script_tag, lang_sys_tag=None):
+    for sr in gsub.ScriptList.ScriptRecord:
+        if sr.ScriptTag != script_tag:
+            continue
+        if lang_sys_tag is None:
+            return sr.Script.DefaultLangSys
+        for lsr in (sr.Script.LangSysRecord or []):
+            if lsr.LangSysTag == lang_sys_tag:
+                return lsr.LangSys
+    return None
+
+
+def _tags_for_langsys(gsub, langsys):
+    return [gsub.FeatureList.FeatureRecord[i].FeatureTag
+            for i in (langsys.FeatureIndex or [])]
+
+
+def _feature_indices_for_tag(gsub, langsys, tag):
+    return [
+        i for i in (langsys.FeatureIndex or [])
+        if gsub.FeatureList.FeatureRecord[i].FeatureTag == tag
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Shared HarfBuzz helper
 # ---------------------------------------------------------------------------
@@ -146,6 +299,26 @@ class TestLatinUserFeaturesUnderCjkScripts:
             f"(default={default})"
         )
 
+    @pytest.mark.parametrize("script,language", [("kana", "ja"), ("hani", "ja")])
+    def test_default_calt_under_cjk_matches_latn_prefix(
+            self, merged_inter_path, script, language):
+        """Default-on Inter ``calt`` must remain reachable for Latin-owned
+        glyphs inside a Japanese run shaped through a CJK script."""
+        latin_text = "(15:00)"
+        mixed_text = f"{latin_text} 日本語"
+        latn = _shape(merged_inter_path, latin_text, "latn", "en")
+        latn_without_calt = _shape(
+            merged_inter_path, latin_text, "latn", "en", {"calt": False})
+        assert latn != latn_without_calt, (
+            "fixture sanity: Inter calt should affect '(15:00)' under latn"
+        )
+
+        cjk = _shape(merged_inter_path, mixed_text, script, language)
+        assert cjk[:len(latn)] == latn, (
+            f"{script}/{language} calt differs from latn/en for the Latin "
+            f"prefix: {script}={cjk[:len(latn)]} vs latn={latn}"
+        )
+
 
 class TestCjkScriptShapingUnchangedForJapanese:
     """Plain Japanese text shaped under CJK scripts must not be affected by
@@ -221,8 +394,7 @@ class TestCjkLangSysIncludesAllowlistedLatinFeatures:
                                                    script):
         """Inter ships ``ss01..ss08``, ``tnum``, ``zero``, ``frac``, ``case``,
         ``calt``, ``locl``, etc.; the CJK LangSys must end up with the
-        allowlisted *user* features (ss01..ss08, tnum, zero, frac), but not
-        the avoided defaults (``calt``, ``case``, ``locl``)."""
+        allowlisted *user* features (ss01..ss08, tnum, zero, frac)."""
         tags = self._cjk_default_langsys_tags(TTFont(merged_inter_path), script)
         for expected in ("ss01", "ss02", "tnum", "zero", "frac"):
             assert expected in tags, (
@@ -231,11 +403,32 @@ class TestCjkLangSysIncludesAllowlistedLatinFeatures:
             )
 
 
+class TestCjkLangSysIncludesStrictSafeCalt:
+    """Strictly sub-font-confined Latin ``calt`` may be promoted to CJK
+    LangSys records even though it is not a user-feature allowlist tag."""
+
+    @pytest.mark.parametrize("script", ["kana", "hani"])
+    def test_inter_calt_promoted_under_cjk_default(self, merged_inter_path,
+                                                  script):
+        merged = TTFont(merged_inter_path)
+        gsub = merged["GSUB"].table
+        ls = _langsys(gsub, script)
+        assert ls is not None, f"merged font has no {script} DefaultLangSys"
+        tags = set(_tags_for_langsys(gsub, ls))
+        assert "calt" in tags, (
+            f"{script} DefaultLangSys missing strict Latin calt promotion "
+            f"(tags={sorted(tags)})"
+        )
+
+    def test_calt_stays_out_of_user_allowlist(self):
+        assert "calt" not in mf.CJK_LATIN_USER_FEATURE_ALLOWLIST
+
+
 class TestCjkLangSysExcludesAvoidedTags:
     """The fix must not blindly copy every Latin feature into CJK LangSys
-    records. Defaults / context-sensitive features that belong to Latin's
-    own `latn` LangSys must not become reachable from CJK scripts unless
-    they were already on the JP side.
+    records. Defaults / context-sensitive features other than strictly safe
+    ``calt`` must not become reachable from CJK scripts unless they were
+    already on the JP side.
     """
 
     # Full avoid list from docs/CJK_LATIN_USER_FEATURES_PLAN.md. Tags the
@@ -243,7 +436,7 @@ class TestCjkLangSysExcludesAvoidedTags:
     # (preserving JP-owned `fwid` / `vert` is correct); the test only
     # flags tags newly inherited from the Latin side.
     AVOIDED_TAGS = (
-        "calt", "case", "ccmp", "liga", "dlig",
+        "case", "ccmp", "liga", "dlig",
         "aalt", "locl", "fwid", "hwid", "vert", "vrt2",
     )
 
@@ -847,6 +1040,137 @@ class TestNamedOnlyLatinLookupDoesNotLeakToCjkDefault:
             f"{script}/dflt tnum leaked Latin named-only lookups: "
             f"default={default_lookups}, latin-only={latin_only}"
         )
+
+
+class TestStrictCaltSafetyHelper:
+    """The strict default-on promotion helper must check the whole GSUB
+    lookup closure, not just input coverage."""
+
+    def test_accepts_context_and_output_inside_sub_font(self):
+        sub = _make_single_subst("colon", "colon.time")
+        chain = _make_chain_context_format3(
+            ["one", "colon", "zero"], subordinate_index=0, sequence_index=1)
+        feat_rec = _make_feature_record("calt", [1])
+        sub_owned = {"one", "colon", "colon.time", "zero"}
+        assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
+            feat_rec, [sub, chain], sub_owned) is True
+
+    def test_rejects_output_outside_sub_font(self):
+        lookup = _make_single_subst("A", "uni65E5")
+        feat_rec = _make_feature_record("calt", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
+            feat_rec, [lookup], {"A"}) is False
+
+    def test_rejects_lookahead_outside_sub_font(self):
+        lookup = _make_chain_context_format3(["A"], lookahead=["uni65E5"])
+        feat_rec = _make_feature_record("calt", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
+            feat_rec, [lookup], {"A"}) is False
+
+    def test_rejects_unknown_lookup_shape(self):
+        from fontTools.ttLib.tables import otTables
+        st = otTables.ContextSubst()
+        st.Format = 99
+        lookup = otTables.Lookup()
+        lookup.LookupType = 5
+        lookup.LookupFlag = 0
+        lookup.SubTable = [st]
+        lookup.SubTableCount = 1
+        feat_rec = _make_feature_record("calt", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
+            feat_rec, [lookup], set()) is False
+
+    def test_rejects_empty_feature(self):
+        from fontTools.ttLib.tables import otTables
+        lookup = otTables.Lookup()
+        lookup.LookupType = 1
+        lookup.LookupFlag = 0
+        lookup.SubTable = []
+        lookup.SubTableCount = 0
+        feat_rec = _make_feature_record("calt", [0])
+        assert mf._sub_feature_strictly_safe_for_cjk_default_promotion(
+            feat_rec, [lookup], set()) is False
+
+
+class TestStrictCaltPromotionStructure:
+    """Synthetic GSUB tables exercise promotion scoping without the cost of
+    compiling patched real fonts for every unsafe case."""
+
+    @staticmethod
+    def _latn_default_gsub_for_calt(lookup, lat_glyph_names):
+        return _merge_minimal_gsub(
+            [lookup],
+            [_make_feature_record("calt", [0])],
+            [_make_script_record("latn", [0])],
+            lat_glyph_names=lat_glyph_names,
+        )
+
+    @pytest.mark.parametrize("script", ["kana", "hani"])
+    def test_safe_calt_is_promoted_to_cjk_default(self, script):
+        lookup = _make_single_subst("A", "A.alt")
+        gsub = self._latn_default_gsub_for_calt(lookup, {"A", "A.alt"})
+        ls = _langsys(gsub, script)
+        assert "calt" in _tags_for_langsys(gsub, ls)
+
+    @pytest.mark.parametrize("script", ["kana", "hani"])
+    def test_unsafe_output_calt_is_not_promoted(self, script):
+        lookup = _make_single_subst("A", "uni65E5")
+        gsub = self._latn_default_gsub_for_calt(lookup, {"A"})
+        ls = _langsys(gsub, script)
+        assert "calt" not in _tags_for_langsys(gsub, ls)
+
+    @pytest.mark.parametrize("script", ["kana", "hani"])
+    def test_unsafe_lookahead_calt_is_not_promoted(self, script):
+        lookup = _make_chain_context_format3(["A"], lookahead=["uni65E5"])
+        gsub = self._latn_default_gsub_for_calt(lookup, {"A"})
+        ls = _langsys(gsub, script)
+        assert "calt" not in _tags_for_langsys(gsub, ls)
+
+    @pytest.mark.parametrize("script", ["kana", "hani"])
+    def test_duplicate_calt_tag_combines_without_mutating_jp_record(
+            self, script):
+        jp_lookup = _make_single_subst("uni65E5", "uni65E5.alt")
+        lat_lookup = _make_single_subst("A", "A.alt")
+        gsub = _merge_minimal_gsub(
+            [lat_lookup],
+            [_make_feature_record("calt", [0])],
+            [_make_script_record("latn", [0])],
+            jp_lookups=[jp_lookup],
+            jp_features=[_make_feature_record("calt", [0])],
+            jp_scripts=[
+                _make_script_record("kana", [0]),
+                _make_script_record("hani", [0]),
+            ],
+            lat_glyph_names={"A", "A.alt"},
+        )
+        ls = _langsys(gsub, script)
+        tags = _tags_for_langsys(gsub, ls)
+        assert tags.count("calt") == 1
+        [combined_idx] = _feature_indices_for_tag(gsub, ls, "calt")
+        combined_lookups = (
+            gsub.FeatureList.FeatureRecord[combined_idx]
+            .Feature.LookupListIndex
+        )
+        assert combined_lookups == [0, 1]
+        original_jp_lookups = (
+            gsub.FeatureList.FeatureRecord[0].Feature.LookupListIndex
+        )
+        assert original_jp_lookups == [0]
+
+    @pytest.mark.parametrize("script", ["kana", "hani"])
+    def test_named_only_calt_does_not_leak_to_cjk_default(self, script):
+        lookup = _make_single_subst("A", "A.alt")
+        gsub = _merge_minimal_gsub(
+            [lookup],
+            [_make_feature_record("calt", [0])],
+            [_make_script_record("latn", [], named={"JPN ": [0]})],
+            lat_glyph_names={"A", "A.alt"},
+        )
+        default_ls = _langsys(gsub, script)
+        named_ls = _langsys(gsub, script, "JPN ")
+        assert "calt" not in _tags_for_langsys(gsub, default_ls)
+        assert named_ls is not None
+        assert "calt" in _tags_for_langsys(gsub, named_ls)
 
 
 class TestSafetyHelperRecursesIntoSubordinateLookups:
