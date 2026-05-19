@@ -1726,6 +1726,114 @@ class TestOutputUpm:
         os.remove(out)
         assert m["head"].unitsPerEm == 1500
 
+    def test_base_only_upm_scales_unmapped_glyphs(self):
+        out = tempfile.mktemp(suffix=".ttf")
+        base_cfg = {
+            "path": JP_VAR,
+            "scale": 1.0,
+            "baselineOffset": 0,
+            "axes": [{"tag": "wght", "currentValue": 400}],
+        }
+        config = {
+            "subFont": None,
+            "baseFont": base_cfg,
+            "output": {"familyName": "Test", "upm": 2000},
+            "export": {"path": {"font": out}},
+        }
+
+        source = TTFont(JP_VAR)
+        source = mf._instantiate_if_variable(source, base_cfg, "Test source")
+        source_cmap_names = set((source.getBestCmap() or {}).values())
+        gname = None
+        source_bounds = None
+        for candidate in source.getGlyphOrder():
+            if candidate == ".notdef" or candidate in source_cmap_names:
+                continue
+            if candidate not in source["hmtx"].metrics:
+                continue
+            bounds = _get_bounds(source, candidate)
+            if bounds is None:
+                continue
+            gname = candidate
+            source_bounds = bounds
+            break
+
+        assert gname is not None, "fixture should contain an unmapped outline glyph"
+        source_hmtx = source["hmtx"].metrics[gname]
+        source_vmtx = None
+        if "vmtx" in source and gname in source["vmtx"].metrics:
+            source_vmtx = source["vmtx"].metrics[gname]
+
+        m = None
+        try:
+            mf.merge_fonts(config)
+            m = TTFont(out)
+            ratio = 2000 / source["head"].unitsPerEm
+
+            assert m["head"].unitsPerEm == 2000
+            assert m["hmtx"].metrics[gname] == (
+                int(round(source_hmtx[0] * ratio)),
+                int(round(source_hmtx[1] * ratio)),
+            )
+            if source_vmtx is not None:
+                assert m["vmtx"].metrics[gname] == (
+                    int(round(source_vmtx[0] * ratio)),
+                    int(round(source_vmtx[1] * ratio)),
+                )
+
+            expected_bounds = tuple(int(round(v * ratio)) for v in source_bounds)
+            actual_bounds = _get_bounds(m, gname)
+            assert actual_bounds is not None
+            for actual, expected in zip(actual_bounds, expected_bounds):
+                assert abs(actual - expected) <= 2
+        finally:
+            source.close()
+            if m is not None:
+                m.close()
+            for path in (out, out.replace(".ttf", ".woff2")):
+                if os.path.exists(path):
+                    os.remove(path)
+
+    def test_cff_subfont_upm_scaling_is_not_applied_twice(self):
+        out = tempfile.mktemp(suffix=".ttf")
+        config = {
+            "subFont": {
+                "path": EN_CFF,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "baseFont": {
+                "path": JP_VAR,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "output": {"familyName": "Test", "upm": 2000},
+            "export": {"path": {"font": out}},
+        }
+
+        sub = TTFont(EN_CFF)
+        m = None
+        try:
+            mf.merge_fonts(config)
+            m = TTFont(out)
+            merged_gname = m.getBestCmap()[0x0048]
+            sub_gname = sub.getBestCmap()[0x0048]
+            ratio = 2000 / sub["head"].unitsPerEm
+            expected_hmtx = (
+                int(round(sub["hmtx"].metrics[sub_gname][0] * ratio)),
+                int(round(sub["hmtx"].metrics[sub_gname][1] * ratio)),
+            )
+            assert m["hmtx"].metrics[merged_gname] == expected_hmtx
+        finally:
+            sub.close()
+            if m is not None:
+                m.close()
+            for path in (out, out.replace(".ttf", ".woff2")):
+                if os.path.exists(path):
+                    os.remove(path)
+
 
 
 # ---------------------------------------------------------------------------
