@@ -3189,7 +3189,11 @@ def _scale_gpos_subtable(st, scale: float, dy: float):
     """
     # SinglePos (type 1)
     if hasattr(st, 'Value') and st.Value:
-        _scale_value_record(st.Value, scale)
+        if isinstance(st.Value, (list, tuple)):
+            for value_record in st.Value:
+                _scale_value_record(value_record, scale)
+        else:
+            _scale_value_record(st.Value, scale)
     if hasattr(st, 'Value1') and st.Value1:
         _scale_value_record(st.Value1, scale)
     if hasattr(st, 'Value2') and st.Value2:
@@ -4309,12 +4313,52 @@ def _scale_jp_metrics(merged: TTFont, ratio: float):
             if v is not None:
                 setattr(post, attr, _r(v))
 
+    base = merged.get("BASE")
+    if base is not None:
+        _scale_base_table(base.table, ratio)
+
     head = merged.get("head")
     if head is not None:
         for attr in ("xMin", "yMin", "xMax", "yMax"):
             v = getattr(head, attr, None)
             if v is not None:
                 setattr(head, attr, _r(v))
+
+
+def _scale_base_table(table, ratio: float):
+    """Scale OpenType BASE coordinates for output-UPM changes."""
+    if ratio == 1.0:
+        return
+
+    def _r(v):
+        return int(round(v * ratio))
+
+    seen = set()
+
+    def _walk(obj):
+        if obj is None:
+            return
+        if isinstance(obj, (str, bytes, int, float, bool)):
+            return
+        if isinstance(obj, (list, tuple)):
+            for item in obj:
+                _walk(item)
+            return
+
+        obj_id = id(obj)
+        if obj_id in seen:
+            return
+        seen.add(obj_id)
+
+        if hasattr(obj, "Coordinate"):
+            coord = getattr(obj, "Coordinate")
+            if isinstance(coord, int):
+                setattr(obj, "Coordinate", _r(coord))
+
+        for value in getattr(obj, "__dict__", {}).values():
+            _walk(value)
+
+    _walk(table)
 
 
 
@@ -4365,15 +4409,6 @@ def merge_fonts(config: dict) -> str:
     output_upm = int(output.get("upm") or jp_source_upm)
     jp_upm_ratio = output_upm / jp_source_upm
 
-    # Scale the JP-origin GPOS lookups by the UPM ratio now, before any Latin
-    # lookups are merged in. Latin lookups merged later are scaled separately
-    # via final_lat_scale inside merge_feature_tables.
-    if jp_upm_ratio != 1.0:
-        _gpos = merged.get("GPOS")
-        if _gpos is not None and _gpos.table and _gpos.table.LookupList:
-            for _lk in _gpos.table.LookupList.Lookup:
-                _scale_gpos_lookup(_lk, jp_upm_ratio, 0)
-
     # Output format always mirrors the base font (CFF base → CFF out,
     # TT base → TT out). This avoids TT↔CFF round-trips that would either
     # drop CFF hints or bloat point counts through cu2qu conversion.
@@ -4412,6 +4447,15 @@ def merge_fonts(config: dict) -> str:
     # the JP outlines / hints / hmtx produces output-UPM-ready values.
     jp_scale_eff = jp_scale * jp_upm_ratio
     jp_baseline_eff = jp_baseline * jp_upm_ratio
+
+    # Scale JP-origin GPOS lookups by the same transform used for JP outlines
+    # before any Latin lookups are merged in. Latin lookups merged later are
+    # scaled separately via final_lat_scale inside merge_feature_tables.
+    if jp_scale_eff != 1.0 or jp_baseline_eff != 0:
+        _gpos = merged.get("GPOS")
+        if _gpos is not None and _gpos.table and _gpos.table.LookupList:
+            for _lk in _gpos.table.LookupList.Lookup:
+                _scale_gpos_lookup(_lk, jp_scale_eff, jp_baseline_eff)
 
     if not lat_font:
         progress("merging-glyphs", 4, f"2/{S} \u00b7 Merging glyphs...")

@@ -17,6 +17,87 @@ from conftest import (
 import merge_fonts as mf
 
 
+def _base_coordinates(font):
+    """Collect BASE table coordinate values in traversal order."""
+    if "BASE" not in font:
+        return []
+    coords = []
+    seen = set()
+
+    def _walk(obj):
+        if obj is None:
+            return
+        if isinstance(obj, (str, bytes, int, float, bool)):
+            return
+        if isinstance(obj, (list, tuple)):
+            for item in obj:
+                _walk(item)
+            return
+
+        obj_id = id(obj)
+        if obj_id in seen:
+            return
+        seen.add(obj_id)
+
+        if hasattr(obj, "Coordinate"):
+            coord = getattr(obj, "Coordinate")
+            if isinstance(coord, int):
+                coords.append(coord)
+
+        for value in getattr(obj, "__dict__", {}).values():
+            _walk(value)
+
+    _walk(font["BASE"].table)
+    return coords
+
+
+_GPOS_VALUE_ATTRS = ("XPlacement", "YPlacement", "XAdvance", "YAdvance")
+
+
+def _value_record_tuple(value_record):
+    return tuple(getattr(value_record, attr, None) for attr in _GPOS_VALUE_ATTRS)
+
+
+def _scaled_value_tuples(values, ratio):
+    return [
+        tuple(None if v is None else int(round(v * ratio)) for v in record)
+        for record in values
+    ]
+
+
+def _single_pos_values_for_feature(font, feature_tag, glyph_name):
+    """Return SinglePos ValueRecords for glyph_name under a GPOS feature."""
+    if "GPOS" not in font:
+        return []
+    table = font["GPOS"].table
+    if not table.FeatureList or not table.LookupList:
+        return []
+
+    values = []
+    for feature_record in table.FeatureList.FeatureRecord:
+        if feature_record.FeatureTag != feature_tag:
+            continue
+        for lookup_index in feature_record.Feature.LookupListIndex:
+            lookup = table.LookupList.Lookup[lookup_index]
+            for subtable in lookup.SubTable:
+                st = (subtable.ExtSubTable
+                      if hasattr(subtable, "ExtSubTable") else subtable)
+                coverage = getattr(st, "Coverage", None)
+                value = getattr(st, "Value", None)
+                if coverage is None or value is None:
+                    continue
+                if glyph_name not in coverage.glyphs:
+                    continue
+                glyph_index = coverage.glyphs.index(glyph_name)
+                if isinstance(value, (list, tuple)):
+                    if glyph_index >= len(value):
+                        continue
+                    values.append(_value_record_tuple(value[glyph_index]))
+                else:
+                    values.append(_value_record_tuple(value))
+    return values
+
+
 # ---------------------------------------------------------------------------
 # Variable Font instantiation
 # ---------------------------------------------------------------------------
@@ -1707,6 +1788,152 @@ class TestOutputUpm:
         ratio = 2000 / m1["head"].unitsPerEm
         assert abs(m2["OS/2"].sTypoAscender - m1["OS/2"].sTypoAscender * ratio) <= 2
         assert abs(m2["hhea"].ascent - m1["hhea"].ascent * ratio) <= 2
+
+    def test_base_table_scaled_by_upm_ratio(self):
+        m1 = _merge()
+        m2 = _merge(output_upm=2048)
+        ratio = 2048 / m1["head"].unitsPerEm
+
+        source_coords = _base_coordinates(m1)
+        output_coords = _base_coordinates(m2)
+
+        assert source_coords, "fixture should contain a BASE table"
+        assert len(output_coords) == len(source_coords)
+        assert output_coords == [int(round(v * ratio)) for v in source_coords]
+
+    def test_cff_base_table_scaled_by_upm_ratio(self):
+        out = tempfile.mktemp(suffix=".otf")
+        config = {
+            "subFont": {
+                "path": EN_CFF,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "baseFont": {
+                "path": JP_OTF,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [],
+            },
+            "output": {"familyName": "Test", "upm": 2048},
+            "export": {"path": {"font": out}},
+        }
+        source = TTFont(JP_OTF)
+        m = None
+        try:
+            mf.merge_fonts(config)
+            m = TTFont(out)
+            ratio = 2048 / source["head"].unitsPerEm
+
+            source_coords = _base_coordinates(source)
+            output_coords = _base_coordinates(m)
+
+            assert source_coords, "fixture should contain a BASE table"
+            assert len(output_coords) == len(source_coords)
+            assert output_coords == [
+                int(round(v * ratio)) for v in source_coords
+            ]
+        finally:
+            source.close()
+            if m is not None:
+                m.close()
+            if os.path.exists(out):
+                os.remove(out)
+
+    def test_base_only_gpos_singlepos_values_scaled_by_upm_ratio(self):
+        out = tempfile.mktemp(suffix=".ttf")
+        base_cfg = {
+            "path": JP_VAR,
+            "scale": 1.0,
+            "baselineOffset": 0,
+            "axes": [{"tag": "wght", "currentValue": 400}],
+        }
+        config = {
+            "subFont": None,
+            "baseFont": base_cfg,
+            "output": {"familyName": "Test", "upm": 2048},
+            "export": {"path": {"font": out}},
+        }
+        source = TTFont(JP_VAR)
+        source = mf._instantiate_if_variable(source, base_cfg, "Test source")
+        m = None
+        try:
+            mf.merge_fonts(config)
+            m = TTFont(out)
+            ratio = 2048 / source["head"].unitsPerEm
+
+            for feature_tag, glyph_name in (
+                ("palt", "uni3042"),      # SinglePos Format 2
+                ("vpal", "glyph00209"),  # SinglePos Format 1
+                ("vpal", "glyph00216"),  # SinglePos Format 2
+            ):
+                source_values = _single_pos_values_for_feature(
+                    source, feature_tag, glyph_name
+                )
+                output_values = _single_pos_values_for_feature(
+                    m, feature_tag, glyph_name
+                )
+                assert source_values, f"{feature_tag} {glyph_name} missing"
+                assert output_values == _scaled_value_tuples(
+                    source_values, ratio
+                )
+        finally:
+            source.close()
+            if m is not None:
+                m.close()
+            if os.path.exists(out):
+                os.remove(out)
+
+    def test_base_only_gpos_singlepos_uses_base_scale_with_upm(self):
+        out = tempfile.mktemp(suffix=".ttf")
+        base_cfg = {
+            "path": JP_VAR,
+            "scale": 0.5,
+            "baselineOffset": 0,
+            "axes": [{"tag": "wght", "currentValue": 400}],
+        }
+        config = {
+            "subFont": None,
+            "baseFont": base_cfg,
+            "output": {"familyName": "Test", "upm": 2048},
+            "export": {"path": {"font": out}},
+        }
+        source = TTFont(JP_VAR)
+        source = mf._instantiate_if_variable(source, base_cfg, "Test source")
+        m = None
+        try:
+            mf.merge_fonts(config)
+            m = TTFont(out)
+            effective_scale = base_cfg["scale"] * (
+                2048 / source["head"].unitsPerEm
+            )
+
+            assert m["hmtx"].metrics["uni3042"][0] == int(round(
+                source["hmtx"].metrics["uni3042"][0] * effective_scale
+            ))
+
+            for feature_tag, glyph_name in (
+                ("palt", "uni3042"),      # SinglePos Format 2
+                ("vpal", "glyph00209"),  # SinglePos Format 1
+                ("vpal", "glyph00216"),  # SinglePos Format 2
+            ):
+                source_values = _single_pos_values_for_feature(
+                    source, feature_tag, glyph_name
+                )
+                output_values = _single_pos_values_for_feature(
+                    m, feature_tag, glyph_name
+                )
+                assert source_values, f"{feature_tag} {glyph_name} missing"
+                assert output_values == _scaled_value_tuples(
+                    source_values, effective_scale
+                )
+        finally:
+            source.close()
+            if m is not None:
+                m.close()
+            if os.path.exists(out):
+                os.remove(out)
 
     def test_base_only_respects_upm(self):
         out = tempfile.mktemp(suffix=".ttf")
