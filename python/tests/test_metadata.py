@@ -12,6 +12,15 @@ from conftest import EN_CFF_FULL, EN_VAR, JP_VAR, _merge, _merge_with_meta
 import merge_fonts as mf
 
 
+def _name_values(font, name_id):
+    values = []
+    for record in font["name"].names:
+        if record.nameID != name_id:
+            continue
+        values.append(record.toUnicode())
+    return values
+
+
 # ---------------------------------------------------------------------------
 # Output weight / nameID 2, 4, 17
 # ---------------------------------------------------------------------------
@@ -422,13 +431,15 @@ class TestMetadataCorrectness:
         """nameID 9 is always cleared — Designer belongs to the source authors."""
         m = _merge_with_meta()
         d = m["name"].getDebugName(9)
-        assert d is None or d == "", f"Expected cleared designer, got '{d}'"
+        assert d is None, f"Expected omitted designer, got '{d}'"
+        assert _name_values(m, 9) == []
 
     def test_designer_url_always_cleared(self):
         """nameID 12 is always cleared — Designer URL is not set on the derivative."""
         m = _merge_with_meta()
         url = m["name"].getDebugName(12)
-        assert url is None or url == "", f"Expected cleared designer URL, got '{url}'"
+        assert url is None, f"Expected omitted designer URL, got '{url}'"
+        assert _name_values(m, 12) == []
 
     def test_manufacturer_set_when_provided(self):
         """outputManufacturer is written to nameID 8."""
@@ -439,7 +450,8 @@ class TestMetadataCorrectness:
         """Missing outputManufacturer clears nameID 8."""
         m = _merge_with_meta(output_manufacturer="")
         v = m["name"].getDebugName(8)
-        assert v is None or v == "", f"Expected empty manufacturer, got '{v}'"
+        assert v is None, f"Expected omitted manufacturer, got '{v}'"
+        assert _name_values(m, 8) == []
 
     def test_manufacturer_url_set_when_provided(self):
         """outputManufacturerURL is written to nameID 11."""
@@ -450,7 +462,14 @@ class TestMetadataCorrectness:
         """Missing outputManufacturerURL clears nameID 11."""
         m = _merge_with_meta(output_manufacturer_url="")
         url = m["name"].getDebugName(11)
-        assert url is None or url == "", f"Expected empty manufacturer URL, got '{url}'"
+        assert url is None, f"Expected omitted manufacturer URL, got '{url}'"
+        assert _name_values(m, 11) == []
+
+    def test_whitespace_optional_metadata_is_omitted(self):
+        m = _merge_with_meta(output_manufacturer=" \t ",
+                             output_manufacturer_url="\n")
+        assert _name_values(m, 8) == []
+        assert _name_values(m, 11) == []
 
     def test_vendor_id_always_four_spaces(self):
         """OS/2 achVendID is fixed to 4 spaces (unknown vendor)."""
@@ -588,7 +607,8 @@ class TestMetadataBaseOnly:
         """Base-only merges also clear nameID 9 — Designer is never set on the output."""
         m = self._merge_base_only_meta()
         d = m["name"].getDebugName(9)
-        assert d is None or d == "", f"Expected cleared designer, got '{d}'"
+        assert d is None, f"Expected omitted designer, got '{d}'"
+        assert _name_values(m, 9) == []
 
     def test_description_mentions_built_with(self):
         """Base-only also uses 'Built with OFL Font Baker' in nameID 10."""
@@ -735,6 +755,18 @@ class TestMetadataModeValidation:
         m = _merge_inherit(None, output_extra={"familyName": "MergedNull"})
         assert m["name"].getDebugName(1) == "MergedNull"
 
+    def test_missing_required_name_record_raises(self):
+        font = TTFont(JP_VAR)
+        font["name"].removeNames(nameID=1)
+        with pytest.raises(ValueError, match="Missing required nameID 1"):
+            mf._validate_required_name_records_non_empty(font)
+
+    def test_empty_required_name_record_raises(self):
+        font = TTFont(JP_VAR)
+        font["name"].setName("", 1, 3, 1, 0x0409)
+        with pytest.raises(ValueError, match="Required nameID 1 is empty"):
+            mf._validate_required_name_records_non_empty(font)
+
 
 class TestInheritBase:
     """inheritBase: pass identity through from the base font."""
@@ -760,6 +792,35 @@ class TestInheritBase:
         m = _merge_inherit("inheritBase")
         if base_designer:
             assert m["name"].getDebugName(9) == base_designer
+
+    def test_empty_optional_records_pruned_from_inherited_source(self):
+        """inherit mode preserves non-empty source metadata, but not empty optional records."""
+        base_path = tempfile.mktemp(suffix=".ttf")
+        out = tempfile.mktemp(suffix=".ttf")
+        base = TTFont(JP_VAR)
+        base["name"].setName("", 9, 3, 1, 0x0409)
+        base["name"].setName("   ", 12, 3, 1, 0x0409)
+        base.save(base_path)
+
+        config = {
+            "baseFont": {
+                "path": base_path,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "output": {"metadataMode": "inheritBase"},
+            "export": {"path": {"font": out}},
+        }
+        try:
+            mf.merge_fonts(config)
+            m = TTFont(out)
+            assert _name_values(m, 9) == []
+            assert _name_values(m, 12) == []
+        finally:
+            for f in (base_path, out, out.replace(".ttf", ".woff2")):
+                if os.path.exists(f):
+                    os.remove(f)
 
     def test_license_not_forced_to_ofl_canonical(self):
         """inherit mode does NOT overwrite nameID 13 with the canonical OFL text."""

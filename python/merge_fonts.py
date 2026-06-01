@@ -3283,6 +3283,25 @@ _IDENTITY_NAMEID_LIMIT = 256
 # identity (weight class, italic bit, width class). Touched as a unit so
 # nameID 2 / 4 / 6 / 17 stay internally consistent.
 _VALID_METADATA_MODES = ("merge", "inheritBase", "inheritSub")
+_OPTIONAL_NAME_IDS = frozenset({
+    7,   # Trademark
+    8,   # Manufacturer
+    9,   # Designer
+    10,  # Description
+    11,  # Vendor URL
+    12,  # Designer URL
+    13,  # License Description
+    14,  # License Info URL
+    19,  # Sample text
+})
+_REQUIRED_NAME_IDS = frozenset({
+    1,  # Font Family
+    2,  # Font Subfamily
+    3,  # Unique font identifier
+    4,  # Full font name
+    5,  # Version string
+    6,  # PostScript name
+})
 
 
 def _resolve_metadata_mode(output: dict, has_sub_font: bool) -> str:
@@ -3315,8 +3334,24 @@ def _get_name(font: "TTFont", nameID: int) -> str:
     return nt.getDebugName(nameID) or ""
 
 
+def _is_empty_name_value(value) -> bool:
+    return value is None or str(value).strip() == ""
+
+
+def _remove_name_id(name_table, nameID: int) -> None:
+    name_table.removeNames(nameID=nameID)
+
+
 def _set_name(name_table, nameID: int, value: str):
     """Set *nameID* on Windows-Unicode platform. Mac-Roman is skipped for non-ASCII values."""
+    if _is_empty_name_value(value):
+        if nameID in _REQUIRED_NAME_IDS:
+            raise ValueError(f"Required nameID {nameID} is empty")
+        if nameID in _OPTIONAL_NAME_IDS:
+            _remove_name_id(name_table, nameID)
+        return
+
+    value = str(value)
     name_table.setName(value, nameID, 3, 1, 0x0409)   # Windows, Unicode BMP, English
     try:
         value.encode("mac_roman")
@@ -3332,9 +3367,62 @@ def _override_name(name_table, nameID: int, value: str):
     platform/encoding/language combinations the source font already had,
     instead of leaving stale Mac-Japanese / Unicode-only records behind.
     """
-    name_table.removeNames(nameID=nameID)
-    if value:
-        _set_name(name_table, nameID, value)
+    if _is_empty_name_value(value):
+        if nameID in _REQUIRED_NAME_IDS:
+            raise ValueError(f"Required nameID {nameID} is empty")
+        _remove_name_id(name_table, nameID)
+        return
+
+    _remove_name_id(name_table, nameID)
+    _set_name(name_table, nameID, value)
+
+
+def _prune_empty_optional_name_records(font: TTFont) -> int:
+    """Remove optional name records whose decoded text is empty."""
+    name_table = font.get("name")
+    if not name_table:
+        return 0
+
+    kept = []
+    removed = 0
+    for record in name_table.names:
+        if record.nameID in _OPTIONAL_NAME_IDS:
+            try:
+                if _is_empty_name_value(record.toUnicode()):
+                    removed += 1
+                    continue
+            except Exception:
+                pass
+        kept.append(record)
+    name_table.names = kept
+    return removed
+
+
+def _validate_required_name_records_non_empty(font: TTFont) -> None:
+    """Ensure core identity records exist and contain non-whitespace text."""
+    name_table = font.get("name")
+    if not name_table:
+        raise ValueError("Missing name table")
+
+    by_id = {}
+    for record in name_table.names:
+        if record.nameID in _REQUIRED_NAME_IDS:
+            by_id.setdefault(record.nameID, []).append(record)
+
+    for nameID in sorted(_REQUIRED_NAME_IDS):
+        records = by_id.get(nameID, [])
+        if not records:
+            raise ValueError(f"Missing required nameID {nameID}")
+        has_non_empty_record = False
+        for record in records:
+            try:
+                if not _is_empty_name_value(record.toUnicode()):
+                    has_non_empty_record = True
+                    break
+            except Exception:
+                continue
+        if not has_non_empty_record:
+            raise ValueError(f"Required nameID {nameID} is empty")
 
 
 def _set_ofl_metadata(lat_font, jp_font, merged, config: dict):
@@ -4112,6 +4200,9 @@ def reconcile_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont, config: 
                         nid = getattr(fp, attr, None)
                         if nid in nameid_remap:
                             setattr(fp, attr, nameid_remap[nid])
+
+    _prune_empty_optional_name_records(merged)
+    _validate_required_name_records_non_empty(merged)
 
     # --- OS/2 ---
     if not lat_font:
