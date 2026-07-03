@@ -3546,13 +3546,15 @@ def _apply_style_bits(os2, head, weight: int, italic: bool, width: int = 5) -> N
     inconsistencies (e.g. a base font that carried ``fsSelection=REGULAR``
     while the derivative is Bold).
 
-    REGULAR (bit 6) is only set on the actual Regular face — weight 400,
-    width 5, non-italic. Light / Medium / SemiBold and other non-RIBBI
-    members of a family must clear REGULAR so font-matchers don't pick
-    them as the family's regular style.
+    The static naming policy exposes only RIBBI subfamilies in legacy
+    nameID 2. Weight 700 is the sole Bold face; every other non-italic
+    weight is the Regular face of its own legacy family (for example
+    "Family ExtraBold" + "Regular"). This matches fontbakery's
+    fsSelection convention and keeps GDI/PDF fallback paths aligned with
+    nameID 1/2.
     """
-    is_bold = weight >= 700
-    is_regular = (weight == 400 and width == 5 and not italic)
+    is_bold = weight == 700
+    is_regular = (not italic and weight != 700)
     if os2 is not None:
         if italic:
             os2.fsSelection |= _FS_SELECTION_ITALIC
@@ -3588,6 +3590,26 @@ def _apply_derivative_metadata(lat_font, jp_font, merged, config: dict):
     """
     output = config.get("output") or {}
     output_name = output.get("familyName", "Merged Font")
+    output_weight = output.get("weight", 400)
+    output_italic = output.get("italic", False)
+    output_width = output.get("width", 5)
+
+    style_name = compute_style_name(output_weight, output_italic, output_width)
+    width_name = WIDTH_MAP.get(output_width, "")
+    ribbi_bold = output_weight == 700
+    non_ribbi_weight_name = (
+        WEIGHT_MAP.get(output_weight, "")
+        if output_weight not in (400, 700) else ""
+    )
+    legacy_family = " ".join(
+        part for part in (output_name, width_name, non_ribbi_weight_name) if part
+    ).strip()
+    legacy_subfamily = (
+        "Bold Italic" if ribbi_bold and output_italic else
+        "Bold" if ribbi_bold else
+        "Italic" if output_italic else
+        "Regular"
+    )
 
     # Resolve and validate the PostScript base name (without style suffix).
     # Explicit postScriptName takes priority; otherwise derive from familyName
@@ -3598,36 +3620,40 @@ def _apply_derivative_metadata(lat_font, jp_font, merged, config: dict):
     validate_postscript_name(output_ps_base)
 
     # --- name table ---
+    # Legacy Windows GDI and some PDF exporters only understand RIBBI in
+    # nameID 1/2. If all static weights share nameID 1 and put
+    # ExtraLight/Black/etc. in nameID 2, those fallback paths collapse the
+    # family and substitute the first face (often Thin). Follow Google
+    # Fonts static naming: move width and non-RIBBI weight into the legacy
+    # family, keep nameID 2 to Regular/Bold/Italic/Bold Italic, and expose
+    # the full typographic family/style through nameID 16/17.
     name_table = merged["name"]
+    had_typographic_family = any(r.nameID == 16 for r in name_table.names)
+    had_typographic_subfamily = any(r.nameID == 17 for r in name_table.names)
     for record in name_table.names:
-        if record.nameID in (1, 4, 6, 16):
-            try:
-                record.toUnicode()
-            except Exception:
-                continue  # Skip name records with undecodable encodings
-            if record.nameID == 1:
-                record.string = output_name
-            elif record.nameID == 4:
-                style = "Regular"
-                for r2 in name_table.names:
-                    if r2.nameID == 2 and r2.platformID == record.platformID:
-                        try:
-                            style = r2.toUnicode()
-                        except Exception:
-                            pass  # Fall back to default "Regular" if decode fails
-                        break
-                record.string = f"{output_name} {style}".strip()
-            elif record.nameID == 6:
-                record.string = output_ps_base
-            elif record.nameID == 16:
-                record.string = output_name
+        try:
+            record.toUnicode()
+        except Exception:
+            continue  # Skip name records with undecodable encodings
+        if record.nameID == 1:
+            record.string = legacy_family
+        elif record.nameID == 2:
+            record.string = legacy_subfamily
+        elif record.nameID == 4:
+            record.string = f"{output_name} {style_name}".strip()
+        elif record.nameID == 6:
+            ps_style = style_name.replace(" ", "")
+            record.string = f"{output_ps_base}-{ps_style}"
+        elif record.nameID == 16:
+            record.string = output_name
+        elif record.nameID == 17:
+            record.string = style_name
 
-    # --- Weight / Italic / Width ---
-    output_weight = output.get("weight", 400)
-    output_italic = output.get("italic", False)
-    output_width = output.get("width", 5)
-
-    style_name = compute_style_name(output_weight, output_italic, output_width)
+    if (legacy_family, legacy_subfamily) != (output_name, style_name):
+        if not had_typographic_family:
+            _set_name(name_table, 16, output_name)
+        if not had_typographic_subfamily:
+            _set_name(name_table, 17, style_name)
 
     # Set OS/2 usWeightClass and usWidthClass
     os2 = merged.get("OS/2")
@@ -3666,23 +3692,6 @@ def _apply_derivative_metadata(lat_font, jp_font, merged, config: dict):
     # carried fsSelection=REGULAR keep advertising "Regular" even when
     # the derivative is Bold or any other non-Regular weight.
     _apply_style_bits(os2, head, output_weight, output_italic, output_width)
-
-    # Update name table style entries
-    for record in name_table.names:
-        try:
-            record.toUnicode()
-        except Exception:
-            continue
-        if record.nameID == 2:
-            record.string = style_name
-        elif record.nameID == 4:
-            record.string = f"{output_name} {style_name}"
-        elif record.nameID == 6:
-            ps_style = style_name.replace(" ", "")
-            record.string = f"{output_ps_base}-{ps_style}"
-        elif record.nameID == 17:
-            # Typographic Subfamily — Illustrator uses this for weight display
-            record.string = style_name
 
     # --- Unique Font Identifier (nameID 3) ---
     # Auto-built as "{version};{PostScript full name}" so the OS font

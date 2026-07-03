@@ -471,10 +471,10 @@ and any source-font style hierarchy is dropped:
 - `OS/2.fsSelection` REGULAR / BOLD / ITALIC and `head.macStyle`
   bold / italic are recomputed from `(weight, italic, width)` so the
   bits agree with `usWeightClass` / `usWidthClass` and the italic
-  flag. REGULAR is reserved for the actual Regular face — weight 400,
-  width 5, non-italic. Light / Medium / SemiBold and other non-RIBBI
-  members must clear REGULAR or font-matchers pick them as the
-  family's regular style.
+  flag. The static legacy family follows the Google Fonts RIBBI model:
+  weight 700 is the only Bold face, and every other non-italic weight
+  is the Regular face of its own legacy family (for example
+  `Family ExtraLight` / `Regular`). Italic faces clear REGULAR.
 
 In inherit modes, the bits are recomputed only when at least one
 style component (`weight` / `italic` / `width`) is overridden; pure
@@ -488,6 +488,9 @@ user's `output.*` fields:
 
 - nameID 0 (Copyright): concatenate both sources' copyright + user addition
 - nameID 7 (Trademark): concatenate both sources' trademark + user addition; record is cleared only when all three are empty
+- nameID 1/2 (Legacy Family / Subfamily): Google Fonts static naming. Width and non-RIBBI weight move into nameID 1 (for example `Gen Interface JP ExtraLight` or `Gen Interface JP Condensed`); nameID 2 is only `Regular`, `Bold`, `Italic`, or `Bold Italic`. This avoids Windows GDI and PDF fallback paths collapsing every non-RIBBI weight into one family and substituting the first face.
+- nameID 4 (Full Font Name): typographic family + typographic style (`outputFamilyName` + `compute_style_name(weight, italic, width)`).
+- nameID 16/17 (Typographic Family / Subfamily): nameID 16 is `outputFamilyName`; nameID 17 is `compute_style_name(weight, italic, width)`. When nameID 1/2 differ from the typographic pair, missing nameID 16/17 records are created so modern apps can still group the full family.
 - nameID 3 (Unique Font Identifier): auto-built as `{version};{PostScript full name}`. Ensures OS font caches treat distinct versions/styles as separate entries so derivatives don't collide with their base font.
 - nameID 5 (Version String): from `outputVersion` (default `1.000`); Python prepends `Version ` if not already present. Resets to the default whenever a font is loaded, so derivative fonts don't inherit the base font's version.
 - nameID 6 (PostScript Name): from `outputPostScriptName` if set; otherwise derived from `outputFamilyName` by stripping characters outside printable ASCII 33-126 or in `[]{}<>()/%`, clamped to 63 bytes
@@ -498,7 +501,7 @@ user's `output.*` fields:
 - nameID 12 (Designer URL): always cleared
 - nameID 13/14 (License): OFL 1.1 text + URL
 - OS/2 `achVendID`: fixed to four spaces (unknown vendor) so the derivative doesn't claim the base font's registered tag.
-- CFF TopDict `FullName` / `FamilyName` / `Notice`: mirror nameID 4 / 1 / 0 so PDF embedders and Adobe tools see the derivative's name, not the base font's, when reading CFF directly.
+- CFF TopDict `FullName` / `FamilyName` / `Notice`: mirror the typographic full name / typographic family / nameID 0 so PDF embedders and Adobe tools see the derivative's name, not the base font's, when reading CFF directly.
 - OS/2 `achVendID`: user-specified 4-char tag (right-padded with spaces); defaults to `"    "` (unknown vendor) when empty
 
 ### Inherit modes (`output.metadataMode`)
