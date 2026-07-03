@@ -98,6 +98,32 @@ def _single_pos_values_for_feature(font, feature_tag, glyph_name):
     return values
 
 
+def _single_sub_mapping_for_feature(font, feature_tag):
+    if "GSUB" not in font:
+        return {}
+    table = font["GSUB"].table
+    if not table.FeatureList or not table.LookupList:
+        return {}
+
+    result = {}
+    for feature_record in table.FeatureList.FeatureRecord:
+        if feature_record.FeatureTag != feature_tag:
+            continue
+        for lookup_index in feature_record.Feature.LookupListIndex:
+            lookup = table.LookupList.Lookup[lookup_index]
+            if lookup.LookupType not in (1, 7):
+                continue
+            for subtable in lookup.SubTable:
+                lookup_type, st = mf._unwrap_extension_subtable(
+                    lookup.LookupType, subtable)
+                if lookup_type != 1 or st is None:
+                    continue
+                mapping = getattr(st, "mapping", None)
+                if mapping:
+                    result.update(mapping)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Variable Font instantiation
 # ---------------------------------------------------------------------------
@@ -849,9 +875,9 @@ class TestLatinSingleSubstPreservation:
     (#20) the lookups are classified `mixed` instead of `latin` and survive
     the merge — so plain ``0123456789`` shaped under ``latn/en`` shapes to
     base-font digits instead of the Latin font's. The merge engine must
-    strip those Latin-input single-glyph substitutions so the Latin font
-    owns its own digit / letter decisions; cross-script entries on JP
-    glyphs (e.g. ``vert`` / ``vrt2``) stay reachable.
+    strip default-leaking Latin-input substitutions while re-targeting
+    explicit `fwid` / `hwid` rules to the sub-owned cmap glyphs; cross-script
+    entries on JP glyphs (e.g. ``vert`` / ``vrt2``) stay reachable.
     """
 
     DIGITS = "0123456789"
@@ -934,19 +960,17 @@ class TestLatinSingleSubstPreservation:
     @pytest.mark.parametrize("features,reason", [
         (None, "default shaping"),
         ({"tnum": True}, "tnum=1"),
-        ({"fwid": True}, "fwid=1"),
-        ({"hwid": True}, "hwid=1"),
         ({"aalt": True}, "aalt=1"),
         ({"locl": True}, "locl=1"),
     ])
     def test_inter_latn_digits_no_base_leak(
             self, inter_merged_path, features, reason):
         """Inter + Noto Sans JP: digits shaped under ``latn/en`` (with or
-        without ``tnum`` / ``fwid`` / ``hwid`` / ``aalt`` / ``locl``) must
+        without ``tnum`` / ``aalt`` / ``locl``) must
         not produce any base-font full-width / half-width digit glyph.
 
         Pre-fix this would shape ``0`` to ``glyph00225`` (base fwid) or
-        ``glyph00320`` (base hwid) under several feature combinations.
+        ``glyph00320`` (base hwid) through unintended default leakage.
         """
         shaped = self._shape(inter_merged_path, self.DIGITS, features)
         leaked = [g for g in shaped if g in self.BASE_DIGIT_LEAKS]
@@ -963,6 +987,56 @@ class TestLatinSingleSubstPreservation:
         expected = ["zero", "one", "two", "three", "four", "five",
                     "six", "seven", "eight", "nine"]
         assert shaped == expected, f"merged default shaping: {shaped}"
+
+    def test_width_features_retarget_replaced_cmap_glyphs(
+            self, inter_merged_path):
+        """Retained JP fwid/hwid rules should apply to the glyph now
+        occupying a sub-replaced cmap slot, while keeping the base target."""
+        merged = TTFont(inter_merged_path)
+        base = TTFont(JP_VAR)
+        try:
+            merged_glyph = merged.getBestCmap()[0x0041]
+            base_glyph = base.getBestCmap()[0x0041]
+
+            for tag in ("fwid", "hwid"):
+                base_mapping = _single_sub_mapping_for_feature(base, tag)
+                merged_mapping = _single_sub_mapping_for_feature(merged, tag)
+                assert base_mapping.get(base_glyph) is not None
+                assert merged_mapping.get(merged_glyph) == (
+                    base_mapping[base_glyph]
+                )
+        finally:
+            base.close()
+            merged.close()
+
+    def test_no_unreachable_singlesubst_inputs(self, inter_merged_path):
+        """Final GSUB Type 1 inputs should be cmap glyphs or GSUB outputs."""
+        merged = TTFont(inter_merged_path)
+        try:
+            reachable = (
+                set((merged.getBestCmap() or {}).values())
+                | mf._collect_gsub_output_glyphs(merged)
+            )
+            gsub = merged["GSUB"].table
+            offending = []
+            for li, lookup in enumerate(gsub.LookupList.Lookup):
+                if lookup.LookupType not in (1, 7):
+                    continue
+                for sti, subtable in enumerate(lookup.SubTable):
+                    lookup_type, st = mf._unwrap_extension_subtable(
+                        lookup.LookupType, subtable)
+                    if lookup_type != 1 or st is None:
+                        continue
+                    mapping = getattr(st, "mapping", None) or {}
+                    for src, dst in mapping.items():
+                        if src not in reachable:
+                            offending.append((li, sti, src, dst))
+            assert not offending, (
+                "GSUB SingleSubst kept unreachable input glyphs: "
+                f"{offending[:10]}"
+            )
+        finally:
+            merged.close()
 
     def test_inter_latn_tnum_reaches_inter_tabular(self, inter_merged_path):
         """``tnum=1`` on Inter + Noto Sans JP must reach Inter's tabular
@@ -1021,9 +1095,10 @@ class TestLatinSingleSubstPreservation:
     def test_no_latin_input_in_base_singlesubst(self, inter_merged_path):
         """Structural: no surviving base-side Type 1 / Type 3 subtable
         should map a Latin-owned digit (``zero``..``nine``) to a base-font
-        glyph. The bug: Noto Sans JP `locl` (Type 1 SingleSubst) and `aalt`
-        (Type 3 AlternateSubst) keep mappings like ``zero -> glyph00225``
-        on Latin-input names that the Latin font now owns.
+        glyph outside explicit width features. The bug: Noto Sans JP `locl`
+        (Type 1 SingleSubst) and `aalt` (Type 3 AlternateSubst) keep
+        mappings like ``zero -> glyph00225`` on Latin-input names that the
+        Latin font now owns.
 
         Latin-origin lookups (the sub-font's own `locl` / `aalt` / `tnum`)
         are tolerated — digits are legitimate Latin sources for those —
@@ -1046,8 +1121,15 @@ class TestLatinSingleSubstPreservation:
         digit_inputs = {"zero", "one", "two", "three", "four",
                         "five", "six", "seven", "eight", "nine"}
         gsub = merged["GSUB"].table
+        lookup_tags = {}
+        for fr in gsub.FeatureList.FeatureRecord:
+            for li in fr.Feature.LookupListIndex or []:
+                lookup_tags.setdefault(li, set()).add(fr.FeatureTag)
         offending = []
         for li, lk in enumerate(gsub.LookupList.Lookup):
+            tags = lookup_tags.get(li, set())
+            if tags and tags <= {"fwid", "hwid"}:
+                continue
             for sti, st in enumerate(lk.SubTable):
                 ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
                 for attr in ("mapping", "alternates"):
@@ -1088,9 +1170,10 @@ class TestCidBaseDigitNoLeak:
     digits by CID name (e.g. ``cid00017`` for U+0030). Inter's `zero`
     glyph is renamed to ``cid00017`` during cmap-driven copy, so the
     base GSUB rules ``cid00017 -> cid63153`` (`locl`), ``cid00017 ->
-    cid59062`` (`fwid`) etc. all fire on the Latin design unless the
-    merge engine strips them. This test pins the regression for #23 on
-    the CID/CFF path — the bare TTF subset path uses semantic glyph
+    cid59062`` (`fwid`) etc. can fire on the Latin design. Default-leaking
+    rules are stripped, while explicit width rules are re-targeted. This
+    test pins the regression for #23 on the CID/CFF path — the bare TTF
+    subset path uses semantic glyph
     names and doesn't catch this CID-specific failure mode.
     """
 
@@ -1140,21 +1223,19 @@ class TestCidBaseDigitNoLeak:
         (None, "default"),
         ({"locl": True}, "locl=1"),
         ({"tnum": True}, "tnum=1"),
-        ({"fwid": True}, "fwid=1"),
-        ({"hwid": True}, "hwid=1"),
         ({"aalt": True}, "aalt=1"),
     ])
     def test_cid_digits_no_base_alternate_leak(
             self, merged_path, features, reason):
-        """For each feature combination, the merged font's digit shaping
+        """For each non-width feature combination, the merged font's digit shaping
         under ``latn/en`` must produce stable CID digit names — not the
         base font's full-width / half-width / locl alternate CIDs.
 
         The merged Latin digits live at ``cid00017``..``cid00026``. The
         bug case from the issue: base ``locl`` rewrites those to
         ``cid63153``..``cid63162`` (and similar large-CID alternates).
-        After the fix, no entry in the base GSUB should map any of
-        ``cid00017``..``cid00026`` to a different CID, so all six feature
+        After the fix, no non-width entry in the base GSUB should map any
+        of ``cid00017``..``cid00026`` to a different CID, so these feature
         combinations shape to the same merged digit CIDs.
         """
         shaped = self._shape(merged_path, self.DIGITS, features)
@@ -1167,14 +1248,22 @@ class TestCidBaseDigitNoLeak:
 
     def test_cid_locl_lookup_stripped_for_latin_cids(self, merged_path):
         """Structural: no surviving base-side Type 1 / Type 3 subtable
-        should keep ``cid00017``..``cid00026`` as a source key. Those CID
-        names are now Latin-owned (Inter's digit glyphs sit there) and
-        any base-side rewrite is the bug from #23."""
+        outside explicit width features should keep ``cid00017``..``cid00026``
+        as a source key. Those CID names are now Latin-owned (Inter's digit
+        glyphs sit there), so default base-side rewrites are the bug from
+        #23."""
         merged = TTFont(merged_path)
         latin_cids = {f"cid{n:05d}" for n in range(17, 27)}
         gsub = merged["GSUB"].table
+        lookup_tags = {}
+        for fr in gsub.FeatureList.FeatureRecord:
+            for li in fr.Feature.LookupListIndex or []:
+                lookup_tags.setdefault(li, set()).add(fr.FeatureTag)
         offending = []
         for li, lk in enumerate(gsub.LookupList.Lookup):
+            tags = lookup_tags.get(li, set())
+            if tags and tags <= {"fwid", "hwid"}:
+                continue
             for sti, st in enumerate(lk.SubTable):
                 ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
                 for attr in ("mapping", "alternates"):

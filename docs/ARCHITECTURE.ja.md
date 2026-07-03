@@ -90,11 +90,12 @@ useMerge.startMerge()
       4. cmap ベースのグリフ置換 (Latin→merged glyph name マッピング)
       5. CFF-to-CFF: TransformPen で再描画 (スケール + Private dict 再バインド)
       6. GSUB/GPOS マージ (CID フォントは Latin features スキップ)
-      7. OFL メタデータ設定 (copyright, license, description)
-      8. Macintosh platform の name レコードを全削除し、Windows Unicode name に統一
-      9. post format 3.0 (>32767 glyphs)
-      10. OTF 書き出し + WOFF2 書き出し
-      11. OFL.txt + Settings.txt を生成
+      7. fwid/hwid の再ターゲット後、GSUB SingleSubst の死んだ入力を prune
+      8. OFL メタデータ設定 (copyright, license, description)
+      9. Macintosh platform の name レコードを全削除し、Windows Unicode name に統一
+      10. post format 3.0 (>32767 glyphs)
+      11. OTF 書き出し + WOFF2 書き出し
+      12. OFL.txt + Settings.txt を生成
   → Main process: JSON manifest を受け取る (fontPath, woff2Path, oflPath, settingsPath)
 ```
 
@@ -337,6 +338,25 @@ Issue #23 のバグなので必ず削除する。同名衝突回避の `.lat` �
 `all_lat_glyphs` 由来の）`lat_glyph_names_override` を渡すので、
 Latin GSUB の append が無理でも、実際にコピーされた Latin グリフ名に
 対するベース側ルールはストリップされる。
+
+`fwid` / `hwid` は「Latin 所有 source を strip する」cleanup の例外。
+これらは明示的な幅 feature なので、base フォントが持っていた
+SingleSubst の挙動は、cmap slot を現在占有している glyph に対しても
+使えるべきである。merge は Step 8 で cmap を上書きする前に
+`(codepoint 上の元 base glyph, 最終 merged glyph)` を保存し、
+`merge_feature_tables` の strip が終わった後で `fwid` / `hwid` について
+`_copy_single_substitutions_for_features` を走らせる。同名上書き
+（例: `A -> A`）では strip 後に別 source key が残らないため、保存して
+おいた base 側 target を再投入する。
+
+最後の GSUB cleanup として `_prune_unreachable_gsub_single_substitutions`
+が、到達不能な入力 glyph を持つ Type 1 SingleSubst エントリを削除する。
+到達可能集合は意図的に単純な過大近似で、最終 cmap glyph と GSUB 全体の
+すべての substitution output の和集合とする。これにより lookup reindex を
+せずに chain された alternate glyph を保持できる。prune 対象は
+Extension-wrapped type 1 を含む LookupType 1 のみで、mapping entry を削除し、
+Coverage を更新し、空になった subtable は取り除くが、LookupList の index は
+変更しない。
 
 ### `ccmp` の重複タグ排除
 
