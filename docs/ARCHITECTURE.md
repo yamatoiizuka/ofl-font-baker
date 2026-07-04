@@ -91,7 +91,7 @@ useMerge.startMerge()
       5. CFF-to-CFF: redraw via TransformPen (scale + Private dict rebinding)
       6. GSUB/GPOS merge (skip Latin features for CID fonts)
       7. Set OFL metadata (copyright, license, description)
-      8. Remove mac_roman name records with non-encodable strings
+      8. Drop all Macintosh-platform name records; keep Windows Unicode names
       9. post format 3.0 (for >32767 glyphs)
       10. Write OTF + WOFF2
       11. Generate OFL.txt + Settings.txt

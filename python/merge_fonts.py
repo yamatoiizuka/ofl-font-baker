@@ -3343,7 +3343,7 @@ def _remove_name_id(name_table, nameID: int) -> None:
 
 
 def _set_name(name_table, nameID: int, value: str):
-    """Set *nameID* on Windows-Unicode platform. Mac-Roman is skipped for non-ASCII values."""
+    """Set *nameID* only on the Windows-Unicode platform."""
     if _is_empty_name_value(value):
         if nameID in _REQUIRED_NAME_IDS:
             raise ValueError(f"Required nameID {nameID} is empty")
@@ -3353,11 +3353,6 @@ def _set_name(name_table, nameID: int, value: str):
 
     value = str(value)
     name_table.setName(value, nameID, 3, 1, 0x0409)   # Windows, Unicode BMP, English
-    try:
-        value.encode("mac_roman")
-        name_table.setName(value, nameID, 1, 0, 0)    # Macintosh, Roman, English
-    except UnicodeEncodeError:
-        pass  # Skip Mac-Roman if value contains non-encodable characters
 
 
 def _override_name(name_table, nameID: int, value: str):
@@ -5159,18 +5154,14 @@ def merge_fonts(config: dict) -> str:
     # always a CFF font (we never convert TT→CFF), so all hmtx entries
     # already exist — the merge only overwrote outlines in place.
 
-    # Step 12: Sanitise name table — drop Mac-Roman records that can't encode
+    # Step 12: Sanitise name table — Google Fonts-style output relies on
+    # Windows Unicode records, so drop all Macintosh-platform records carried
+    # from source fonts or older metadata paths.
     name_table = merged["name"]
-    to_remove = []
-    for record in name_table.names:
-        if record.platformID == 1 and record.platEncID == 0:
-            try:
-                text = record.toUnicode()
-                text.encode("mac_roman")
-            except (UnicodeEncodeError, UnicodeDecodeError):
-                to_remove.append(record)
-    for record in to_remove:
-        name_table.names.remove(record)
+    name_table.names = [
+        record for record in name_table.names
+        if record.platformID != 1
+    ]
 
     # For large fonts, use post format 3.0 (no glyph names) to avoid
     # ushort overflow in format 2.0's name index

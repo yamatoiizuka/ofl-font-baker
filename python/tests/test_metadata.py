@@ -21,6 +21,14 @@ def _name_values(font, name_id):
     return values
 
 
+def _macintosh_name_records(font):
+    return [
+        (record.nameID, record.platformID, record.platEncID, record.langID)
+        for record in font["name"].names
+        if record.platformID == 1
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Output weight / static name table policy
 # ---------------------------------------------------------------------------
@@ -774,6 +782,15 @@ def _merge_inherit(mode, output_extra=None, with_sub=True, return_path=False):
     return font
 
 
+def _write_font_with_macintosh_name_records(src, dst):
+    """Copy *src* and seed Macintosh name records used by issue #37."""
+    font = TTFont(src)
+    font["name"].setName("Mac Roman seeded", 1, 1, 0, 0)
+    font["name"].setName("Mac Roman feature label", 300, 1, 0, 0)
+    font["name"].setName("Mac Japanese stray", 301, 1, 1, 11)
+    font.save(dst)
+
+
 class TestMetadataModeValidation:
     """Validation of output.metadataMode."""
 
@@ -803,6 +820,51 @@ class TestMetadataModeValidation:
         font["name"].setName("", 1, 3, 1, 0x0409)
         with pytest.raises(ValueError, match="Required nameID 1 is empty"):
             mf._validate_required_name_records_non_empty(font)
+
+
+class TestMacintoshNameRecords:
+    """Merged outputs must not carry platformID 1 name records."""
+
+    @pytest.mark.parametrize("metadata_mode", [
+        "merge",
+        "inheritBase",
+        "inheritSub",
+    ])
+    def test_all_metadata_modes_drop_macintosh_name_records(
+            self, tmp_path, metadata_mode):
+        base_path = tmp_path / "base-with-mac-names.ttf"
+        sub_path = tmp_path / "sub-with-mac-names.ttf"
+        out = tmp_path / f"no-mac-names-{metadata_mode}.ttf"
+        _write_font_with_macintosh_name_records(JP_VAR, base_path)
+        _write_font_with_macintosh_name_records(EN_VAR, sub_path)
+
+        output = {"metadataMode": metadata_mode}
+        if metadata_mode == "merge":
+            output["familyName"] = "NoMacNames"
+
+        config = {
+            "subFont": {
+                "path": str(sub_path),
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [
+                    {"tag": "opsz", "currentValue": 14},
+                    {"tag": "wght", "currentValue": 400},
+                ],
+            },
+            "baseFont": {
+                "path": str(base_path),
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "output": output,
+            "export": {"path": {"font": str(out)}},
+        }
+        mf.merge_fonts(config)
+
+        merged = TTFont(out)
+        assert _macintosh_name_records(merged) == []
 
 
 class TestInheritBase:

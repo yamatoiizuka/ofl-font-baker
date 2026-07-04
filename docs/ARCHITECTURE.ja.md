@@ -91,7 +91,7 @@ useMerge.startMerge()
       5. CFF-to-CFF: TransformPen で再描画 (スケール + Private dict 再バインド)
       6. GSUB/GPOS マージ (CID フォントは Latin features スキップ)
       7. OFL メタデータ設定 (copyright, license, description)
-      8. mac_roman 非エンコード可能 name レコード除去
+      8. Macintosh platform の name レコードを全削除し、Windows Unicode name に統一
       9. post format 3.0 (>32767 glyphs)
       10. OTF 書き出し + WOFF2 書き出し
       11. OFL.txt + Settings.txt を生成
