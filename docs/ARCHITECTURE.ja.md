@@ -459,10 +459,10 @@ ofl-font-baker は常に static インスタンスを出力する。base / sub �
 - `OS/2.fsSelection` の REGULAR / BOLD / ITALIC、`head.macStyle` の
   bold / italic ビットは `(weight, italic, width)` から再計算する。
   `usWeightClass` / `usWidthClass` と italic フラグに矛盾しないように
-  揃える。REGULAR は本当の Regular 面（weight 400・width 5・非
-  italic）にだけ立てる。Light / Medium / SemiBold など RIBBI に入ら
-  ないメンバーは REGULAR をクリアしないと、フォントマッチャがそれを
-  ファミリーの Regular だと誤認する。
+  揃える。静的出力の legacy family は Google Fonts の RIBBI モデルに
+  合わせる。weight 700 だけを Bold とし、それ以外の非 italic weight は
+  それぞれの legacy family（例: `Family ExtraLight` / `Regular`）の
+  Regular 面として扱う。italic 面では REGULAR を落とす。
 
 継承モードでは、`weight` / `italic` / `width` のいずれかが上書き
 されたときだけビットを再計算する。何も指定しないピュアパススルー時
@@ -475,6 +475,9 @@ ofl-font-baker は常に static インスタンスを出力する。base / sub �
 
 - nameID 0 (Copyright): 両ソースの copyright を結合 + ユーザー追加
 - nameID 7 (Trademark): 両ソースの trademark を結合 + ユーザー追加。3 つとも空のときだけレコードを残さない
+- nameID 1/2 (Legacy Family / Subfamily): Google Fonts の静的命名。width と RIBBI 外の weight は nameID 1 に入れる（例: `Gen Interface JP ExtraLight`、`Gen Interface JP Condensed`）。nameID 2 は `Regular`、`Bold`、`Italic`、`Bold Italic` だけにする。これにより Windows GDI や PDF exporter の fallback が RIBBI 外 weight を 1 つの family に潰し、最初の face に置換してしまう問題を避ける。
+- nameID 4 (Full Font Name): typographic family + typographic style（`outputFamilyName` + `compute_style_name(weight, italic, width)`）。
+- nameID 16/17 (Typographic Family / Subfamily): nameID 16 は `outputFamilyName`、nameID 17 は `compute_style_name(weight, italic, width)`。nameID 1/2 が typographic pair と異なるときは、現代的なアプリが full family として扱えるよう、足りない nameID 16/17 レコードを作成する。
 - nameID 3 (Unique Font Identifier): `{version};{PostScript フルネーム}` を自動生成。派生フォントがベースフォントと同じ UniqueID を持たないようにして、OS のフォントキャッシュが別物として扱えるようにする。
 - nameID 5 (Version String): `outputVersion`（デフォルト `1.000`）を使用。Python 側で `Version ` 接頭辞が無ければ自動で付与する。派生フォントがベースフォントのバージョンを引き継がないよう、フォントを読み込むたびにデフォルトへリセットされる。
 - nameID 6 (PostScript Name): `outputPostScriptName` が設定されていればそれを使用、未設定なら `outputFamilyName` から printable ASCII 33-126 外 + `[]{}<>()/%` を除去したものを 63 バイトで打ち切って使用
@@ -485,7 +488,7 @@ ofl-font-baker は常に static インスタンスを出力する。base / sub �
 - nameID 12 (Designer URL): 常にクリア
 - nameID 13/14 (License): OFL 1.1 テキスト + URL
 - OS/2 `achVendID`: 常に半角スペース 4 つ（ベンダー不明）に固定。派生フォントがベースフォントの登録ベンダータグを引き継がないようにする。
-- CFF TopDict `FullName` / `FamilyName` / `Notice`: nameID 4 / 1 / 0 と同じ値をセット。PDF 埋め込みや Adobe 系ツールが CFF を直接読む際にベースフォント名が残らないようにする。
+- CFF TopDict `FullName` / `FamilyName` / `Notice`: typographic full name / typographic family / nameID 0 と同じ値をセット。PDF 埋め込みや Adobe 系ツールが CFF を直接読む際にベースフォント名が残らないようにする。
 - OS/2 `achVendID`: ユーザー設定の 4 文字タグ（短い場合は空白で右詰め）、空の場合は `"    "`（ベンダー不明）をセット
 
 ### メタデータ継承モード（`output.metadataMode`）

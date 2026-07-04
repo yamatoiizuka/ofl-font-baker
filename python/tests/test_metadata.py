@@ -22,7 +22,7 @@ def _name_values(font, name_id):
 
 
 # ---------------------------------------------------------------------------
-# Output weight / nameID 2, 4, 17
+# Output weight / static name table policy
 # ---------------------------------------------------------------------------
 
 class TestOutputWeight:
@@ -33,25 +33,59 @@ class TestOutputWeight:
         m = _merge(lat_wght=100, jp_wght=100, output_weight=500)
         assert m["OS/2"].usWeightClass == 500
 
-    def test_name_id_2_matches_weight(self):
-        """nameID 2 (Subfamily) matches the outputWeight style name."""
+    def test_name_id_1_gets_non_ribbi_weight(self):
+        """Non-RIBBI weights move into the legacy family name."""
+        m = _merge(lat_wght=100, jp_wght=100, output_weight=500)
+        name1 = m["name"].getDebugName(1)
+        assert name1 == "Test Medium", f"Expected 'Test Medium', got '{name1}'"
+
+    def test_name_id_2_is_ribbi_subfamily(self):
+        """Legacy nameID 2 stays RIBBI for GDI/PDF fallback paths."""
         m = _merge(lat_wght=100, jp_wght=100, output_weight=500)
         name2 = m["name"].getDebugName(2)
-        assert name2 == "Medium", f"Expected 'Medium', got '{name2}'"
+        assert name2 == "Regular", f"Expected 'Regular', got '{name2}'"
 
     def test_name_id_17_matches_weight(self):
         """nameID 17 (Typographic Subfamily) also follows outputWeight."""
         m = _merge(lat_wght=100, jp_wght=100, output_weight=500)
         name17 = m["name"].getDebugName(17)
-        if name17 is not None:
-            assert name17 == "Medium", \
-                f"nameID 17 should be 'Medium', got '{name17}'"
+        assert name17 == "Medium", \
+            f"nameID 17 should be 'Medium', got '{name17}'"
 
     def test_name_id_4_includes_weight(self):
         """nameID 4 (Full Name) includes the style name."""
         m = _merge(lat_wght=100, jp_wght=100, output_weight=700)
         name4 = m["name"].getDebugName(4)
         assert "Bold" in name4, f"Expected 'Bold' in nameID 4, got '{name4}'"
+
+    def test_weight_700_keeps_family_and_bold_subfamily(self):
+        """RIBBI Bold remains family + Bold in legacy name IDs."""
+        m = _merge(output_weight=700)
+        assert m["name"].getDebugName(1) == "Test"
+        assert m["name"].getDebugName(2) == "Bold"
+
+    def test_non_ribbi_weight_has_typographic_names_and_regular_bit(self):
+        """ExtraLight is a Regular face in its own legacy family."""
+        m = _merge(output_weight=200)
+        fs = m["OS/2"].fsSelection
+        assert m["name"].getDebugName(1) == "Test ExtraLight"
+        assert m["name"].getDebugName(2) == "Regular"
+        assert m["name"].getDebugName(16) == "Test"
+        assert m["name"].getDebugName(17) == "ExtraLight"
+        assert fs & _FS_REGULAR
+        assert not (fs & _FS_BOLD)
+
+    def test_italic_non_ribbi_weight_has_italic_subfamily(self):
+        """Italic non-RIBBI weights use legacy Italic, not ExtraLight Italic."""
+        m = _merge_with_italic(output_weight=200, output_italic=True)
+        fs = m["OS/2"].fsSelection
+        assert m["name"].getDebugName(1) == "StyleTest ExtraLight"
+        assert m["name"].getDebugName(2) == "Italic"
+        assert m["name"].getDebugName(16) == "StyleTest"
+        assert m["name"].getDebugName(17) == "ExtraLight Italic"
+        assert fs & _FS_ITALIC
+        assert not (fs & _FS_REGULAR)
+        assert not (fs & _FS_BOLD)
 
 
 
@@ -68,6 +102,7 @@ _MAC_ITALIC = 0x0002
 
 
 def _merge_with_italic(output_weight=400, output_italic=False,
+                       output_width=5,
                        metadata_mode=None):
     """Run a merge that lets the test choose italic + metadataMode."""
     out = tempfile.mktemp(suffix=".ttf")
@@ -75,6 +110,7 @@ def _merge_with_italic(output_weight=400, output_italic=False,
         "familyName": "StyleTest",
         "weight": output_weight,
         "italic": output_italic,
+        "width": output_width,
     }
     if metadata_mode is not None:
         output["metadataMode"] = metadata_mode
@@ -158,29 +194,30 @@ class TestStyleBitsMergeMode:
             f"REGULAR bit still set in fsSelection={fs:#x}"
         assert ms & _MAC_BOLD, f"macStyle bold bit missing in {ms:#x}"
 
-    def test_extra_bold_also_sets_bold(self):
-        """weight >= 700 sets the bold bits."""
-        m = _merge(output_weight=800)
+    def test_black_clears_bold_bit(self):
+        """Only weight 700 sets BOLD; Black is Regular of its own family."""
+        m = _merge(output_weight=900)
         fs = m["OS/2"].fsSelection
-        assert fs & _FS_BOLD
-        assert not (fs & _FS_REGULAR)
+        ms = m["head"].macStyle
+        assert not (fs & _FS_BOLD)
+        assert not (ms & _MAC_BOLD)
+        assert fs & _FS_REGULAR
 
     @pytest.mark.parametrize("weight,name", [
         (300, "Light"),
         (500, "Medium"),
         (600, "SemiBold"),
     ])
-    def test_non_regular_weights_clear_regular_bit(self, weight, name):
-        """Light / Medium / SemiBold must clear REGULAR — only the actual
-        Regular face (weight=400, normal width, non-italic) advertises it.
-        Otherwise font matchers would pick e.g. SemiBold as the family's
-        Regular style."""
+    def test_non_ribbi_weights_are_regular_faces(self, weight, name):
+        """Non-bold upright weights are Regular faces of legacy families."""
         m = _merge(output_weight=weight)
         # Sanity: confirm we really did get the non-Regular style.
-        assert m["name"].getDebugName(2) == name
+        assert m["name"].getDebugName(1) == f"Test {name}"
+        assert m["name"].getDebugName(2) == "Regular"
+        assert m["name"].getDebugName(17) == name
         fs = m["OS/2"].fsSelection
-        assert not (fs & _FS_REGULAR), \
-            f"REGULAR must be clear for {name}, got fsSelection={fs:#x}"
+        assert fs & _FS_REGULAR, \
+            f"REGULAR must be set for {name}, got fsSelection={fs:#x}"
         assert not (fs & _FS_BOLD)
         assert not (fs & _FS_ITALIC)
 
