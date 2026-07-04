@@ -98,6 +98,123 @@ def _single_pos_values_for_feature(font, feature_tag, glyph_name):
     return values
 
 
+def _single_sub_mapping_for_feature(font, feature_tag):
+    if "GSUB" not in font:
+        return {}
+    table = font["GSUB"].table
+    if not table.FeatureList or not table.LookupList:
+        return {}
+
+    result = {}
+    for feature_record in table.FeatureList.FeatureRecord:
+        if feature_record.FeatureTag != feature_tag:
+            continue
+        for lookup_index in feature_record.Feature.LookupListIndex:
+            lookup = table.LookupList.Lookup[lookup_index]
+            if lookup.LookupType not in (1, 7):
+                continue
+            for subtable in lookup.SubTable:
+                lookup_type, st = mf._unwrap_extension_subtable(
+                    lookup.LookupType, subtable)
+                if lookup_type != 1 or st is None:
+                    continue
+                mapping = getattr(st, "mapping", None)
+                if mapping:
+                    result.update(mapping)
+    return result
+
+
+def _patch_jp_with_vert_single_subst(src_path, dst_path, *, add_uvs):
+    """Add a test-only vert rule whose source is removed from normal cmap."""
+    from fontTools.ttLib.tables import otTables
+    from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
+
+    font = TTFont(src_path)
+    sub = TTFont(EN_VAR)
+    try:
+        best_cmap = font.getBestCmap() or {}
+        sub_cps = set((sub.getBestCmap() or {}).keys())
+        sub_glyphs = set(sub.getGlyphOrder())
+        gsub_outputs = mf._collect_gsub_output_glyphs(font)
+        candidates = [
+            (cp, glyph_name)
+            for cp, glyph_name in sorted(best_cmap.items())
+            if (
+                cp not in sub_cps
+                and glyph_name not in gsub_outputs
+                and glyph_name not in sub_glyphs
+            )
+        ]
+        assert len(candidates) >= 2
+        source_cp, source_glyph = candidates[0]
+        _, control_glyph = candidates[1]
+        source_gid = font.getGlyphID(source_glyph)
+        control_gid = font.getGlyphID(control_glyph)
+
+        for table in font["cmap"].tables:
+            if not hasattr(table, "cmap") or not table.cmap:
+                continue
+            for cp, glyph_name in list(table.cmap.items()):
+                if cp == source_cp or glyph_name == source_glyph:
+                    del table.cmap[cp]
+
+        if add_uvs:
+            uvs_table = next(
+                (table for table in font["cmap"].tables
+                 if getattr(table, "format", None) == 14),
+                None,
+            )
+            if uvs_table is None:
+                uvs_table = CmapSubtable.newSubtable(14)
+                uvs_table.platformID = 0
+                uvs_table.platEncID = 5
+                uvs_table.language = 0
+                uvs_table.cmap = {}
+                uvs_table.uvsDict = {}
+                font["cmap"].tables.append(uvs_table)
+                font["cmap"].numSubTables = len(font["cmap"].tables)
+            uvs_table.uvsDict.setdefault(0xFE00, []).append(
+                (source_cp, source_glyph)
+            )
+
+        st = otTables.SingleSubst()
+        st.mapping = {
+            source_glyph: control_glyph,
+            control_glyph: control_glyph,
+        }
+        lookup = otTables.Lookup()
+        lookup.LookupType = 1
+        lookup.LookupFlag = 0
+        lookup.SubTable = [st]
+        lookup.SubTableCount = 1
+
+        gsub = font["GSUB"].table
+        lookup_index = len(gsub.LookupList.Lookup)
+        gsub.LookupList.Lookup.append(lookup)
+        gsub.LookupList.LookupCount = len(gsub.LookupList.Lookup)
+
+        vert_records = [
+            record for record in gsub.FeatureList.FeatureRecord
+            if record.FeatureTag == "vert"
+        ]
+        assert vert_records
+        for record in vert_records:
+            indices = list(record.Feature.LookupListIndex or [])
+            indices.append(lookup_index)
+            record.Feature.LookupListIndex = indices
+            record.Feature.LookupCount = len(indices)
+
+        font.save(dst_path)
+        saved = TTFont(dst_path)
+        try:
+            return saved.getGlyphName(source_gid), saved.getGlyphName(control_gid)
+        finally:
+            saved.close()
+    finally:
+        sub.close()
+        font.close()
+
+
 # ---------------------------------------------------------------------------
 # Variable Font instantiation
 # ---------------------------------------------------------------------------
@@ -849,9 +966,9 @@ class TestLatinSingleSubstPreservation:
     (#20) the lookups are classified `mixed` instead of `latin` and survive
     the merge — so plain ``0123456789`` shaped under ``latn/en`` shapes to
     base-font digits instead of the Latin font's. The merge engine must
-    strip those Latin-input single-glyph substitutions so the Latin font
-    owns its own digit / letter decisions; cross-script entries on JP
-    glyphs (e.g. ``vert`` / ``vrt2``) stay reachable.
+    strip default-leaking Latin-input substitutions while re-targeting
+    explicit `fwid` / `hwid` rules to the sub-owned cmap glyphs; cross-script
+    entries on JP glyphs (e.g. ``vert`` / ``vrt2``) stay reachable.
     """
 
     DIGITS = "0123456789"
@@ -934,19 +1051,17 @@ class TestLatinSingleSubstPreservation:
     @pytest.mark.parametrize("features,reason", [
         (None, "default shaping"),
         ({"tnum": True}, "tnum=1"),
-        ({"fwid": True}, "fwid=1"),
-        ({"hwid": True}, "hwid=1"),
         ({"aalt": True}, "aalt=1"),
         ({"locl": True}, "locl=1"),
     ])
     def test_inter_latn_digits_no_base_leak(
             self, inter_merged_path, features, reason):
         """Inter + Noto Sans JP: digits shaped under ``latn/en`` (with or
-        without ``tnum`` / ``fwid`` / ``hwid`` / ``aalt`` / ``locl``) must
+        without ``tnum`` / ``aalt`` / ``locl``) must
         not produce any base-font full-width / half-width digit glyph.
 
         Pre-fix this would shape ``0`` to ``glyph00225`` (base fwid) or
-        ``glyph00320`` (base hwid) under several feature combinations.
+        ``glyph00320`` (base hwid) through unintended default leakage.
         """
         shaped = self._shape(inter_merged_path, self.DIGITS, features)
         leaked = [g for g in shaped if g in self.BASE_DIGIT_LEAKS]
@@ -963,6 +1078,183 @@ class TestLatinSingleSubstPreservation:
         expected = ["zero", "one", "two", "three", "four", "five",
                     "six", "seven", "eight", "nine"]
         assert shaped == expected, f"merged default shaping: {shaped}"
+
+    def test_width_features_retarget_replaced_cmap_glyphs(
+            self, inter_merged_path):
+        """Retained JP fwid/hwid rules should apply to the glyph now
+        occupying a sub-replaced cmap slot, while keeping the base target."""
+        merged = TTFont(inter_merged_path)
+        base = TTFont(JP_VAR)
+        try:
+            merged_glyph = merged.getBestCmap()[0x0041]
+            base_glyph = base.getBestCmap()[0x0041]
+
+            for tag in ("fwid", "hwid"):
+                base_mapping = _single_sub_mapping_for_feature(base, tag)
+                merged_mapping = _single_sub_mapping_for_feature(merged, tag)
+                assert base_mapping.get(base_glyph) is not None
+                assert merged_mapping.get(merged_glyph) == (
+                    base_mapping[base_glyph]
+                )
+        finally:
+            base.close()
+            merged.close()
+
+    def test_width_retarget_replay_updates_each_feature_record(self):
+        """Same-tag FeatureRecords can reference different lookup lists."""
+        from fontTools.ttLib import newTable
+        from fontTools.ttLib.tables import otTables
+
+        def single_lookup(mapping):
+            st = otTables.SingleSubst()
+            st.mapping = dict(mapping)
+            st.Coverage = otTables.Coverage()
+            st.Coverage.glyphs = list(mapping)
+            lookup = otTables.Lookup()
+            lookup.LookupType = 1
+            lookup.LookupFlag = 0
+            lookup.SubTable = [st]
+            lookup.SubTableCount = 1
+            return lookup
+
+        def feature_record(tag, lookup_indices):
+            feature = otTables.Feature()
+            feature.FeatureParams = None
+            feature.LookupListIndex = list(lookup_indices)
+            feature.LookupCount = len(feature.LookupListIndex)
+            record = otTables.FeatureRecord()
+            record.FeatureTag = tag
+            record.Feature = feature
+            return record
+
+        font = TTFont()
+        gsub_table = newTable("GSUB")
+        gsub_table.table = otTables.GSUB()
+        gsub_table.table.Version = 0x00010000
+        gsub_table.table.LookupList = otTables.LookupList()
+        gsub_table.table.LookupList.Lookup = [
+            single_lookup({}),
+            single_lookup({}),
+            single_lookup({"source": "existing"}),
+        ]
+        gsub_table.table.LookupList.LookupCount = 3
+        gsub_table.table.FeatureList = otTables.FeatureList()
+        gsub_table.table.FeatureList.FeatureRecord = [
+            feature_record("fwid", [0]),
+            feature_record("fwid", [1]),
+            feature_record("fwid", [2]),
+        ]
+        gsub_table.table.FeatureList.FeatureCount = 3
+        font["GSUB"] = gsub_table
+
+        assert mf._add_single_substitution_to_feature(
+            font, "fwid", "source", "target"
+        )
+        lookups = gsub_table.table.LookupList.Lookup
+        assert lookups[0].SubTable[0].mapping["source"] == "target"
+        assert lookups[1].SubTable[0].mapping["source"] == "target"
+        assert lookups[2].SubTable[0].mapping["source"] == "existing"
+        assert "source" in lookups[0].SubTable[0].Coverage.glyphs
+        assert "source" in lookups[1].SubTable[0].Coverage.glyphs
+        assert not mf._add_single_substitution_to_feature(
+            font, "fwid", "source", "target"
+        )
+
+    def test_no_unreachable_singlesubst_inputs(self, inter_merged_path):
+        """Final GSUB Type 1 inputs should be reachable unless the whole
+        lookup was intentionally kept to avoid producing an empty lookup."""
+        merged = TTFont(inter_merged_path)
+        try:
+            reachable = (
+                mf._collect_cmap_glyph_names(merged)
+                | mf._collect_gsub_output_glyphs(merged)
+            )
+            gsub = merged["GSUB"].table
+            offending = []
+            for li, lookup in enumerate(gsub.LookupList.Lookup):
+                if lookup.LookupType not in (1, 7):
+                    continue
+                lookup_offending = []
+                lookup_would_keep_subtable = False
+                for sti, subtable in enumerate(lookup.SubTable):
+                    lookup_type, st = mf._unwrap_extension_subtable(
+                        lookup.LookupType, subtable)
+                    if lookup_type != 1 or st is None:
+                        lookup_would_keep_subtable = True
+                        continue
+                    mapping = getattr(st, "mapping", None) or {}
+                    if any(src in reachable for src in mapping):
+                        lookup_would_keep_subtable = True
+                    for src, dst in mapping.items():
+                        if src not in reachable:
+                            lookup_offending.append((li, sti, src, dst))
+                if lookup_would_keep_subtable:
+                    offending.extend(lookup_offending)
+            assert not offending, (
+                "GSUB SingleSubst kept unreachable input glyphs: "
+                f"{offending[:10]}"
+            )
+        finally:
+            merged.close()
+
+    def test_uvs_only_vert_input_survives_merge_prune(self, tmp_path):
+        """Format 14 UVS glyphs count as cmap-reachable for final prune."""
+        patched_base = tmp_path / "jp-uvs.ttf"
+        source_glyph, control_glyph = _patch_jp_with_vert_single_subst(
+            JP_VAR, str(patched_base), add_uvs=True
+        )
+        out = tmp_path / "merged.ttf"
+        config = {
+            "subFont": {
+                "path": EN_VAR,
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "baseFont": {
+                "path": str(patched_base),
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "output": {"familyName": "TestUvsReachable"},
+            "export": {"path": {"font": str(out)}},
+        }
+        mf.merge_fonts(config)
+
+        merged = TTFont(out)
+        try:
+            assert source_glyph in mf._collect_cmap_glyph_names(merged)
+            mapping = _single_sub_mapping_for_feature(merged, "vert")
+            assert mapping.get(source_glyph) == control_glyph
+        finally:
+            merged.close()
+
+    def test_base_only_merge_does_not_prune_base_singlesubst(self, tmp_path):
+        """Base-only exports should not run the Latin-merge dead-rule prune."""
+        patched_base = tmp_path / "jp-base-only.ttf"
+        source_glyph, control_glyph = _patch_jp_with_vert_single_subst(
+            JP_VAR, str(patched_base), add_uvs=False
+        )
+        out = tmp_path / "base-only.ttf"
+        config = {
+            "baseFont": {
+                "path": str(patched_base),
+                "scale": 1.0,
+                "baselineOffset": 0,
+                "axes": [{"tag": "wght", "currentValue": 400}],
+            },
+            "output": {"familyName": "TestBaseOnlyNoPrune"},
+            "export": {"path": {"font": str(out)}},
+        }
+        mf.merge_fonts(config)
+
+        merged = TTFont(out)
+        try:
+            mapping = _single_sub_mapping_for_feature(merged, "vert")
+            assert mapping.get(source_glyph) == control_glyph
+        finally:
+            merged.close()
 
     def test_inter_latn_tnum_reaches_inter_tabular(self, inter_merged_path):
         """``tnum=1`` on Inter + Noto Sans JP must reach Inter's tabular
@@ -1021,9 +1313,10 @@ class TestLatinSingleSubstPreservation:
     def test_no_latin_input_in_base_singlesubst(self, inter_merged_path):
         """Structural: no surviving base-side Type 1 / Type 3 subtable
         should map a Latin-owned digit (``zero``..``nine``) to a base-font
-        glyph. The bug: Noto Sans JP `locl` (Type 1 SingleSubst) and `aalt`
-        (Type 3 AlternateSubst) keep mappings like ``zero -> glyph00225``
-        on Latin-input names that the Latin font now owns.
+        glyph outside explicit width features. The bug: Noto Sans JP `locl`
+        (Type 1 SingleSubst) and `aalt` (Type 3 AlternateSubst) keep
+        mappings like ``zero -> glyph00225`` on Latin-input names that the
+        Latin font now owns.
 
         Latin-origin lookups (the sub-font's own `locl` / `aalt` / `tnum`)
         are tolerated — digits are legitimate Latin sources for those —
@@ -1046,8 +1339,15 @@ class TestLatinSingleSubstPreservation:
         digit_inputs = {"zero", "one", "two", "three", "four",
                         "five", "six", "seven", "eight", "nine"}
         gsub = merged["GSUB"].table
+        lookup_tags = {}
+        for fr in gsub.FeatureList.FeatureRecord:
+            for li in fr.Feature.LookupListIndex or []:
+                lookup_tags.setdefault(li, set()).add(fr.FeatureTag)
         offending = []
         for li, lk in enumerate(gsub.LookupList.Lookup):
+            tags = lookup_tags.get(li, set())
+            if tags and tags <= {"fwid", "hwid"}:
+                continue
             for sti, st in enumerate(lk.SubTable):
                 ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
                 for attr in ("mapping", "alternates"):
@@ -1088,9 +1388,10 @@ class TestCidBaseDigitNoLeak:
     digits by CID name (e.g. ``cid00017`` for U+0030). Inter's `zero`
     glyph is renamed to ``cid00017`` during cmap-driven copy, so the
     base GSUB rules ``cid00017 -> cid63153`` (`locl`), ``cid00017 ->
-    cid59062`` (`fwid`) etc. all fire on the Latin design unless the
-    merge engine strips them. This test pins the regression for #23 on
-    the CID/CFF path — the bare TTF subset path uses semantic glyph
+    cid59062`` (`fwid`) etc. can fire on the Latin design. Default-leaking
+    rules are stripped, while explicit width rules are re-targeted. This
+    test pins the regression for #23 on the CID/CFF path — the bare TTF
+    subset path uses semantic glyph
     names and doesn't catch this CID-specific failure mode.
     """
 
@@ -1140,21 +1441,19 @@ class TestCidBaseDigitNoLeak:
         (None, "default"),
         ({"locl": True}, "locl=1"),
         ({"tnum": True}, "tnum=1"),
-        ({"fwid": True}, "fwid=1"),
-        ({"hwid": True}, "hwid=1"),
         ({"aalt": True}, "aalt=1"),
     ])
     def test_cid_digits_no_base_alternate_leak(
             self, merged_path, features, reason):
-        """For each feature combination, the merged font's digit shaping
+        """For each non-width feature combination, the merged font's digit shaping
         under ``latn/en`` must produce stable CID digit names — not the
         base font's full-width / half-width / locl alternate CIDs.
 
         The merged Latin digits live at ``cid00017``..``cid00026``. The
         bug case from the issue: base ``locl`` rewrites those to
         ``cid63153``..``cid63162`` (and similar large-CID alternates).
-        After the fix, no entry in the base GSUB should map any of
-        ``cid00017``..``cid00026`` to a different CID, so all six feature
+        After the fix, no non-width entry in the base GSUB should map any
+        of ``cid00017``..``cid00026`` to a different CID, so these feature
         combinations shape to the same merged digit CIDs.
         """
         shaped = self._shape(merged_path, self.DIGITS, features)
@@ -1167,14 +1466,22 @@ class TestCidBaseDigitNoLeak:
 
     def test_cid_locl_lookup_stripped_for_latin_cids(self, merged_path):
         """Structural: no surviving base-side Type 1 / Type 3 subtable
-        should keep ``cid00017``..``cid00026`` as a source key. Those CID
-        names are now Latin-owned (Inter's digit glyphs sit there) and
-        any base-side rewrite is the bug from #23."""
+        outside explicit width features should keep ``cid00017``..``cid00026``
+        as a source key. Those CID names are now Latin-owned (Inter's digit
+        glyphs sit there), so default base-side rewrites are the bug from
+        #23."""
         merged = TTFont(merged_path)
         latin_cids = {f"cid{n:05d}" for n in range(17, 27)}
         gsub = merged["GSUB"].table
+        lookup_tags = {}
+        for fr in gsub.FeatureList.FeatureRecord:
+            for li in fr.Feature.LookupListIndex or []:
+                lookup_tags.setdefault(li, set()).add(fr.FeatureTag)
         offending = []
         for li, lk in enumerate(gsub.LookupList.Lookup):
+            tags = lookup_tags.get(li, set())
+            if tags and tags <= {"fwid", "hwid"}:
+                continue
             for sti, st in enumerate(lk.SubTable):
                 ext = st.ExtSubTable if hasattr(st, "ExtSubTable") else st
                 for attr in ("mapping", "alternates"):

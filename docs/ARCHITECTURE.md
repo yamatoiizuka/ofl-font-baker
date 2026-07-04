@@ -90,11 +90,12 @@ useMerge.startMerge()
       4. cmap-based glyph replacement (Latin → merged glyph name mapping)
       5. CFF-to-CFF: redraw via TransformPen (scale + Private dict rebinding)
       6. GSUB/GPOS merge (skip Latin features for CID fonts)
-      7. Set OFL metadata (copyright, license, description)
-      8. Drop all Macintosh-platform name records; keep Windows Unicode names
-      9. post format 3.0 (for >32767 glyphs)
-      10. Write OTF + WOFF2
-      11. Generate OFL.txt + Settings.txt
+      7. Re-target retained fwid/hwid, then prune dead GSUB SingleSubst inputs
+      8. Set OFL metadata (copyright, license, description)
+      9. Drop all Macintosh-platform name records; keep Windows Unicode names
+      10. post format 3.0 (for >32767 glyphs)
+      11. Write OTF + WOFF2
+      12. Generate OFL.txt + Settings.txt
   → Main process: receives JSON manifest (fontPath, woff2Path, oflPath, settingsPath)
 ```
 
@@ -342,6 +343,25 @@ empty so nothing was stripped. The fallback now passes a
 together with `append_lat_lookups=False`, so base lookups on
 already-copied Latin glyphs get cleaned even when the Latin GSUB lookups
 themselves can't be appended.
+
+`fwid` / `hwid` are the exception to the "strip Latin-owned source"
+cleanup: they are explicit width features, so the base font's retained
+SingleSubst behavior should still be available for the glyph that now
+occupies the cmap slot. The merge captures `(original base glyph at
+codepoint, final merged glyph at codepoint)` before Step 8 overwrites
+cmap, then runs `_copy_single_substitutions_for_features` for `fwid` /
+`hwid` after `merge_feature_tables` has finished stripping. Same-name
+overwrites (for example `A -> A`) replay the captured base target because
+there is no distinct surviving source key to copy from after the strip.
+
+As a final GSUB cleanup, `_prune_unreachable_gsub_single_substitutions`
+removes Type 1 SingleSubst entries whose input glyph is not reachable.
+The reachable set deliberately uses a simple over-approximation: final
+cmap glyphs plus every substitution output emitted anywhere in GSUB. This
+keeps chained alternates without reindexing lookups. Pruning is limited to
+LookupType 1, including Extension-wrapped type 1; it deletes mapping
+entries, updates Coverage, removes subtables that become empty, and leaves
+the lookup list indices unchanged.
 
 ### `ccmp` Duplicate-Tag Dedupe
 
