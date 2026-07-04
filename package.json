@@ -1,6 +1,6 @@
 {
   "name": "ofl-font-baker",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Composite font builder — merge English & Japanese typefaces",
   "main": "dist/main/index.js",
   "scripts": {
