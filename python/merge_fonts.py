@@ -1345,7 +1345,7 @@ def _collect_single_substitutions_for_features(
 def _add_single_substitution_to_feature(
     font: TTFont, feature_tag: str, src_name: str, dst_name: str
 ) -> bool:
-    """Add a SingleSubst mapping to the first subtable for *feature_tag*."""
+    """Add a SingleSubst mapping to every FeatureRecord for *feature_tag*."""
     gsub = font.get("GSUB")
     if not gsub or not getattr(gsub, "table", None):
         return False
@@ -1353,10 +1353,13 @@ def _add_single_substitution_to_feature(
     if not table.FeatureList or not table.LookupList:
         return False
 
+    added = False
     for feature_record in table.FeatureList.FeatureRecord:
         if feature_record.FeatureTag != feature_tag:
             continue
-        for lookup_index in feature_record.Feature.LookupListIndex:
+        first_suitable = None
+        already_present = False
+        for lookup_index in (feature_record.Feature.LookupListIndex or []):
             lookup = table.LookupList.Lookup[lookup_index]
             lookup_type = getattr(lookup, "LookupType", None)
             if lookup_type not in (1, 7):
@@ -1370,14 +1373,23 @@ def _add_single_substitution_to_feature(
                 if mapping is None:
                     continue
                 if src_name in mapping:
-                    return False
-                mapping[src_name] = dst_name
-                coverage = getattr(st, "Coverage", None)
-                if (coverage and hasattr(coverage, "glyphs")
-                        and src_name not in coverage.glyphs):
-                    coverage.glyphs.append(src_name)
-                return True
-    return False
+                    already_present = True
+                    break
+                if first_suitable is None:
+                    first_suitable = st
+            if already_present:
+                break
+        if already_present or first_suitable is None:
+            continue
+
+        mapping = first_suitable.mapping
+        mapping[src_name] = dst_name
+        coverage = getattr(first_suitable, "Coverage", None)
+        if (coverage and hasattr(coverage, "glyphs")
+                and src_name not in coverage.glyphs):
+            coverage.glyphs.append(src_name)
+        added = True
+    return added
 
 
 def _retarget_width_feature_substitutions(
@@ -1911,6 +1923,10 @@ def _collect_cmap_glyph_names(font: TTFont) -> set[str]:
     for table in cmap.tables:
         if hasattr(table, "cmap") and table.cmap:
             glyphs.update(g for g in table.cmap.values() if g)
+        if getattr(table, "format", None) == 14:
+            for entries in (getattr(table, "uvsDict", None) or {}).values():
+                glyphs.update(glyph_name for _, glyph_name in entries
+                              if glyph_name is not None)
     return glyphs
 
 
@@ -2002,7 +2018,10 @@ def _prune_unreachable_gsub_single_substitutions(font: TTFont) -> int:
 
     Reachability uses a deliberate over-approximation: final cmap glyphs
     plus every substitution output emitted anywhere in GSUB. This keeps
-    chained alternates reachable without needing lookup graph rewrites.
+    chained alternates reachable without needing lookup graph rewrites. If
+    pruning would leave a lookup with no subtables, the lookup is left
+    untouched; keeping dead-but-valid rules is safer than producing an empty
+    lookup some shapers may reject.
     """
     gsub = font.get("GSUB")
     if not gsub or not getattr(gsub, "table", None):
@@ -2021,6 +2040,8 @@ def _prune_unreachable_gsub_single_substitutions(font: TTFont) -> int:
 
         old_subtables = list(getattr(lookup, "SubTable", None) or [])
         new_subtables = []
+        pending_mapping_updates = []
+        lookup_pruned = 0
         for subtable in old_subtables:
             sub_lookup_type, st = _unwrap_extension_subtable(
                 lookup_type, subtable)
@@ -2035,14 +2056,21 @@ def _prune_unreachable_gsub_single_substitutions(font: TTFont) -> int:
 
             kept = {src: dst for src, dst in mapping.items()
                     if src in reachable}
-            pruned += len(mapping) - len(kept)
+            lookup_pruned += len(mapping) - len(kept)
             if not kept:
                 continue
 
             if len(kept) != len(mapping):
-                st.mapping = kept
-                _sync_single_subst_coverage(st, kept)
+                pending_mapping_updates.append((st, kept))
             new_subtables.append(subtable)
+
+        if old_subtables and not new_subtables:
+            continue
+
+        for st, kept in pending_mapping_updates:
+            st.mapping = kept
+            _sync_single_subst_coverage(st, kept)
+        pruned += lookup_pruned
 
         if len(new_subtables) != len(old_subtables):
             lookup.SubTable = new_subtables
@@ -5230,6 +5258,12 @@ def merge_fonts(config: dict) -> str:
         width_feature_base_mappings = _collect_single_substitutions_for_features(
             merged, set(GSUB_WIDTH_FEATURE_TAGS))
         width_feature_retargets = []
+        for cp, lat_glyph_name in latin_glyphs_to_copy.items():
+            dst_name = lat_to_merged_name.get(lat_glyph_name, lat_glyph_name)
+            base_name = merged_cmap.get(cp)
+            if base_name:
+                width_feature_retargets.append((base_name, dst_name))
+
         for table in merged["cmap"].tables:
             if not hasattr(table, 'cmap') or not table.cmap:
                 continue
@@ -5238,14 +5272,6 @@ def merge_fonts(config: dict) -> str:
                 if cp <= max_cp:
                     # Use the merged name (e.g. cid00033) if mapping exists
                     dst_name = lat_to_merged_name.get(lat_glyph_name, lat_glyph_name)
-                    base_name = merged_cmap.get(cp)
-                    if base_name and base_name != dst_name:
-                        width_feature_retargets.append((base_name, dst_name))
-                    elif base_name == dst_name:
-                        # Same-name replacements still changed ownership of
-                        # the cmap slot; replay captured width targets after
-                        # merge_feature_tables strips Latin-owned inputs.
-                        width_feature_retargets.append((base_name, dst_name))
                     table.cmap[cp] = dst_name
 
         # Step 9: Merge feature tables
@@ -5574,7 +5600,8 @@ def merge_fonts(config: dict) -> str:
     # Re-sort GSUB/GPOS Coverages by the final merged glyph order so
     # HarfBuzz's binary search can resolve Latin lookups after the cmap
     # merge renumbered glyph IDs.
-    _prune_unreachable_gsub_single_substitutions(merged)
+    if lat_font is not None:
+        _prune_unreachable_gsub_single_substitutions(merged)
     _resort_lookup_coverages(merged)
 
     output_lat_glyph_names = set()
