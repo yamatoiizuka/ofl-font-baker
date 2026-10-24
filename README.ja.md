@@ -52,6 +52,22 @@ OFL は、SIL International が策定したオープンソースライセンス�
 Apple Silicon 搭載の Mac (arm64) 専用です。  
 過去バージョンは [Releases](https://github.com/yamatoiizuka/ofl-font-baker/releases) ページを参照してください。
 
+## 開発環境
+
+Node.js 24 と Python 3.14 を使用します。Python の依存関係は専用の仮想環境にインストールしてください。
+
+```bash
+python3.14 -m venv .venv
+source .venv/bin/activate
+npm ci
+npm run python:setup
+npm test
+npm run build
+npx tsc --noEmit
+```
+
+開発時は新しいターミナルでも `source .venv/bin/activate` を実行してから `npm run dev` を使用してください。
+
 ## Support
 
 もしこのプロジェクトが役に立ったら、開発の継続を応援していただけると嬉しいです。

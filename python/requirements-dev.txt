@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# Versions validated in the local development environment.
+fonttools==4.67.0
+brotli==1.2.1
+pytest==9.1.1
+uharfbuzz==0.57.0
+pyinstaller==6.22.3
