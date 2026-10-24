@@ -95,3 +95,38 @@ def test_target_appearing_during_generation_is_preserved(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match='changed during export'):
         mf.package_fonts(cfg)
     assert (target / 'keep.txt').read_text() == 'other process'
+
+
+def test_real_export_and_saved_config_use_final_paths(tmp_path):
+    import pathlib
+    import json
+    from fontTools.fontBuilder import FontBuilder
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    from fontTools.ttLib import TTFont
+    root = tmp_path.resolve()
+    fb = FontBuilder(1000, isTTF=True)
+    fb.setupGlyphOrder(['.notdef', 'A'])
+    fb.setupCharacterMap({65: 'A'})
+    glyphs = {}
+    for name in ['.notdef', 'A']:
+        pen = TTGlyphPen(None)
+        if name == 'A':
+            pen.moveTo((0, 0)); pen.lineTo((250, 700)); pen.lineTo((500, 0)); pen.closePath()
+        glyphs[name] = pen.glyph()
+    fb.setupGlyf(glyphs)
+    fb.setupHorizontalMetrics({name: (600, 0) for name in glyphs})
+    fb.setupHorizontalHeader(ascent=800, descent=-200)
+    fb.setupNameTable({'familyName':'AuditFixture', 'styleName':'Regular', 'psName':'AuditFixture-Regular', 'fullName':'AuditFixture Regular', 'uniqueFontIdentifier':'AuditFixture Regular', 'version':'Version 1.0', 'copyright':'Audit test fixture', 13:'SIL Open Font License 1.1'})
+    fb.setupOS2(sTypoAscender=800, sTypoDescender=-200, usWinAscent=800, usWinDescent=200)
+    fb.setupPost()
+    fb.save(root / 'input.ttf')
+    target=root/'Output';target.mkdir();(target/'old.txt').write_text('old')
+    config={'baseFont': {'path':str(root/'input.ttf')}, 'output': {'familyName':'AuditOutput'}, 'export':{'package':{'dir':str(target),'overwrite':True,'bundleInputFonts':True}}}
+    result=mf.package_fonts(config)
+    assert not (target/'old.txt').exists()
+    assert all(pathlib.Path(p).is_file() for p in result['files'])
+    saved=json.loads(pathlib.Path(result['configPath']).read_text())
+    assert saved['export']['package']['dir']==str(target)
+    assert saved['baseFont']['path'].startswith('./source/')
+    for key in ['fontPath','woff2Path']:
+        font=TTFont(result[key]);assert font.getBestCmap()[65]=='A';font.close()
