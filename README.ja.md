@@ -40,7 +40,7 @@ OFL は、SIL International が策定したオープンソースライセンス�
 
 ## Download
 
-<a href="https://github.com/yamatoiizuka/ofl-font-baker/releases/latest/download/Font-Baker-arm64.dmg">
+<a href="https://github.com/yamatoiizuka/ofl-font-baker/releases/latest/download/OFL-Font-Baker-arm64.dmg">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/download-for-mac-dark.svg">
     <img src="docs/assets/download-for-mac-light.svg" alt="Download for Mac" height="48">
