@@ -40,7 +40,7 @@ Many high-quality typefaces are published under the OFL, including those on [Goo
 
 ## Download
 
-<a href="https://github.com/yamatoiizuka/ofl-font-baker/releases/latest/download/Font-Baker-arm64.dmg">
+<a href="https://github.com/yamatoiizuka/ofl-font-baker/releases/latest/download/OFL-Font-Baker-arm64.dmg">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/download-for-mac-dark.svg">
     <img src="docs/assets/download-for-mac-light.svg" alt="Download for Mac" height="48">
