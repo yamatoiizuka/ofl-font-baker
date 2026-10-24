@@ -30,6 +30,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 from typing import NamedTuple
 
 from fontTools.misc.timeTools import timestampNow
@@ -5650,6 +5651,88 @@ def merge_fonts(config: dict) -> str:
 
 
 def package_fonts(config: dict) -> dict:
+    """Build beside the destination, then replace it with rollback on failure.
+
+    A process killed during generation can leave a staging directory, but never
+    destroys the previous export. A backup is retained if rollback fails.
+    """
+    pkg = config["export"]["package"]
+    requested = os.path.abspath(pkg["dir"])
+    if os.path.islink(requested):
+        raise ValueError("Output directory must not be a symbolic link")
+    target = os.path.realpath(requested)
+    if target in (os.path.abspath(os.sep), os.path.expanduser("~")):
+        raise ValueError("Unsafe output directory")
+    for key in ("baseFont", "subFont"):
+        source = config.get(key)
+        if source and source.get("path"):
+            source_path = os.path.realpath(source["path"])
+            if os.path.commonpath([target, source_path]) == target:
+                raise ValueError("Output directory must not contain an input font")
+    existed = os.path.exists(target)
+    if existed and not os.path.isdir(target):
+        raise ValueError("Output destination must be a directory")
+    if existed and not resolve_package_options(config)["overwrite"]:
+        raise FileExistsError(f'Output folder already exists: "{os.path.basename(target)}"')
+    initial = os.stat(target) if existed else None
+    parent = os.path.dirname(target)
+    os.makedirs(parent, exist_ok=True)
+    staging_root = tempfile.mkdtemp(prefix=".font-baker-export-", dir=parent)
+    staged = os.path.join(staging_root, os.path.basename(target))
+    backup = os.path.join(staging_root, "previous-export")
+    # Avoid a collision with the user-selected output name.
+    if staged == backup:
+        backup += "-backup"
+    keep_backup = False
+    committed = False
+    try:
+        staged_config = dict(config, export={"package": dict(pkg, dir=staged, overwrite=False)})
+        manifest = _build_font_package(staged_config)
+        if manifest.get("configPath"):
+            with open(manifest["configPath"], encoding="utf-8") as f:
+                saved_config = json.load(f)
+            saved_config["export"] = {"package": dict(pkg, dir=target)}
+            with open(manifest["configPath"], "w", encoding="utf-8") as f:
+                json.dump(saved_config, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+        current = os.lstat(target) if os.path.lexists(target) else None
+        if (initial is None) != (current is None) or (initial and current and
+                (initial.st_dev, initial.st_ino, initial.st_mtime_ns) !=
+                (current.st_dev, current.st_ino, current.st_mtime_ns)):
+            raise RuntimeError("Output directory changed during export; please choose it again")
+        if existed:
+            os.rename(target, backup)
+        try:
+            os.rename(staged, target)
+            committed = True
+        except BaseException:
+            if existed:
+                try:
+                    os.rename(backup, target)
+                except BaseException as rollback_error:
+                    keep_backup = True
+                    raise RuntimeError(f"Could not restore output; previous export is at {backup}") from rollback_error
+            raise
+        def final_path(value):
+            return os.path.join(target, os.path.relpath(value, staged)) if value else value
+        return {key: ([final_path(p) for p in value] if key == "files" else final_path(value))
+                for key, value in manifest.items()}
+    finally:
+        if not committed and os.path.exists(backup):
+            if not os.path.lexists(target):
+                try:
+                    os.rename(backup, target)
+                except OSError:
+                    keep_backup = True
+            else:
+                keep_backup = True
+        if not keep_backup:
+            # Cleanup failure must not turn a successfully committed export into
+            # a reported failure. Stale directories may be removed manually.
+            shutil.rmtree(staging_root, ignore_errors=True)
+
+
+def _build_font_package(config: dict) -> dict:
     """Run a package export: create output dir, merge font, write all artifacts.
 
     Returns a manifest dict with paths of all generated files.
