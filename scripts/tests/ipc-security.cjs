@@ -43,6 +43,12 @@ app.once('browser-window-created', (_, win) => {
       await child.loadURL('data:text/html,<body>untrusted</body>');
       await assert.rejects(child.webContents.executeJavaScript(`window.electronAPI.readFontFile(${JSON.stringify(selected)})`), /Untrusted IPC sender/);
       child.destroy();
+      if (process.env.TEST_TRANSACTIONAL_EXPORT) {
+        config.export.package.dir = await run('window.electronAPI.pickOutput()');
+        const failedExport = await run(`window.electronAPI.startMerge(${JSON.stringify(config)})`);
+        assert.equal(failedExport.success, false); // Deliberately invalid test font.
+        assert.equal(fs.readFileSync(path.join(destination, 'keep.txt'), 'utf8'), 'KEEP');
+      }
       finish();
     } catch (error) { finish(error); }
   });
