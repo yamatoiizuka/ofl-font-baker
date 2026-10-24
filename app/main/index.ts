@@ -156,7 +156,7 @@ app.setName(APP_NAME);
 
 app.whenReady().then(() => {
   buildMenu();
-  registerIpcHandlers();
+  registerIpcHandlers(() => mainWindow);
   createWindow();
   initAutoUpdater(() => mainWindow);
 

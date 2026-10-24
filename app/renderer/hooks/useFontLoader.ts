@@ -230,10 +230,13 @@ export function useFontLoader() {
 
       // Use Electron's webUtils.getPathForFile() via preload bridge
       // This works in sandboxed mode (Electron 29+)
-      const filePath = window.electronAPI.getPathForFile(fontFile);
-      if (!filePath) return;
-
-      await loadFontFromPath(role, filePath);
+      try {
+        const filePath = await window.electronAPI.getPathForFile(fontFile);
+        if (!filePath) return;
+        await loadFontFromPath(role, filePath);
+      } catch (error) {
+        window.electronAPI.showAlert?.('Failed to load font', String(error));
+      }
     },
     [loadFontFromPath],
   );
