@@ -2,49 +2,74 @@
  * @fileoverview Registers IPC handlers for font picking, file reading, output selection, and merge execution.
  */
 
-import { ipcMain, dialog, BrowserWindow, Menu, shell } from 'electron';
+import { app, ipcMain, dialog, BrowserWindow, Menu, shell, IpcMainInvokeEvent } from 'electron';
+import path from 'path';
+import { pathToFileURL } from 'url';
+import { FileAuthority } from './file-authority';
 import { IPC, MergeConfig } from '@/shared/types';
 import { runMerge, abortMerge } from '@/main/merge-engine';
-import { setExporting } from '@/main/export-state';
+import { isExporting, setExporting } from '@/main/export-state';
 import { validatePostScriptName } from '@/shared/postscript-name';
-import { readFileSync, existsSync } from 'fs';
+import { openExternalWebURL } from './external-links';
 
 /**
  * Registers all IPC handlers for font picking, file reading, output selection, and merge execution.
  */
-export function registerIpcHandlers() {
+export function registerIpcHandlers(getWindow: () => BrowserWindow | null) {
+  const files = new FileAuthority(path.join(app.getPath('userData'), 'authorized-fonts.json'));
+  const trustedURL = process.env.VITE_DEV_SERVER_URL || pathToFileURL(path.join(__dirname, '../renderer/index.html')).href;
+  function trusted(event: IpcMainInvokeEvent) {
+    const win = getWindow();
+    if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame ||
+        event.senderFrame.url.split('#')[0] !== new URL(trustedURL).href.split('#')[0]) {
+      throw new Error('Untrusted IPC sender');
+    }
+  }
+  function handle(channel: string, listener: (event: IpcMainInvokeEvent, ...args: any[]) => any) {
+    ipcMain.handle(channel, (event, ...args) => {
+      trusted(event);
+      return listener(event, ...args);
+    });
+  }
+  // This private channel is only used by preload with webUtils.getPathForFile(File).
+  // The bridge never exposes a string-based registration function.
+  handle('font:register-dropped-file', (_event, file: string) => files.grantInput(file));
   // Pick font file
-  ipcMain.handle(IPC.PICK_FONT, async () => {
+  handle(IPC.PICK_FONT, async (event) => {
     const result = await dialog.showOpenDialog({
       filters: [{ name: 'Font Files', extensions: ['otf', 'ttf'] }],
       properties: ['openFile'],
     });
     if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
+    trusted(event);
+    return files.grantInput(result.filePaths[0]);
   });
 
   // Pick output location via Save As… dialog (lets user name the export folder)
-  ipcMain.handle(IPC.PICK_OUTPUT, async (_event, defaultName?: string) => {
+  handle(IPC.PICK_OUTPUT, async (event, defaultName?: string) => {
+    files.clearOutput();
+    const safeName = typeof defaultName === 'string' ? path.basename(defaultName).slice(0, 200) : undefined;
     const result = await dialog.showSaveDialog({
       title: 'Export Font',
       buttonLabel: 'Export',
-      defaultPath: defaultName || 'FontBaker-Regular',
+      defaultPath: safeName || 'FontBaker-Regular',
       properties: ['createDirectory', 'showOverwriteConfirmation'],
     });
     if (result.canceled || !result.filePath) return null;
-    return result.filePath;
+    trusted(event);
+    return files.grantOutput(result.filePath);
   });
 
   // Check if a font file exists at the given path
-  ipcMain.handle(IPC.CHECK_FILE_EXISTS, async (_event, filePath: string) => {
-    return existsSync(filePath);
+  handle(IPC.CHECK_FILE_EXISTS, async (_event, filePath: string) => {
+    return files.hasInput(filePath);
   });
 
   // Show missing font dialog — returns 'select' or 'clear'
-  ipcMain.handle(IPC.SHOW_MISSING_FONT_DIALOG, async (_event, label: string, fileName: string) => {
+  handle(IPC.SHOW_MISSING_FONT_DIALOG, async (_event, label: string, fileName: string) => {
     const result = await dialog.showMessageBox({
       type: 'warning',
-      message: `${label} \u201C${fileName}\u201D not found.`,
+      message: `${label} \u201C${fileName}\u201D is missing or needs access permission.`,
       buttons: ['Select Font', 'Clear'],
       defaultId: 0,
       cancelId: 1,
@@ -53,21 +78,30 @@ export function registerIpcHandlers() {
   });
 
   // Read font file as ArrayBuffer (for opentype.js parsing in renderer)
-  ipcMain.handle(IPC.READ_FONT_FILE, async (_event, fontPath: string) => {
-    const buffer = readFileSync(fontPath);
+  handle(IPC.READ_FONT_FILE, async (_event, fontPath: string) => {
+    const buffer = files.readInput(fontPath);
     return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
   });
 
   // Abort merge
-  ipcMain.handle(IPC.ABORT_MERGE, () => {
+  handle(IPC.ABORT_MERGE, () => {
     abortMerge();
   });
 
   // Start merge
-  ipcMain.handle(IPC.START_MERGE, async (event, config: MergeConfig) => {
+  handle(IPC.START_MERGE, async (event, config: MergeConfig) => {
     const win = BrowserWindow.fromWebContents(event.sender);
+    if (isExporting()) return { success: false, error: 'An export is already in progress' };
     setExporting(true);
     try {
+      if (!config || typeof config.output?.familyName !== 'string' ||
+          typeof config.export?.package?.dir !== 'string' || !config.baseFont ||
+          JSON.stringify(config).length > 1024 * 1024) {
+        throw new Error('Invalid merge configuration');
+      }
+      const basePath = files.requireInput(config.baseFont.path);
+      const subPath = config.subFont ? files.requireInput(config.subFont.path) : null;
+      const destination = files.consumeOutput(config.export.package.dir, [basePath, ...(subPath ? [subPath] : [])]);
       if (!config.output.familyName?.trim()) {
         return { success: false, error: 'Font Family is Required' };
       }
@@ -76,16 +110,12 @@ export function registerIpcHandlers() {
         return { success: false, error: `PostScript name: ${psError}` };
       }
 
-      // PICK_OUTPUT uses showSaveDialog with showOverwriteConfirmation,
-      // so the OS has already asked the user to replace when the target
-      // exists. We just forward overwrite=true to Python when the folder
-      // is present so prepare_output_dir doesn't raise FileExistsError.
-      const overwrite = existsSync(config.export.package.dir);
-
       const mergeConfig: MergeConfig = {
         ...config,
+        baseFont: { ...config.baseFont, path: basePath },
+        subFont: config.subFont && subPath ? { ...config.subFont, path: subPath } : null,
         export: {
-          package: { ...config.export.package, overwrite },
+          package: { ...config.export.package, ...destination },
         },
       };
       const manifest = await runMerge(mergeConfig, (progress) => {
@@ -101,7 +131,7 @@ export function registerIpcHandlers() {
   });
 
   // Alert dialog with app icon (attached to window as sheet on macOS)
-  ipcMain.handle('dialog:alert', async (event, title: string, detail: string) => {
+  handle('dialog:alert', async (event, title: string, detail: string) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     const options = { type: 'info' as const, message: title, detail, buttons: ['OK'] };
     if (win) {
@@ -112,7 +142,7 @@ export function registerIpcHandlers() {
   });
 
   // Context menu for font cards
-  ipcMain.handle(
+  handle(
     IPC.SHOW_CONTEXT_MENU,
     async (event, options: { hasFont: boolean; fontPath?: string }) => {
       const win = BrowserWindow.fromWebContents(event.sender);
@@ -154,17 +184,17 @@ export function registerIpcHandlers() {
   );
 
   // Reveal file in Finder
-  ipcMain.handle(IPC.REVEAL_IN_FINDER, async (_event, filePath: string) => {
-    shell.showItemInFolder(filePath);
+  handle(IPC.REVEAL_IN_FINDER, async (_event, filePath: string) => {
+    shell.showItemInFolder(files.requireInput(filePath));
   });
 
   // Open URL in default external browser
-  ipcMain.handle('shell:open-external', async (_event, url: string) => {
-    await shell.openExternal(url);
+  handle('shell:open-external', async (_event, url: string) => {
+    await openExternalWebURL(url);
   });
 
   // Context menu for preview (cut/copy/paste)
-  ipcMain.handle('menu:preview-context', async (event) => {
+  handle('menu:preview-context', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return null;
 

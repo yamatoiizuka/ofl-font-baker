@@ -43,7 +43,8 @@ const api = {
     ipcRenderer.invoke(IPC.READ_FONT_FILE, path),
 
   /** Retrieves the absolute file system path for a dropped File object. */
-  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+  getPathForFile: (file: File): Promise<string> =>
+    ipcRenderer.invoke('font:register-dropped-file', webUtils.getPathForFile(file)),
 
   /** Show a native alert dialog. */
   showAlert: (title: string, detail: string): Promise<void> =>
