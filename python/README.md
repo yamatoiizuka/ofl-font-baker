@@ -17,6 +17,8 @@ Merged output is automatically tagged with OFL-compliant copyright and license m
 
 ## Installation
 
+Existing users should upgrade with `pip install --upgrade ofl-font-baker`. Version 0.4.10 requires Brotli 1.2.1 or later, including when an older Brotli is already installed.
+
 ```bash
 pip install ofl-font-baker
 ```
