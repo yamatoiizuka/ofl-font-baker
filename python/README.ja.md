@@ -17,6 +17,8 @@
 
 ## Installation
 
+既存ユーザーは `pip install --upgrade ofl-font-baker` で更新してください。0.4.10からBrotli 1.2.1以降を必須とし、旧版のBrotliがインストール済みの環境でも更新を要求します。
+
 ```bash
 pip install ofl-font-baker
 ```
