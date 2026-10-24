@@ -51,6 +51,22 @@ Many high-quality typefaces are published under the OFL, including those on [Goo
 
 Apple Silicon Macs (arm64) only. For past versions, see the [Releases](https://github.com/yamatoiizuka/ofl-font-baker/releases) page.
 
+## Development
+
+Use Node.js 24 and Python 3.14. Install Python dependencies in a dedicated virtual environment:
+
+```bash
+python3.14 -m venv .venv
+source .venv/bin/activate
+npm ci
+npm run python:setup
+npm test
+npm run build
+npx tsc --noEmit
+```
+
+In each new terminal, run `source .venv/bin/activate` before `npm run dev`.
+
 ## Support
 
 If you find this project useful, we would appreciate your support for continued development.
