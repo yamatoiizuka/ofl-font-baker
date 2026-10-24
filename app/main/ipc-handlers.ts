@@ -10,6 +10,7 @@ import { IPC, MergeConfig } from '@/shared/types';
 import { runMerge, abortMerge } from '@/main/merge-engine';
 import { isExporting, setExporting } from '@/main/export-state';
 import { validatePostScriptName } from '@/shared/postscript-name';
+import { openExternalWebURL } from './external-links';
 
 /**
  * Registers all IPC handlers for font picking, file reading, output selection, and merge execution.
@@ -189,7 +190,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null) {
 
   // Open URL in default external browser
   handle('shell:open-external', async (_event, url: string) => {
-    await shell.openExternal(url);
+    await openExternalWebURL(url);
   });
 
   // Context menu for preview (cut/copy/paste)

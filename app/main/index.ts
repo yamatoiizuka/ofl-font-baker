@@ -4,6 +4,7 @@
 
 import { app, BrowserWindow, Menu, dialog } from 'electron';
 import path from 'path';
+import { openExternalWebURL } from './external-links';
 import { registerIpcHandlers } from '@/main/ipc-handlers';
 import { getShortcut } from '@/shared/shortcuts';
 import { isExporting, setExporting } from '@/main/export-state';
@@ -134,6 +135,11 @@ function createWindow() {
     },
     titleBarStyle: 'hiddenInset',
     title: APP_NAME,
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternalWebURL(url).catch(() => {});
+    return { action: 'deny' };
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
