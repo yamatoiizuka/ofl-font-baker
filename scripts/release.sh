@@ -47,6 +47,20 @@ for f in release/"OFL Font Baker-"*; do
   mv "$f" "${f// /-}"
 done
 
+# electron-updater compares os.release() (Darwin), not the macOS product version.
+# Keep incompatible updates away from macOS 12 and earlier.
+node <<'NODE'
+const fs = require('fs');
+const yaml = require('js-yaml');
+const minimum = require('./package.json').build.mac.minimumSystemVersion;
+const major = Number(minimum.split('.')[0]);
+if (!Number.isInteger(major) || major < 11) throw new Error('Unsupported macOS minimum version');
+const file = 'release/latest-mac.yml';
+const info = yaml.load(fs.readFileSync(file, 'utf8'));
+info.minimumSystemVersion = `${major + 9}.0.0`;
+fs.writeFileSync(file, yaml.dump(info));
+NODE
+
 echo "==> Creating draft release ${TAG}"
 gh release create "$TAG" \
   "release/OFL-Font-Baker-arm64.dmg" \
