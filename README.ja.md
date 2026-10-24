@@ -49,7 +49,7 @@ OFL は、SIL International が策定したオープンソースライセンス�
 
 <br>
 
-Apple Silicon 搭載の Mac (arm64) 専用です。  
+macOS 13 (Ventura) 以降の Apple Silicon 搭載 Mac (arm64) 専用です。
 過去バージョンは [Releases](https://github.com/yamatoiizuka/ofl-font-baker/releases) ページを参照してください。
 
 ## 開発環境
@@ -119,7 +119,7 @@ https://openfontlicense.org
 
 ### 対応環境
 
-現在、開発者の検証環境の都合により、本アプリは **Apple Silicon 搭載の Mac (arm64)** のみ対応しています。
+現在、開発者の検証環境の都合により、本アプリは **macOS 13 (Ventura) 以降の Apple Silicon 搭載 Mac (arm64)** のみ対応しています。
 
 なお、本アプリは Electron ベースで開発しているため、将来的には Windows 版や Intel 搭載 Mac 向けの対応を行う可能性があります。これらの対応を後押ししていただける場合は、[Buy Me a Coffee￼](https://www.buymeacoffee.com/yamatoiizuka) や GitHub Sponsors からサポートしていただけると励みになります。
 
