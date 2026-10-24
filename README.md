@@ -49,7 +49,7 @@ Many high-quality typefaces are published under the OFL, including those on [Goo
 
 <br>
 
-Apple Silicon Macs (arm64) only. For past versions, see the [Releases](https://github.com/yamatoiizuka/ofl-font-baker/releases) page.
+Apple Silicon Macs (arm64) running macOS 13 (Ventura) or later. For past versions, see the [Releases](https://github.com/yamatoiizuka/ofl-font-baker/releases) page.
 
 ## Development
 
@@ -118,7 +118,7 @@ https://openfontlicense.org
 
 ### System Requirements
 
-Due to the limits of the author's testing environment, this application currently supports only **Apple Silicon Macs (arm64)**.
+Due to the limits of the author's testing environment, this application currently supports only **Apple Silicon Macs (arm64) running macOS 13 (Ventura) or later**.
 
 That said, since the app is built on Electron, support for Windows or Intel Macs may be added in the future. If you'd like to help make that happen, a contribution via [Buy Me a Coffee](https://www.buymeacoffee.com/yamatoiizuka) would be a great encouragement.
 
