@@ -70,26 +70,29 @@ function buildSfnt(tables) {
   return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
 }
 
-test('Unicode-platform names resolve their language through ltag', () => {
-  // ltag lists 'ja' first, so an index-order pick would choose the Japanese record.
-  const ltagTags = ['ja', 'en'];
-  const ltag = Buffer.alloc(12 + ltagTags.length * 4 + 4);
+/** Builds an ltag table listing `tags`. */
+function makeLtag(tags) {
+  const strings = 12 + tags.length * 4;
+  const ltag = Buffer.alloc(strings + tags.join('').length);
   ltag.writeUInt32BE(1, 0);
-  ltag.writeUInt32BE(ltagTags.length, 8);
-  ltagTags.forEach((tag, i) => {
-    ltag.writeUInt16BE(12 + ltagTags.length * 4 + i * 2, 12 + i * 4);
-    ltag.writeUInt16BE(2, 14 + i * 4);
-    ltag.write(tag, 12 + ltagTags.length * 4 + i * 2, 'latin1');
+  ltag.writeUInt32BE(tags.length, 8);
+  let at = strings;
+  tags.forEach((tag, i) => {
+    ltag.writeUInt16BE(at, 12 + i * 4);
+    ltag.writeUInt16BE(tag.length, 14 + i * 4);
+    ltag.write(tag, at, 'latin1');
+    at += tag.length;
   });
-  const records = [
-    [0, 13, 'フォントのライセンス'],
-    [1, 13, 'SIL Open Font License 1.1'],
-    [1, 1, 'Test Family'],
-  ];
+  return ltag;
+}
+
+/** Builds a name table of Unicode-platform records: [languageID, nameID, text]. */
+function makeName(records) {
   const strings = records.map(([, , text]) => Buffer.from(text, 'utf16le').swap16());
-  const name = Buffer.alloc(6 + records.length * 12 + strings.reduce((n, b) => n + b.length, 0));
+  const storage = 6 + records.length * 12;
+  const name = Buffer.alloc(storage + strings.reduce((n, b) => n + b.length, 0));
   name.writeUInt16BE(records.length, 2);
-  name.writeUInt16BE(6 + records.length * 12, 4);
+  name.writeUInt16BE(storage, 4);
   let at = 0;
   records.forEach(([lang, id], i) => {
     const rec = 6 + i * 12;
@@ -99,20 +102,49 @@ test('Unicode-platform names resolve their language through ltag', () => {
     name.writeUInt16BE(id, rec + 6);
     name.writeUInt16BE(strings[i].length, rec + 8);
     name.writeUInt16BE(at, rec + 10);
-    name.set(strings[i], 6 + records.length * 12 + at);
+    name.set(strings[i], storage + at);
     at += strings[i].length;
   });
+  return name;
+}
+
+/** Returns a copy of one table's bytes from a real font. */
+function extractTable(buffer, tag) {
+  const view = new DataView(buffer);
+  for (let i = 0; i < view.getUint16(4); i++) {
+    const rec = 12 + i * 16;
+    if (String.fromCharCode(...new Uint8Array(buffer, rec, 4)) === tag) {
+      return Buffer.from(new Uint8Array(buffer, view.getUint32(rec + 8), view.getUint32(rec + 12)));
+    }
+  }
+  throw new Error(`no ${tag} table`);
+}
+
+function minimalFont(extra) {
   const head = Buffer.alloc(54);
   head.writeUInt16BE(1000, 18);
-  const font = describeFont(buildSfnt({ head, maxp: Buffer.alloc(6), name, ltag }), 'x', 'base', () => false);
+  return buildSfnt({ head, maxp: Buffer.alloc(6), ...extra });
+}
+
+const describeBuffer = (buffer) => describeFont(buffer, 'x', 'base', () => false);
+
+test('Unicode-platform names resolve their language through ltag', () => {
+  // ltag lists 'ja' first, so an index-order pick would choose the Japanese record.
+  const font = describeBuffer(minimalFont({
+    ltag: makeLtag(['ja', 'en']),
+    name: makeName([
+      [0, 13, 'フォントのライセンス'],
+      [1, 13, 'SIL Open Font License 1.1'],
+      [1, 1, 'Test Family'],
+    ]),
+  }));
   assert.equal(font.license, 'SIL Open Font License 1.1');
   assert.equal(font.familyName, 'Test Family');
   assert.ok(isOflLicense(font.license));
 });
 
-test('damaged or non-OpenType data is rejected', () => {
+test('files that are not OpenType or are cut short are rejected', () => {
   const variable = readBuffer('Inter-4.1/InterVariable.ttf');
-  // Truncate the file inside the fvar table.
   const view = new DataView(variable);
   let fvarOffset = 0;
   for (let i = 0; i < view.getUint16(4); i++) {
@@ -121,12 +153,39 @@ test('damaged or non-OpenType data is rejected', () => {
     }
   }
   assert.ok(fvarOffset > 0);
-  assert.throws(() => describeFont(variable.slice(0, fvarOffset + 10), 'x', 'base', () => false), /damaged or truncated/);
+  // The fvar table now runs past the end of the file.
+  assert.throws(() => describeBuffer(variable.slice(0, fvarOffset + 10)), /damaged or truncated/);
 
   const unknown = readBuffer('Noto_Sans_JP/NotoSansJP-subset.ttf');
   new Uint8Array(unknown).set([0x78, 0x78, 0x78, 0x78], 0); // 'xxxx'
-  assert.throws(() => describeFont(unknown, 'x', 'base', () => false), /Not a valid OpenType font/);
-  assert.throws(() => describeFont(new TextEncoder().encode('wOF2xxxxxxxxxxxx').buffer, 'x', 'base', () => false), /WOFF/);
+  assert.throws(() => describeBuffer(unknown), /Not a valid OpenType font/);
+  assert.throws(() => describeBuffer(new TextEncoder().encode('wOF2xxxxxxxxxxxx').buffer), /WOFF/);
+});
+
+test('tables whose contents overflow their own bounds are rejected', () => {
+  // Each table fits inside the file, but its internal records do not fit inside the table.
+  const fvar = extractTable(readBuffer('Inter-4.1/InterVariable.ttf'), 'fvar');
+  const axesEnd = fvar.readUInt16BE(4) + fvar.readUInt16BE(8) * fvar.readUInt16BE(10);
+  assert.ok(fvar.readUInt16BE(12) > 0, 'fixture should declare named instances');
+  const cases = {
+    'fvar missing its named instances': { fvar: fvar.subarray(0, axesEnd) },
+    'fvar header cut short': { fvar: fvar.subarray(0, 12) },
+    // A following table keeps the overflowing string inside the file.
+    'name string past the table': { name: makeName([[0, 1, 'Family']]).subarray(0, 20), zzzz: Buffer.alloc(32) },
+    'name record array past the table': { name: makeName([[0, 1, 'A'], [0, 2, 'B']]).subarray(0, 20) },
+    'ltag tag range past the table': { ltag: makeLtag(['en']).subarray(0, 16) },
+  };
+  for (const [label, tables] of Object.entries(cases)) {
+    assert.throws(() => describeBuffer(minimalFont(tables)), /damaged or truncated/, label);
+  }
+  // Empty strings and zero-length unknown tables are still fine.
+  const ok = describeBuffer(minimalFont({ name: makeName([[0, 1, '']]), zzzz: Buffer.alloc(0) }));
+  assert.equal(ok.familyName, 'Unknown');
+});
+
+test('errors from the cmap callback are not reported as file damage', () => {
+  const buffer = readBuffer('Noto_Sans_JP/NotoSansJP-subset.ttf');
+  assert.throws(() => describeFont(buffer, 'x', 'base', () => { throw new RangeError('callback'); }), /callback/);
 });
 
 test('recognises OFL license strings', () => {

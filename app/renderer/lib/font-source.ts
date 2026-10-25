@@ -207,7 +207,17 @@ function readAxes(fvar: DataView | undefined, name: (id: number) => string): Var
   const axesOffset = fvar.getUint16(4);
   const axisCount = fvar.getUint16(8);
   const axisSize = fvar.getUint16(10);
-  if (axisSize < 20 || axesOffset + axisCount * axisSize > fvar.byteLength) {
+  const instanceCount = fvar.getUint16(12);
+  const instanceSize = fvar.getUint16(14);
+  // Named instances follow the axes; fontTools (the merge engine) reads them,
+  // so a truncated instance array must be rejected here rather than at export.
+  const axesEnd = axesOffset + axisCount * axisSize;
+  if (
+    axisSize < 20 ||
+    axesOffset < 16 ||
+    (instanceCount > 0 && instanceSize < axisCount * 4 + 4) ||
+    axesEnd + instanceCount * instanceSize > fvar.byteLength
+  ) {
     throw new DamagedFontError();
   }
   const fixed = (at: number) => fvar.getInt32(at) / 65536;
@@ -277,23 +287,24 @@ export function describeFont(
   role: FontRole,
   hasCodepoint: (cp: number) => boolean,
 ): FontSource {
+  let source: Omit<FontSource, 'sampleText'>;
   try {
-    return buildFontSource(buffer, path, role, hasCodepoint);
+    source = readFontSource(buffer, path, role);
   } catch (err) {
     // Out-of-bounds reads inside a table also mean a damaged file.
     throw err instanceof RangeError ? new DamagedFontError() : err;
   }
+  return { ...source, sampleText: detectSampleText(hasCodepoint) };
 }
 
 /**
- * Reads the tables and assembles the FontSource; see describeFont.
+ * Parses the font tables into everything but the cmap-derived sample text.
  */
-function buildFontSource(
+function readFontSource(
   buffer: ArrayBuffer,
   path: string,
   role: FontRole,
-  hasCodepoint: (cp: number) => boolean,
-): FontSource {
+): Omit<FontSource, 'sampleText'> {
   const tables = readTables(buffer);
   const name = readNames(tables.get('name'), readLanguageTags(tables.get('ltag')));
   const os2 = tables.get('OS/2');
@@ -347,7 +358,6 @@ function buildFontSource(
     unitsPerEm,
     ascender,
     glyphCount,
-    sampleText: detectSampleText(hasCodepoint),
     baselineOffset: 0,
     scale: 1.0,
     isVariable,
