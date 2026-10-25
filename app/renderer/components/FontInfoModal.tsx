@@ -1,5 +1,5 @@
 /**
- * @fileoverview Modal dialog that displays detailed font metadata and a glyph map preview rendered with opentype.js.
+ * @fileoverview Modal dialog that displays the metadata cached on a FontSource.
  */
 
 import React from 'react';
@@ -10,93 +10,6 @@ interface Props {
   font: FontSource;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
-
-/** All name table fields we want to display. */
-interface FontMeta {
-  familyName: string;
-  styleName: string;
-  version: string;
-  copyright: string;
-  trademark: string;
-  designer: string;
-  designerURL: string;
-  manufacturer: string;
-  manufacturerURL: string;
-  license: string;
-  licenseURL: string;
-  description: string;
-  // OS/2
-  fsType: number;
-  vendorID: string;
-  // Metrics
-  unitsPerEm: number;
-  glyphCount: number;
-  ascender: number;
-  descender: number;
-  lineGap: number;
-}
-
-/**
- * Extracts a string value from an opentype.js name table field.
- * @param nameField - The name field value (string or locale object).
- * @returns The extracted string, preferring English then Japanese.
- */
-function getStr(nameField: any): string {
-  if (!nameField) return '';
-  if (typeof nameField === 'string') return nameField;
-  // opentype.js returns { en: "...", ja: "...", ... }
-  return nameField.en || nameField.ja || Object.values(nameField)[0] || '';
-}
-
-/**
- * Converts an OS/2 fsType bitmask into a human-readable embedding description.
- * @param fsType - The fsType bitmask value from the OS/2 table.
- * @returns A comma-separated string of embedding permission flags.
- */
-function describeFsType(fsType: number): string {
-  if (fsType === 0) return 'Installable';
-  const parts: string[] = [];
-  if (fsType & 0x0002) parts.push('Restricted');
-  if (fsType & 0x0004) parts.push('Preview & Print');
-  if (fsType & 0x0008) parts.push('Editable');
-  if (fsType & 0x0100) parts.push('No subsetting');
-  if (fsType & 0x0200) parts.push('Bitmap only');
-  return parts.join(', ') || `Unknown (0x${fsType.toString(16)})`;
-}
-
-/**
- * Extracts comprehensive font metadata from a parsed opentype.js font object.
- * @param font - The parsed opentype.js font object.
- * @param source - The FontSource for fallback values.
- * @returns A FontMeta object containing names, metrics, and technical details.
- */
-function extractMeta(font: any, source: FontSource): FontMeta {
-  const names = font.names || {};
-  const os2 = (font as any).tables?.os2;
-  const hhea = (font as any).tables?.hhea;
-
-  return {
-    familyName: getStr(names.fontFamily) || source.familyName,
-    styleName: source.isVariable ? 'Variable' : getStr(names.fontSubfamily) || source.styleName,
-    version: getStr(names.version),
-    copyright: getStr(names.copyright),
-    trademark: getStr(names.trademark),
-    designer: getStr(names.designer),
-    designerURL: getStr(names.designerURL),
-    manufacturer: getStr(names.manufacturer),
-    manufacturerURL: getStr(names.manufacturerURL),
-    license: getStr(names.license),
-    licenseURL: getStr(names.licenseURL),
-    description: getStr(names.description),
-    fsType: os2?.fsType ?? 0,
-    vendorID: os2?.achVendID ?? '',
-    unitsPerEm: font.unitsPerEm ?? source.unitsPerEm,
-    glyphCount: font.numGlyphs ?? source.glyphCount,
-    ascender: os2?.sTypoAscender ?? hhea?.ascender ?? source.ascender,
-    descender: os2?.sTypoDescender ?? hhea?.descender ?? 0,
-    lineGap: os2?.sTypoLineGap ?? hhea?.lineGap ?? 0,
-  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -156,13 +69,11 @@ const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title
 
 /**
  * Modal dialog displaying detailed font metadata including names, metrics, licensing, and technical info.
- * Parses the font file on open to extract metadata from the name, OS/2, and hhea tables.
  */
 export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => {
-  // Always build meta from cached FontSource (stays during close animation)
-  const meta: FontMeta = {
-    familyName: font.familyName,
-    styleName: font.styleName,
+  // Read from the cached FontSource so content stays during the close animation
+  const meta = {
+    ...font,
     version: font.version || '',
     copyright: font.copyright || '',
     trademark: font.trademark || '',
@@ -173,15 +84,8 @@ export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => 
     license: font.license || '',
     licenseURL: font.licenseURL || '',
     description: font.description || '',
-    fsType: 0,
     vendorID: font.vendorID || '',
-    unitsPerEm: font.unitsPerEm,
-    glyphCount: font.glyphCount,
-    ascender: font.ascender,
-    descender: 0,
-    lineGap: 0,
   };
-  const loading = false;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -193,54 +97,48 @@ export const FontInfoModal: React.FC<Props> = ({ font, open, onOpenChange }) => 
           </DialogTitle>
         </DialogHeader>
 
-        {loading && <div className="text-sm text-muted-foreground py-4">Loading...</div>}
+        <div>
+          <Section title="General">
+            <InfoRow label="Family" value={meta.familyName} />
+            <InfoRow label="Style" value={meta.styleName} />
+            <InfoRow label="Glyphs" value={meta.glyphCount.toLocaleString()} />
+            <InfoRow label="UPM" value={String(meta.unitsPerEm)} />
+          </Section>
 
-        {meta && (
-          <div>
-            <Section title="General">
-              <InfoRow label="Family" value={meta.familyName} />
-              <InfoRow label="Style" value={meta.styleName} />
-              <InfoRow label="Glyphs" value={meta.glyphCount.toLocaleString()} />
-              <InfoRow label="UPM" value={String(meta.unitsPerEm)} />
+          <Section title="Metrics">
+            <InfoRow label="Ascender" value={String(meta.ascender)} />
+          </Section>
+
+          {(meta.designer ||
+            meta.designerURL ||
+            meta.manufacturer ||
+            meta.manufacturerURL ||
+            meta.vendorID.trim()) && (
+            <Section title="Author">
+              <InfoRow label="Designer" value={meta.designer} />
+              <InfoRow label="Designer URL" value={urlValue(meta.designerURL)} />
+              <InfoRow label="Manufacturer" value={meta.manufacturer} />
+              <InfoRow label="Manufacturer URL" value={urlValue(meta.manufacturerURL)} />
+              <InfoRow label="Vendor ID" value={meta.vendorID.trim() || null} />
             </Section>
+          )}
 
-            <Section title="Metrics">
-              <InfoRow label="Ascender" value={String(meta.ascender)} />
-              <InfoRow label="Descender" value={String(meta.descender)} />
-              <InfoRow label="Line Gap" value={meta.lineGap !== 0 ? String(meta.lineGap) : null} />
+          {(meta.version || meta.description) && (
+            <Section title="Info">
+              <InfoRow label="Version" value={meta.version} />
+              <InfoRow label="Description" value={meta.description} />
             </Section>
+          )}
 
-            {(meta.designer ||
-              meta.designerURL ||
-              meta.manufacturer ||
-              meta.manufacturerURL ||
-              meta.vendorID.trim()) && (
-              <Section title="Author">
-                <InfoRow label="Designer" value={meta.designer} />
-                <InfoRow label="Designer URL" value={urlValue(meta.designerURL)} />
-                <InfoRow label="Manufacturer" value={meta.manufacturer} />
-                <InfoRow label="Manufacturer URL" value={urlValue(meta.manufacturerURL)} />
-                <InfoRow label="Vendor ID" value={meta.vendorID.trim() || null} />
-              </Section>
-            )}
-
-            {(meta.version || meta.description) && (
-              <Section title="Info">
-                <InfoRow label="Version" value={meta.version} />
-                <InfoRow label="Description" value={meta.description} />
-              </Section>
-            )}
-
-            {(meta.copyright || meta.trademark || meta.license || meta.licenseURL) && (
-              <Section title="Legal">
-                <InfoRow label="Copyright" value={meta.copyright} />
-                <InfoRow label="Trademark" value={meta.trademark} />
-                <InfoRow label="License" value={meta.license} />
-                <InfoRow label="License URL" value={urlValue(meta.licenseURL)} />
-              </Section>
-            )}
-          </div>
-        )}
+          {(meta.copyright || meta.trademark || meta.license || meta.licenseURL) && (
+            <Section title="Legal">
+              <InfoRow label="Copyright" value={meta.copyright} />
+              <InfoRow label="Trademark" value={meta.trademark} />
+              <InfoRow label="License" value={meta.license} />
+              <InfoRow label="License URL" value={urlValue(meta.licenseURL)} />
+            </Section>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

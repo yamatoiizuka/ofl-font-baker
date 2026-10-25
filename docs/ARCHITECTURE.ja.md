@@ -10,7 +10,7 @@
 │       │          │    ↕ undo/redo      VariableAxes          │
 │       ▼          ▼                       │                   │
 │  useFontLoader   GlyphPreview       ExportPanel              │
-│  (opentype.js)   (HarfBuzz WASM)        │                   │
+│  (font-source)   (HarfBuzz WASM)        │                   │
 │                  + tofu (.notdef)   Metadata Modal           │
 │                    rendering             │                   │
 │                          IPC: "merge:start"                  │
@@ -47,7 +47,8 @@
 ユーザーが D&D またはクリック
   → webUtils.getPathForFile() でネイティブパス取得
   → IPC "font:read-file" で ArrayBuffer 取得
-  → opentype.js でパース
+  → sfnt のテーブルディレクトリから name / OS/2 / hhea / head / maxp / fvar を直接読む
+    (lib/font-source.ts)。cmap のカバレッジは HarfBuzz から取得
   → preferredFamily (nameID 16) 優先でファミリー名取得
   → preferredSubfamily (nameID 17) + usWeightClass + usWidthClass でスタイル名構築
   → copyright, designer, license をキャッシュ (モーダル即時表示用)
@@ -595,7 +596,7 @@ Electron の renderer ↔ main プロセス間通信。renderer からファイ�
 
 ```bash
 npm test                                                # フル pytest スイート (~18分)
-python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テストのみ (~10分)
+python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テストのみ (~3分)
 ```
 
 テストコードは `python/tests/` 以下の 4 ファイルに分かれています：
@@ -650,7 +651,7 @@ python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テ
 | ChainContext ClassDef rename | 1 | Inter Variable + Shippori `i.numr` no-crash |
 | Base-only merge | 2 | Latin なしマージ、JP グリフ保持 |
 | WOFF2 output | 2 | WOFF2 生成、base-only WOFF2 |
-| Large CID font | 4 | 65535 グリフ、グリフ数制限、cmap 置換、post format 3.0 |
+| Large CID font | 1 | 65535 グリフのマージ 1 回で、グリフ数制限、cmap 置換、post format 3.0 |
 | Helpers (sfnt / style / outdir) | 8 | `detect_sfnt_ext`、`compute_style_name`、`prepare_output_dir` |
 | Package output | 12 | manifest、font / woff2 / ofl / settings、overwrite、options |
 
@@ -667,6 +668,8 @@ PairPos は保持しない」ことも固定化している。
 | `npm run start` | ビルド + Electron 起動 |
 | `npm run build` | JS/CSS ビルド |
 | `npm test` | pytest テスト実行 |
+| `npm run test:js` | Node のユニットテスト (`scripts/tests/*.test.cjs`) |
+| `npm run test:electron` | ビルド後、Electron の IPC / 外部リンクのセキュリティテストを実行 |
 | `npm run python:build` | PyInstaller バイナリ生成 |
 | `npm run pack` | アプリパッケージ (unpacked) |
 | `npm run dist` | arm64 dmg/zip 作成 (Apple Silicon) |
@@ -704,10 +707,10 @@ Release のドラフトを作成します。
 - `electron` — デスクトップアプリフレームワーク
 - `react`, `react-dom` — UI
 - `zustand` — 状態管理 (persist middleware)
-- `opentype.js` — フォント解析 (メタデータ取得)
-- `harfbuzzjs` — HarfBuzz WASM (テキスト shaping)
+- `harfbuzzjs` — HarfBuzz WASM (テキスト shaping、cmap カバレッジ)
 - `tailwindcss`, `@tailwindcss/vite` — スタイリング
 - `@radix-ui/react-dialog` — モーダルダイアログ
+- `tailwind-merge` — `cn()` で競合する Tailwind クラスを解決
 - `electron-builder` — 配布パッケージ作成
 
 ### Python

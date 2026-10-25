@@ -1,15 +1,15 @@
 /**
- * @fileoverview Utility functions for merging Tailwind CSS class names using clsx and tailwind-merge.
+ * @fileoverview Utility for merging Tailwind CSS class names with tailwind-merge.
  */
 
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { twMerge, type ClassNameValue } from 'tailwind-merge';
 
 /**
- * Merges class names using clsx and tailwind-merge to resolve Tailwind CSS conflicts.
- * @param inputs - Class values to merge (strings, arrays, objects, etc.).
+ * Joins class names (falsy values are skipped) and resolves Tailwind CSS conflicts,
+ * letting later classes override earlier ones.
+ * @param inputs - Class names, falsy values, or nested arrays of them.
  * @returns The merged class name string.
  */
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
+export function cn(...inputs: ClassNameValue[]) {
+  return twMerge(...inputs);
 }

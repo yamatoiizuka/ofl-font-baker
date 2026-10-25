@@ -10,7 +10,7 @@
 │       │          │    ↕ undo/redo      VariableAxes          │
 │       ▼          ▼                       │                   │
 │  useFontLoader   GlyphPreview       ExportPanel              │
-│  (opentype.js)   (HarfBuzz WASM)        │                   │
+│  (font-source)   (HarfBuzz WASM)        │                   │
 │                  + tofu (.notdef)   Metadata Modal           │
 │                    rendering             │                   │
 │                          IPC: "merge:start"                  │
@@ -47,7 +47,8 @@
 User drops or clicks to select a font
   → webUtils.getPathForFile() to get the native file path
   → IPC "font:read-file" to read the ArrayBuffer
-  → Parse with opentype.js
+  → Read name / OS/2 / hhea / head / maxp / fvar directly from the sfnt
+    table directory (lib/font-source.ts); cmap coverage comes from HarfBuzz
   → Resolve family name: preferredFamily (nameID 16) takes priority
   → Build style name: preferredSubfamily (nameID 17) + usWeightClass + usWidthClass
   → Cache metadata (copyright, designer, license) for instant modal display
@@ -609,7 +610,7 @@ Electron inter-process communication between renderer and main. The renderer can
 
 ```bash
 npm test                                                # Full pytest suite (~18 min)
-python3 -m pytest python/tests/ -k LargeCID -v         # 65535-glyph CID test only (~10 min)
+python3 -m pytest python/tests/ -k LargeCID -v         # 65535-glyph CID test only (~3 min)
 ```
 
 Test code is split across four files under `python/tests/`:
@@ -663,7 +664,7 @@ Test code is split across four files under `python/tests/`:
 | ChainContext ClassDef rename | 1 | Inter Variable + Shippori `i.numr` no-crash |
 | Base-only merge | 2 | Merge without Latin, JP glyphs preserved |
 | WOFF2 output | 2 | WOFF2 generation, base-only WOFF2 |
-| Large CID font | 4 | 65535 glyphs, glyph count limit, cmap replacement, post format 3.0 |
+| Large CID font | 1 | One 65535-glyph merge: glyph count limit, cmap replacement, post format 3.0 |
 | Helpers (sfnt / style / outdir) | 8 | `detect_sfnt_ext`, `compute_style_name`, `prepare_output_dir` |
 | Package output | 12 | Manifest, font / woff2 / ofl / settings, overwrite, options |
 
@@ -680,6 +681,8 @@ PairPos data is not preserved.
 | `npm run start` | Build + launch Electron |
 | `npm run build` | Build JS/CSS |
 | `npm test` | Run pytest tests |
+| `npm run test:js` | Run Node unit tests (`scripts/tests/*.test.cjs`) |
+| `npm run test:electron` | Build, then run the Electron IPC / external-link security test |
 | `npm run python:build` | Generate PyInstaller binary |
 | `npm run pack` | Package app (unpacked) |
 | `npm run dist` | Build arm64 dmg/zip (Apple Silicon) |
@@ -717,10 +720,10 @@ Release.
 - `electron` — Desktop app framework
 - `react`, `react-dom` — UI
 - `zustand` — State management (persist middleware)
-- `opentype.js` — Font parsing (metadata extraction)
-- `harfbuzzjs` — HarfBuzz WASM (text shaping)
+- `harfbuzzjs` — HarfBuzz WASM (text shaping, cmap coverage)
 - `tailwindcss`, `@tailwindcss/vite` — Styling
 - `@radix-ui/react-dialog` — Modal dialogs
+- `tailwind-merge` — Resolves conflicting Tailwind classes in `cn()`
 - `electron-builder` — Distribution packaging
 
 ### Python

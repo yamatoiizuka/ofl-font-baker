@@ -29,6 +29,75 @@ export const DEFAULT_FONT_SIZE = 27;
 export const ZOOM_STEP = 4;
 
 /**
+ * Builds a variation axis map from a font source for HarfBuzz configuration.
+ * @param font - The font source to extract variation axes from, or null.
+ * @returns A record mapping axis tags to their current values.
+ */
+function buildVariations(font: FontSource | null): Record<string, number> {
+  if (!font?.isVariable) return {};
+  const vars: Record<string, number> = {};
+  for (const axis of font.axes) vars[axis.tag] = axis.currentValue;
+  return vars;
+}
+
+/**
+ * Returns a string key that changes whenever a font's axis values change.
+ * @param font - The font source, or null.
+ */
+function axisKey(font: FontSource | null): string {
+  return font?.axes.map((a) => `${a.tag}=${a.currentValue}`).join(',') ?? '';
+}
+
+/**
+ * Loads a HarfBuzz font handle for a font source. The file is only re-read when
+ * the path changes; axis changes are applied to the existing handle instantly.
+ * Handles are destroyed when replaced, cancelled, or on unmount.
+ * @param font - The font source to load, or null.
+ * @returns The loaded handle, or null while loading / when no font is set.
+ */
+function useFontHandle(font: FontSource | null): FontHandle | null {
+  const [handle, setHandle] = useState<FontHandle | null>(null);
+  const fontRef = useRef(font);
+  fontRef.current = font;
+  const path = font?.path ?? '';
+  const axes = axisKey(font);
+
+  useEffect(() => {
+    setHandle(null);
+    if (!path) return;
+    let cancelled = false;
+    let loaded: FontHandle | null = null;
+    (async () => {
+      try {
+        const hb = await getHB();
+        const buf = await window.electronAPI.readFontFile(path);
+        const h = await createFontHandle(hb, buf, buildVariations(fontRef.current));
+        if (cancelled) {
+          destroyFontHandle(h);
+        } else {
+          loaded = h;
+          setHandle(h);
+        }
+      } catch (e) {
+        console.error('HarfBuzz font load failed:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (loaded) destroyFontHandle(loaded);
+    };
+  }, [path]);
+
+  useEffect(() => {
+    if (handle && fontRef.current?.isVariable) {
+      handle.hbFont.setVariations(buildVariations(fontRef.current));
+    }
+  }, [axes, handle]);
+
+  return handle;
+}
+
+/**
  * Canvas-based font preview component with HarfBuzz text shaping, cursor editing,
  * selection support, and live variable axis updates.
  */
@@ -46,8 +115,8 @@ export const GlyphPreview: React.FC = () => {
   const setPreviewFontSize = useMergeStore((s) => s.setPreviewFontSize);
   const [resetHover, setResetHover] = useState(false);
   const [containerWidth, setContainerWidth] = useState(800);
-  const [latHandle, setLatHandle] = useState<FontHandle | null>(null);
-  const [jpHandle, setJpHandle] = useState<FontHandle | null>(null);
+  const latHandle = useFontHandle(latinFont);
+  const jpHandle = useFontHandle(baseFont);
   const [cache, setCache] = useState<ShapeCache | null>(null);
 
   // Selection state in refs — we control redraw manually
@@ -63,8 +132,6 @@ export const GlyphPreview: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hiddenRef = useRef<HTMLTextAreaElement>(null);
-  const latHandleRef = useRef<FontHandle | null>(null);
-  const jpHandleRef = useRef<FontHandle | null>(null);
 
   // We store the latest cache/font in refs so draw() always reads fresh values
   const cacheRef = useRef<ShapeCache | null>(null);
@@ -83,89 +150,8 @@ export const GlyphPreview: React.FC = () => {
   // cursorMoved() so blink re-draws don't fight user scrolling.
   const needsScrollRef = useRef(false);
 
-  /**
-   * Builds a variation axis map from a font source for HarfBuzz configuration.
-   * @param font - The font source to extract variation axes from, or null.
-   * @returns A record mapping axis tags to their current values.
-   */
-  function buildVariations(font: FontSource | null): Record<string, number> {
-    if (!font?.isVariable) return {};
-    const vars: Record<string, number> = {};
-    for (const axis of font.axes) vars[axis.tag] = axis.currentValue;
-    return vars;
-  }
-
-  // Keys: path-only for font loading, axis-only for variation updates
-  const latPathKey = latinFont?.path ?? '';
-  const jpPathKey = baseFont?.path ?? '';
-  const latAxisKey = latinFont?.axes.map((a) => `${a.tag}=${a.currentValue}`).join(',') ?? '';
-  const jpAxisKey = baseFont?.axes.map((a) => `${a.tag}=${a.currentValue}`).join(',') ?? '';
-
-  // --- Font loading (only on path change — expensive) ---
-  useEffect(() => {
-    let c = false;
-    if (latHandleRef.current) {
-      destroyFontHandle(latHandleRef.current);
-      latHandleRef.current = null;
-    }
-    setLatHandle(null);
-    if (!latinFont) return;
-    (async () => {
-      try {
-        const hb = await getHB();
-        const buf = await window.electronAPI.readFontFile(latinFont.path);
-        const h = await createFontHandle(hb, buf, buildVariations(latinFont));
-        if (!c) {
-          latHandleRef.current = h;
-          setLatHandle(h);
-        }
-      } catch (e) {
-        console.error('HB EN:', e);
-      }
-    })();
-    return () => {
-      c = true;
-    };
-  }, [latPathKey]);
-
-  useEffect(() => {
-    let c = false;
-    if (jpHandleRef.current) {
-      destroyFontHandle(jpHandleRef.current);
-      jpHandleRef.current = null;
-    }
-    setJpHandle(null);
-    if (!baseFont) return;
-    (async () => {
-      try {
-        const hb = await getHB();
-        const buf = await window.electronAPI.readFontFile(baseFont.path);
-        const h = await createFontHandle(hb, buf, buildVariations(baseFont));
-        if (!c) {
-          jpHandleRef.current = h;
-          setJpHandle(h);
-        }
-      } catch (e) {
-        console.error('HB JP:', e);
-      }
-    })();
-    return () => {
-      c = true;
-    };
-  }, [jpPathKey]);
-
-  // --- Axis variation update (instant — no file reload) ---
-  useEffect(() => {
-    if (latHandle && latinFont?.isVariable) {
-      latHandle.hbFont.setVariations(buildVariations(latinFont));
-    }
-  }, [latAxisKey, latHandle]);
-
-  useEffect(() => {
-    if (jpHandle && baseFont?.isVariable) {
-      jpHandle.hbFont.setVariations(buildVariations(baseFont));
-    }
-  }, [jpAxisKey, jpHandle]);
+  const latAxisKey = axisKey(latinFont);
+  const jpAxisKey = axisKey(baseFont);
 
   // --- Track container width for line wrapping ---
   useEffect(() => {
@@ -229,14 +215,20 @@ export const GlyphPreview: React.FC = () => {
     }, 0);
     const contentH = Math.max(container.clientHeight, numVisualLines * lineHeightPx + 40);
 
-    canvas.width = w * dpr;
-    canvas.height = contentH * dpr;
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${contentH}px`;
+    // Resizing reallocates the backing store, so only do it when the size
+    // actually changes (cursor blinks redraw at the same size).
+    const pixelW = Math.floor(w * dpr);
+    const pixelH = Math.floor(contentH * dpr);
+    if (canvas.width !== pixelW || canvas.height !== pixelH) {
+      canvas.width = pixelW;
+      canvas.height = pixelH;
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${contentH}px`;
+    }
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, contentH);
     ctx.fillStyle =
       getComputedStyle(document.documentElement).getPropertyValue('--color-foreground').trim() ||
