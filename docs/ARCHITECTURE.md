@@ -609,8 +609,8 @@ Electron inter-process communication between renderer and main. The renderer can
 ## Tests
 
 ```bash
-npm test                                                # Full pytest suite (~8 min)
-python3 -m pytest python/tests/ -k LargeCID -v         # 65535-glyph CID test only (~3 min)
+npm test                                                # Full pytest suite (~4 min)
+python3 -m pytest python/tests/ -k LargeCID -v         # 65535-glyph CID test only (~30 s)
 ```
 
 Test code is split across four files under `python/tests/`:
