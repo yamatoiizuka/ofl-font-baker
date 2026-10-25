@@ -595,8 +595,8 @@ Electron の renderer ↔ main プロセス間通信。renderer からファイ�
 ## テスト
 
 ```bash
-npm test                                                # フル pytest スイート (~8分)
-python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テストのみ (~3分)
+npm test                                                # フル pytest スイート (~4分)
+python3 -m pytest python/tests/ -k LargeCID -v         # 65535 グリフ CID テストのみ (~30秒)
 ```
 
 テストコードは `python/tests/` 以下の 4 ファイルに分かれています：

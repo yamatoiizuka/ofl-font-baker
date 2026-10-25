@@ -1102,49 +1102,6 @@ def build_private_dict_from_latin(lat_font: TTFont, scale: float, dy_offset: flo
     return out
 
 
-def recalc_cff_font_bbox(font: TTFont) -> None:
-    """Recompute ``TopDict.FontBBox`` from all CharStrings in a CFF font.
-
-    The CFF format has no per-glyph bounding box, only a single FontBBox
-    on the TopDict. fontTools does not refresh it automatically after
-    glyphs change, so this is the CFF-side analogue of ``recalcBounds``
-    on TT glyphs. Should be called after any pass that mutates outlines
-    (Latin glyph copy with scale, baseline transform, base TT→CFF).
-    """
-    if "CFF " not in font and "CFF2" not in font:
-        return
-    cff = font["CFF "].cff if "CFF " in font else font["CFF2"].cff
-    td = cff.topDictIndex[0]
-    cs_table = td.CharStrings
-
-    from fontTools.pens.boundsPen import BoundsPen
-    gs = font.getGlyphSet()
-
-    x_min = y_min = None
-    x_max = y_max = None
-    for gname in cs_table.keys():
-        try:
-            pen = BoundsPen(gs)
-            gs[gname].draw(pen)
-        except Exception:
-            continue
-        if pen.bounds is None:
-            continue
-        bx_min, by_min, bx_max, by_max = pen.bounds
-        if x_min is None or bx_min < x_min: x_min = bx_min
-        if y_min is None or by_min < y_min: y_min = by_min
-        if x_max is None or bx_max > x_max: x_max = bx_max
-        if y_max is None or by_max > y_max: y_max = by_max
-
-    if x_min is None:
-        td.FontBBox = [0, 0, 0, 0]
-    else:
-        td.FontBBox = [
-            int(round(x_min)), int(round(y_min)),
-            int(round(x_max)), int(round(y_max)),
-        ]
-
-
 # ---------------------------------------------------------------------------
 # TrueType glyph copy with transform
 # ---------------------------------------------------------------------------
@@ -2600,10 +2557,13 @@ def merge_feature_tables(lat_font: TTFont, jp_font: TTFont, merged: TTFont,
                         _strip_latin_first_from_pairpos(lookup, lat_glyph_names)
             continue
 
+        # A renamed Latin table is already a private deep copy, so the
+        # Latin lookups need not be copied a second time.
         _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
                            table_tag, lat_glyph_names,
                            lat_scale=lat_scale, lat_baseline=lat_baseline,
-                           preserved_lat_names=preserved_lat_names)
+                           preserved_lat_names=preserved_lat_names,
+                           copy_lat_lookups=not lat_name_map)
 
 
 def _filter_subordinate_lookups(table, lat_glyph_names: set):
@@ -3082,12 +3042,16 @@ def _build_lang_sys(jp_lang_sys, lat_lang_sys, script_tag, table_tag,
 def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
                        table_tag, lat_glyph_names: set,
                        lat_scale: float = 1.0, lat_baseline: float = 0,
-                       preserved_lat_names: set = None):
+                       preserved_lat_names: set = None,
+                       copy_lat_lookups: bool = True):
     """
     Merge Latin and Japanese GSUB/GPOS tables.
 
     lat_scale: total scale factor for Latin glyphs (user_scale * upm_ratio)
     lat_baseline: vertical offset for Latin glyphs (in merged UPM units)
+    copy_lat_lookups: deep-copy the Latin lookups before modifying them.
+        Pass ``False`` only when ``lat_table`` is already a private copy
+        that nothing else references (its lookups are moved into ``merged``).
     """
     from fontTools.ttLib.tables import otTables
 
@@ -3133,7 +3097,7 @@ def _merge_ot_table_v2(lat_table, jp_table, lat_font, jp_font, merged,
 
     # --- Step 2: Build merged lookup list ---
     lat_offset = len(filtered_jp_lookups)
-    lat_lookups_copy = copy.deepcopy(lat_lookups)
+    lat_lookups_copy = copy.deepcopy(lat_lookups) if copy_lat_lookups else list(lat_lookups)
 
     # Fix chaining context lookup references in Latin lookups.
     # Lookups like calt/frac/case use ChainContextSubst (type 6) or
@@ -5238,16 +5202,20 @@ def merge_fonts(config: dict) -> str:
             merged.setGlyphOrder(merged["glyf"].glyphOrder)
         else:
             original_order = merged.getGlyphOrder()
-            new_glyphs = [g for g in existing_names if g not in set(original_order)]
+            # Build the set once: rebuilding it per glyph made this quadratic
+            # (~100 s for a 65535-glyph CID base).
+            original_names = set(original_order)
+            new_glyphs = [g for g in existing_names if g not in original_names]
             final_order = original_order + sorted(new_glyphs)
             merged.setGlyphOrder(final_order)
             cff_td = merged["CFF "].cff.topDictIndex[0]
             cff_td.charset = final_order[:]
             # Patch FDSelect for duplicated collateral glyphs
             if hasattr(cff_td, '_pending_fd'):
+                final_gids = {g: i for i, g in enumerate(final_order)}
                 for gname, fd_idx in cff_td._pending_fd.items():
-                    if gname in final_order:
-                        gid = final_order.index(gname)
+                    gid = final_gids.get(gname)
+                    if gid is not None:
                         while len(cff_td.FDSelect) <= gid:
                             cff_td.FDSelect.append(0)
                         cff_td.FDSelect[gid] = fd_idx
@@ -5427,10 +5395,13 @@ def merge_fonts(config: dict) -> str:
         # The authoritative glyph list is glyf.glyphOrder (managed by glyf.__setitem__)
         canonical_order = list(glyf.glyphOrder)
 
-        # Ensure every glyph in glyf.glyphs is in glyf.glyphOrder
-        for gname in list(glyf.glyphs.keys()):
-            if gname not in canonical_order:
+        # Ensure every glyph in glyf.glyphs is in glyf.glyphOrder (set lookup:
+        # a list scan here was quadratic in the glyph count)
+        known = set(canonical_order)
+        for gname in glyf.glyphs:
+            if gname not in known:
                 canonical_order.append(gname)
+                known.add(gname)
         # Note: 65535 limit should not be hit here because cmap-based
         # replacement reuses existing glyph slots instead of adding new ones.
 
@@ -5501,16 +5472,9 @@ def merge_fonts(config: dict) -> str:
             for _g in _go_from_cff:
                 if _g not in _vmtx.metrics:
                     _vmtx.metrics[_g] = (_upm, 0)
-    # Recompute CFF FontBBox after all outline mutations. CFF has no
-    # per-glyph bbox, only TopDict.FontBBox; fontTools will not refresh
-    # it on its own. Skip for very large CID fonts where the walk would
-    # be slow and the original FontBBox is still valid.
-    if "CFF " in merged and "glyf" not in merged:
-        _cff = merged["CFF "]
-        _td = _cff.cff.topDictIndex[0]
-        _n = len(_td.CharStrings) if hasattr(_td, "CharStrings") else 0
-        if _n < 60000:
-            recalc_cff_font_bbox(merged)
+    # CFF FontBBox: no explicit pass needed. TTFont.save() (recalcBBoxes is
+    # on by default) rebuilds TopDict.FontBBox from every CharString via
+    # TopDict.recalcFontBBox(), so a walk here would be overwritten anyway.
     # Recompute maxp sub-fields for TrueType output. fontTools' save()
     # refreshes numGlyphs but does not walk glyf to refresh the per-glyph
     # maxima, so adding new Latin glyphs would otherwise leave maxp
@@ -5611,21 +5575,24 @@ def merge_fonts(config: dict) -> str:
         }
     _save_with_adobe_kern_compat(merged, output_path, output_lat_glyph_names)
 
-    font_for_woff2 = merged
     if "glyf" in merged and hinting_policy == "ttfautohint":
         progress("writing", 9, f"4/{S} \u00b7 Applying TrueType autohint...")
         _apply_ttfautohint(output_path)
-        if paths.get("woff2"):
-            font_for_woff2 = TTFont(output_path)
 
     # Step 14: Write WOFF2
     woff2_out = paths.get("woff2")
     if woff2_out:
         progress("writing", 10, f"5/{S} \u00b7 Exporting .woff2...")
-        font_for_woff2.flavor = "woff2"
-        font_for_woff2.save(woff2_out)
-        if font_for_woff2 is not merged:
-            font_for_woff2.close()
+        # Re-encode the file just written rather than recompiling ``merged``:
+        # untouched tables are copied as-is, so glyf/CFF are not compiled
+        # (nor CFF bounds recomputed) a second time, and the WOFF2 carries
+        # exactly the same tables as the TTF/OTF.
+        woff2_font = TTFont(output_path, recalcBBoxes=False, recalcTimestamp=False)
+        try:
+            woff2_font.flavor = "woff2"
+            woff2_font.save(woff2_out)
+        finally:
+            woff2_font.close()
 
     # Path-mode artifact writing
     ofl_out = paths.get("ofl")
