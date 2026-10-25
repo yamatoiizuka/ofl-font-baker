@@ -3,13 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const vm = require('node:vm');
-const ts = require('typescript');
-const exportsObject = {};
-vm.runInNewContext(ts.transpileModule(fs.readFileSync('app/main/file-authority.ts', 'utf8'), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, esModuleInterop: true, target: ts.ScriptTarget.ES2020 },
-}).outputText, { exports: exportsObject, require, Buffer });
-const { FileAuthority } = exportsObject;
+const loadTs = require('./load-ts.cjs');
+const { FileAuthority } = loadTs('app/main/file-authority.ts');
 function setup(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'font-authority-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
