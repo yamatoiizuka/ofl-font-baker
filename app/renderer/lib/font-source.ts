@@ -65,6 +65,13 @@ const NAME = {
 
 type Tables = Map<string, DataView>;
 
+/** Raised for truncated or structurally inconsistent font files. */
+class DamagedFontError extends Error {
+  constructor() {
+    super('The font file is damaged or truncated');
+  }
+}
+
 /**
  * Reads the sfnt table directory into tag → DataView slices.
  * @param buffer - The raw font file data.
@@ -76,7 +83,11 @@ function readTables(buffer: ArrayBuffer): Tables {
   if (tag === 0x774f4646 /* 'wOFF' */ || tag === 0x774f4632 /* 'wOF2' */) {
     throw new Error('WOFF fonts are not supported; use .otf or .ttf');
   }
+  if (tag !== 0x00010000 && tag !== 0x4f54544f /* 'OTTO' */ && tag !== 0x74727565 /* 'true' */) {
+    throw new Error('Not a valid OpenType font');
+  }
   const numTables = view.getUint16(4);
+  if (12 + numTables * 16 > buffer.byteLength) throw new DamagedFontError();
   const tables: Tables = new Map();
   for (let i = 0; i < numTables; i++) {
     const rec = 12 + i * 16;
@@ -88,8 +99,9 @@ function readTables(buffer: ArrayBuffer): Tables {
     );
     const offset = view.getUint32(rec + 8);
     const length = view.getUint32(rec + 12);
-    if (offset + length <= buffer.byteLength)
-      tables.set(name, new DataView(buffer, offset, length));
+    // A table running past the end of the file means the font is truncated.
+    if (offset + length > buffer.byteLength) throw new DamagedFontError();
+    tables.set(name, new DataView(buffer, offset, length));
   }
   if (!tables.has('head') || !tables.has('maxp')) throw new Error('Not a valid OpenType font');
   return tables;
@@ -99,11 +111,59 @@ const utf16 = new TextDecoder('utf-16be');
 const macRoman = new TextDecoder('macintosh');
 
 /**
+ * Reads the language tags of the ltag table, which Unicode-platform name
+ * records reference by index.
+ * @param table - The ltag table, if present.
+ */
+function readLanguageTags(table: DataView | undefined): string[] {
+  if (!table) return [];
+  const count = table.getUint32(8);
+  const tags: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const offset = table.getUint16(12 + i * 4);
+    const length = table.getUint16(14 + i * 4);
+    if (offset + length > table.byteLength) throw new DamagedFontError();
+    tags.push(
+      String.fromCharCode(...new Uint8Array(table.buffer, table.byteOffset + offset, length)),
+    );
+  }
+  return tags;
+}
+
+type NameLanguage = 'en' | 'ja' | 'other';
+
+/**
+ * Classifies a name record's language, ranking records of the same language
+ * (lower wins): Windows US English / Japanese, then Mac, then the rest.
+ */
+function classifyName(
+  platform: number,
+  lang: number,
+  languageTags: string[],
+): [NameLanguage, number] {
+  if (platform === 3) {
+    if (lang === 0x0409) return ['en', 0];
+    if (lang === 0x0411) return ['ja', 0];
+    if ((lang & 0x3ff) === 0x09) return ['en', 2];
+  } else if (platform === 1) {
+    if (lang === 0) return ['en', 1];
+    if (lang === 11) return ['ja', 1];
+  } else if (platform === 0) {
+    const tag = (languageTags[lang] ?? '').toLowerCase();
+    if (tag === 'en' || tag.startsWith('en-')) return ['en', 3];
+    if (tag === 'ja' || tag.startsWith('ja-')) return ['ja', 2];
+  }
+  return ['other', 0];
+}
+
+/**
  * Parses the name table and returns a lookup preferring English, then Japanese,
  * then whatever record exists for the requested ID.
+ * @param table - The name table, if present.
+ * @param languageTags - Language tags from the ltag table.
  */
-function readNames(table: DataView | undefined): (id: number) => string {
-  const byId = new Map<number, { en?: string; ja?: string; other?: string }>();
+function readNames(table: DataView | undefined, languageTags: string[]): (id: number) => string {
+  const byId = new Map<number, Partial<Record<NameLanguage, { text: string; rank: number }>>>();
   if (table) {
     const count = table.getUint16(2);
     const storage = table.getUint16(4);
@@ -115,7 +175,7 @@ function readNames(table: DataView | undefined): (id: number) => string {
       const id = table.getUint16(rec + 6);
       const length = table.getUint16(rec + 8);
       const start = storage + table.getUint16(rec + 10);
-      if (start + length > table.byteLength) continue;
+      if (start + length > table.byteLength) throw new DamagedFontError();
       const bytes = new Uint8Array(table.buffer, table.byteOffset + start, length);
       let text: string;
       if (platform === 0 || platform === 3) text = utf16.decode(bytes);
@@ -125,21 +185,15 @@ function readNames(table: DataView | undefined): (id: number) => string {
 
       const entry = byId.get(id) ?? {};
       byId.set(id, entry);
-      // Windows records win over Mac ones for the same language.
-      if ((platform === 3 && lang === 0x0409) || (platform === 1 && lang === 0 && !entry.en)) {
-        entry.en = text;
-      } else if (platform === 3 && (lang & 0x3ff) === 0x09) {
-        entry.en ??= text;
-      } else if ((platform === 3 && lang === 0x0411) || (platform === 1 && lang === 11)) {
-        if (platform === 3 || !entry.ja) entry.ja = text;
-      } else {
-        entry.other ??= text;
-      }
+      const [language, rank] = classifyName(platform, lang, languageTags);
+      const current = entry[language];
+      // Keep the best-ranked record; the first one wins ties.
+      if (!current || rank < current.rank) entry[language] = { text, rank };
     }
   }
   return (id) => {
     const e = byId.get(id);
-    return e?.en || e?.ja || e?.other || '';
+    return e?.en?.text || e?.ja?.text || e?.other?.text || '';
   };
 }
 
@@ -153,6 +207,9 @@ function readAxes(fvar: DataView | undefined, name: (id: number) => string): Var
   const axesOffset = fvar.getUint16(4);
   const axisCount = fvar.getUint16(8);
   const axisSize = fvar.getUint16(10);
+  if (axisSize < 20 || axesOffset + axisCount * axisSize > fvar.byteLength) {
+    throw new DamagedFontError();
+  }
   const fixed = (at: number) => fvar.getInt32(at) / 65536;
   const axes: VariableAxis[] = [];
   for (let i = 0; i < axisCount; i++) {
@@ -220,8 +277,25 @@ export function describeFont(
   role: FontRole,
   hasCodepoint: (cp: number) => boolean,
 ): FontSource {
+  try {
+    return buildFontSource(buffer, path, role, hasCodepoint);
+  } catch (err) {
+    // Out-of-bounds reads inside a table also mean a damaged file.
+    throw err instanceof RangeError ? new DamagedFontError() : err;
+  }
+}
+
+/**
+ * Reads the tables and assembles the FontSource; see describeFont.
+ */
+function buildFontSource(
+  buffer: ArrayBuffer,
+  path: string,
+  role: FontRole,
+  hasCodepoint: (cp: number) => boolean,
+): FontSource {
   const tables = readTables(buffer);
-  const name = readNames(tables.get('name'));
+  const name = readNames(tables.get('name'), readLanguageTags(tables.get('ltag')));
   const os2 = tables.get('OS/2');
   const hhea = tables.get('hhea');
   const unitsPerEm = tables.get('head')!.getUint16(18);
