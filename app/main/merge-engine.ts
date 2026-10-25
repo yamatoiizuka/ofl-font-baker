@@ -9,13 +9,6 @@ import fs from 'fs';
 import { MergeConfig, MergeProgress, ExportManifest } from '@/shared/types';
 
 /**
- * Resolve the merge engine executable path.
- *
- * Priority:
- * 1. Bundled PyInstaller binary in resources/ (standalone distribution)
- * 2. Python script via python3 (development)
- */
-/**
  * Resolves the merge engine executable, preferring a bundled PyInstaller binary
  * and falling back to python3 with the script in development.
  * @returns An object with the command and arguments to spawn the merge engine.
@@ -44,13 +37,6 @@ function resolveMergeEngine(): { command: string; args: string[] } {
   return { command: 'python3', args: [pythonScript] };
 }
 
-/**
- * Spawns the merge engine subprocess, sends the merge config as JSON via stdin,
- * and streams progress updates from stderr.
- * @param config - The merge configuration specifying fonts, output path, and settings.
- * @param onProgress - Callback invoked with parsed progress updates from the engine.
- * @returns A promise resolving to the stdout output (typically the output file path).
- */
 let activeProc: ReturnType<typeof spawn> | null = null;
 
 /**
@@ -63,6 +49,13 @@ export function abortMerge(): void {
   }
 }
 
+/**
+ * Spawns the merge engine subprocess, sends the merge config as JSON via stdin,
+ * and streams progress updates from stderr.
+ * @param config - The merge configuration specifying fonts, output path, and settings.
+ * @param onProgress - Callback invoked with parsed progress updates from the engine.
+ * @returns A promise resolving to the export manifest printed on stdout.
+ */
 export function runMerge(
   config: MergeConfig,
   onProgress: (progress: MergeProgress) => void,
@@ -113,25 +106,33 @@ export function runMerge(
 
     let stdout = '';
     let stderr = '';
+    // Progress is newline-delimited JSON; a line may span several chunks.
+    let pending = '';
+    proc.stdout.setEncoding('utf8');
+    proc.stderr.setEncoding('utf8');
 
-    proc.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString();
+    const handleLine = (line: string) => {
+      if (!line) return;
+      try {
+        onProgress(JSON.parse(line) as MergeProgress);
+      } catch {
+        stderr += line + '\n';
+      }
+    };
+
+    proc.stdout.on('data', (data: string) => {
+      stdout += data;
     });
 
-    proc.stderr.on('data', (data: Buffer) => {
-      const lines = data.toString().split('\n').filter(Boolean);
-      for (const line of lines) {
-        try {
-          const progress: MergeProgress = JSON.parse(line);
-          onProgress(progress);
-        } catch {
-          stderr += line + '\n';
-        }
-      }
+    proc.stderr.on('data', (data: string) => {
+      const lines = (pending + data).split('\n');
+      pending = lines.pop() ?? '';
+      lines.forEach(handleLine);
     });
 
     proc.on('close', (code, signal) => {
-      activeProc = null;
+      handleLine(pending);
+      if (activeProc === proc) activeProc = null;
       if (code === 0) {
         try {
           const manifest: ExportManifest = JSON.parse(stdout.trim());
