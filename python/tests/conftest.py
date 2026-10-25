@@ -1,6 +1,7 @@
 """Shared paths, helpers, and merge harnesses for the merge-engine tests."""
 
 import io
+import json
 import os
 import sys
 import tempfile
@@ -53,39 +54,51 @@ TIKTOK_SANS = os.path.join(FONTS, "TikTok_Sans", "static", "TikTokSans-Regular.t
 # Merge harnesses
 # ---------------------------------------------------------------------------
 
+# Merges are by far the slowest part of the suite and many tests inspect the
+# same configuration, so outputs are memoised (as bytes) per config for the
+# whole session. Every call still gets its own TTFont, so tests may mutate it.
+_MERGE_CACHE: dict = {}
+
+
+def _source(path, scale=1.0, baseline=0, axes=()):
+    """Build a font-source config entry; ``axes`` is ``(tag, value)`` pairs."""
+    return {
+        "path": path,
+        "scale": scale,
+        "baselineOffset": baseline,
+        "axes": [{"tag": tag, "currentValue": value} for tag, value in axes],
+    }
+
+
+def _run_merge(config, suffix):
+    """Merge ``config`` (without its export section) and return a fresh TTFont."""
+    key = json.dumps(config, sort_keys=True)
+    data = _MERGE_CACHE.get(key)
+    if data is None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "merged" + suffix)
+            mf.merge_fonts({**config, "export": {"path": {"font": out}}})
+            with open(out, "rb") as fp:
+                data = fp.read()
+        _MERGE_CACHE[key] = data
+    return TTFont(io.BytesIO(data))
+
+
 def _merge(lat_scale=1.0, lat_baseline=0, jp_scale=1.0, jp_baseline=0,
            lat_wght=400, lat_opsz=14, jp_wght=400, output_weight=None,
            output_upm=None):
     """Run a TTF Inter-subset + TTF Noto-subset merge and return the TTFont."""
-    out = tempfile.mktemp(suffix=".ttf")
     output = {"familyName": "Test"}
     if output_weight is not None:
         output["weight"] = output_weight
     if output_upm is not None:
         output["upm"] = output_upm
-    config = {
-        "subFont": {
-            "path": EN_VAR,
-            "scale": lat_scale,
-            "baselineOffset": lat_baseline,
-            "axes": [
-                {"tag": "opsz", "currentValue": lat_opsz},
-                {"tag": "wght", "currentValue": lat_wght},
-            ],
-        },
-        "baseFont": {
-            "path": JP_VAR,
-            "scale": jp_scale,
-            "baselineOffset": jp_baseline,
-            "axes": [{"tag": "wght", "currentValue": jp_wght}],
-        },
+    return _run_merge({
+        "subFont": _source(EN_VAR, lat_scale, lat_baseline,
+                           [("opsz", lat_opsz), ("wght", lat_wght)]),
+        "baseFont": _source(JP_VAR, jp_scale, jp_baseline, [("wght", jp_wght)]),
         "output": output,
-        "export": {"path": {"font": out}},
-    }
-    mf.merge_fonts(config)
-    font = TTFont(out)
-    os.remove(out)
-    return font
+    }, ".ttf")
 
 
 def _merge_with_meta(output_family="TestMeta", output_copyright="",
@@ -93,118 +106,61 @@ def _merge_with_meta(output_family="TestMeta", output_copyright="",
                      output_manufacturer=None, output_manufacturer_url=None,
                      output_trademark=None):
     """Run merge with metadata options and return the TTFont."""
-    out = tempfile.mktemp(suffix=".ttf")
-    output = {
-        "familyName": output_family,
-        "copyright": output_copyright,
+    output = {"familyName": output_family, "copyright": output_copyright}
+    optional = {
+        "manufacturer": output_manufacturer,
+        "manufacturerURL": output_manufacturer_url,
+        "trademark": output_trademark,
+        "postScriptName": output_ps_name,
+        "version": output_version,
     }
-    if output_manufacturer is not None:
-        output["manufacturer"] = output_manufacturer
-    if output_manufacturer_url is not None:
-        output["manufacturerURL"] = output_manufacturer_url
-    if output_trademark is not None:
-        output["trademark"] = output_trademark
-    if output_ps_name is not None:
-        output["postScriptName"] = output_ps_name
-    if output_version is not None:
-        output["version"] = output_version
+    output.update({k: v for k, v in optional.items() if v is not None})
     config = {
-        "subFont": {
-            "path": EN_VAR,
-            "scale": 1.0,
-            "baselineOffset": 0,
-            "axes": [
-                {"tag": "opsz", "currentValue": 14},
-                {"tag": "wght", "currentValue": 400},
-            ],
-        },
-        "baseFont": {
-            "path": JP_VAR,
-            "scale": 1.0,
-            "baselineOffset": 0,
-            "axes": [{"tag": "wght", "currentValue": 400}],
-        },
+        "subFont": _source(EN_VAR, axes=[("opsz", 14), ("wght", 400)]),
+        "baseFont": _source(JP_VAR, axes=[("wght", 400)]),
         "output": output,
-        "export": {"path": {"font": out}},
     }
     if app_version is not None:
         config["appVersion"] = app_version
-    mf.merge_fonts(config)
-    font = TTFont(out)
-    for f in (out, out.replace(".ttf", ".woff2")):
-        if os.path.exists(f):
-            os.remove(f)
-    return font
+    return _run_merge(config, ".ttf")
 
 
-def _merge_otf_jp(**kwargs):
+def _merge_otf_jp(lat_scale=1.0, lat_baseline=0, jp_scale=1.0, jp_baseline=0):
     """Run merge with the CFF CID Japanese subset as base."""
     if not os.path.exists(JP_OTF):
         pytest.skip("NotoSansCJKjp-subset.otf not found")
-    out = tempfile.mktemp(suffix=".otf")
-    config = {
-        "subFont": {
-            "path": EN_CFF,
-            "scale": kwargs.get("lat_scale", 1.0),
-            "baselineOffset": kwargs.get("lat_baseline", 0),
-            "axes": [],
-        },
-        "baseFont": {
-            "path": JP_OTF,
-            "scale": kwargs.get("jp_scale", 1.0),
-            "baselineOffset": kwargs.get("jp_baseline", 0),
-            "axes": [],
-        },
+    return _run_merge({
+        "subFont": _source(EN_CFF, lat_scale, lat_baseline),
+        "baseFont": _source(JP_OTF, jp_scale, jp_baseline),
         "output": {"familyName": "TestOTF"},
-        "export": {"path": {"font": out}},
-    }
-    mf.merge_fonts(config)
-    font = TTFont(out)
-    os.remove(out)
-    return font
-
-
-_MERGE_CFF_CACHE: dict = {}
+    }, ".otf")
 
 
 def _merge_cff_to_cff(lat_scale=1.0, lat_baseline=0):
-    """Merge Inter (CFF) into Noto CJK (CFF base) — CFF→CFF all the way.
-
-    The CID merge is expensive, so the result is memoised by
-    ``(lat_scale, lat_baseline)`` across the whole test session. Tests
-    should treat the returned font as read-only.
-    """
-    key = (lat_scale, lat_baseline)
-    if key in _MERGE_CFF_CACHE:
-        return _MERGE_CFF_CACHE[key]
-    out = tempfile.mktemp(suffix=".otf")
-    config = {
-        "subFont": {
-            "path": EN_CFF,
-            "scale": lat_scale,
-            "baselineOffset": lat_baseline,
-            "axes": [],
-        },
-        "baseFont": {
-            "path": JP_OTF,
-            "scale": 1.0,
-            "baselineOffset": 0,
-            "axes": [],
-        },
+    """Merge Inter (CFF) into Noto CJK (CFF base) — CFF→CFF all the way."""
+    return _run_merge({
+        "subFont": _source(EN_CFF, lat_scale, lat_baseline),
+        "baseFont": _source(JP_OTF),
         "output": {"familyName": "TestHint"},
-        "export": {"path": {"font": out}},
-    }
-    mf.merge_fonts(config)
-    # Load into memory so the on-disk artefacts can go away immediately.
-    with open(out, "rb") as fp:
-        data = fp.read()
-    os.remove(out)
-    woff2 = out.replace(".otf", ".woff2")
-    if os.path.exists(woff2):
-        os.remove(woff2)
-    font = TTFont(io.BytesIO(data))
-    _MERGE_CFF_CACHE[key] = font
-    return font
+    }, ".otf")
+
+
+def _merge_full(exclude_codepoints=None):
+    """Merge full Inter (variable TTF) into static Noto Sans JP.
+
+    Shared by the glyph-name collision, shared-glyph collateral and
+    excludeCodepoints suites, which all need full-coverage sources.
+    """
+    if not os.path.exists(EN_FULL) or not os.path.exists(JP_STATIC):
+        pytest.skip("Full Inter / Noto Sans JP fonts not found")
+    sub = _source(EN_FULL, axes=[("opsz", 14), ("wght", 400)])
+    if exclude_codepoints is not None:
+        sub["excludeCodepoints"] = exclude_codepoints
+    return _run_merge({
+        "subFont": sub,
+        "baseFont": _source(JP_STATIC),
+        "output": {"familyName": "TestFull"},
+    }, ".ttf")
 
 
 # ---------------------------------------------------------------------------

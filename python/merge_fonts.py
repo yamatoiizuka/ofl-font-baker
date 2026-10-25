@@ -34,7 +34,7 @@ import tempfile
 from typing import NamedTuple
 
 from fontTools.misc.timeTools import timestampNow
-from fontTools.ttLib import TTFont
+from fontTools.ttLib import TTFont, newTable
 from fontTools.ttLib.tables.otBase import USE_HARFBUZZ_REPACKER
 from fontTools.pens.pointPen import SegmentToPointPen
 from fontTools.pens.recordingPen import RecordingPen
@@ -92,18 +92,17 @@ def _has_extension_non_latin_kern(font: TTFont, lat_glyph_names: set) -> bool:
 
 def _save_with_adobe_kern_compat(font: TTFont, output_path: str,
                                  lat_glyph_names: set):
-    """Save normally, then fall back only if hb.repack hides CJK kern."""
+    """Save once, falling back to the pure-Python serializer if hb.repack hides CJK kern.
+
+    Only GPOS is compiled to probe hb.repack's output, so the fallback no
+    longer pays for compiling glyf/CFF (by far the slowest tables) twice.
+    """
+    if "GPOS" in font:
+        probe = newTable("GPOS")
+        probe.decompile(font["GPOS"].compile(font), font)
+        if _has_extension_non_latin_kern({"GPOS": probe}, lat_glyph_names):
+            _disable_harfbuzz_repacker(font)
     font.save(output_path)
-
-    saved = TTFont(output_path)
-    try:
-        needs_fallback = _has_extension_non_latin_kern(saved, lat_glyph_names)
-    finally:
-        saved.close()
-
-    if needs_fallback:
-        _disable_harfbuzz_repacker(font)
-        font.save(output_path)
 
 
 # ---------------------------------------------------------------------------

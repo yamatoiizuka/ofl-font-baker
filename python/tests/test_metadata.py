@@ -548,7 +548,9 @@ class TestMetadataCorrectness:
         """head.created is refreshed at merge time, not inherited from the base."""
         from fontTools.misc.timeTools import timestampNow
         before = timestampNow()
-        m = _merge_with_meta()
+        # A family name no other test uses, so the merge is not served from
+        # the session cache with an older timestamp.
+        m = _merge_with_meta(output_family="TestFreshTimestamp")
         after = timestampNow()
         assert before <= m["head"].created <= after + 60
         assert before <= m["head"].modified <= after + 60

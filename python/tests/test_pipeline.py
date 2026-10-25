@@ -9,7 +9,8 @@ import pytest
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 
-from conftest import EN_FULL, EN_VAR, FONTS, JP_OTF_FULL, JP_VAR, _merge_otf_jp
+from conftest import (EN_FULL, EN_VAR, FONTS, JP_OTF_FULL, JP_VAR, _merge, _merge_otf_jp,
+                      _run_merge, _source)
 
 import merge_fonts as mf
 
@@ -229,82 +230,53 @@ class TestWOFF2Output:
 class TestLargeCIDFont:
     """Verify merge of a 65535-glyph CID font with a Latin font."""
 
-    def _merge_large(self):
-        out = tempfile.mktemp(suffix=".otf")
-        config = {
-            "subFont": {
-                "path": EN_VAR,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [],
-            },
-            "baseFont": {
-                "path": JP_OTF_FULL,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [],
-            },
+    def test_large_cid_merge(self):
+        """One merge (~3 min) checks the glyph budget, cmap replacement and post format."""
+        font = _run_merge({
+            "subFont": _source(EN_VAR),
+            "baseFont": _source(JP_OTF_FULL),
             "output": {"familyName": "LargeCIDTest"},
-            "export": {"path": {"font": out}},
-        }
-        mf.merge_fonts(config)
-        return out
-
-    def test_merge_succeeds(self):
-        """65535-glyph CID font merges without error."""
-        out = self._merge_large()
-        try:
-            font = TTFont(out)
-            assert len(font.getGlyphOrder()) <= 65535
-        finally:
-            for f in (out, out.replace(".otf", ".woff2")):
-                if os.path.exists(f):
-                    os.remove(f)
-
-    def test_glyph_count_not_exceed_limit(self):
-        """Merged glyph count does not exceed 65535."""
-        out = self._merge_large()
-        try:
-            font = TTFont(out)
-            assert len(font.getGlyphOrder()) == 65535
-        finally:
-            for f in (out, out.replace(".otf", ".woff2")):
-                if os.path.exists(f):
-                    os.remove(f)
-
-    def test_latin_glyph_replaced_via_cmap(self):
-        """Latin glyphs are replaced via cmap."""
-        out = self._merge_large()
-        try:
-            font = TTFont(out)
-            cmap = font.getBestCmap()
-            assert 0x0041 in cmap, "U+0041 (A) not in merged cmap"
-            gs = font.getGlyphSet()
-            gname = cmap[0x0041]
-            bp = BoundsPen(gs)
-            gs[gname].draw(bp)
-            assert bp.bounds is not None, "Latin A has no outline in merged font"
-        finally:
-            for f in (out, out.replace(".otf", ".woff2")):
-                if os.path.exists(f):
-                    os.remove(f)
-
-    def test_post_format_3(self):
-        """Large fonts use post format 3.0."""
-        out = self._merge_large()
-        try:
-            font = TTFont(out)
-            assert font["post"].formatType == 3.0
-        finally:
-            for f in (out, out.replace(".otf", ".woff2")):
-                if os.path.exists(f):
-                    os.remove(f)
-
+        }, ".otf")
+        # Glyph count is capped at exactly the 65535 limit.
+        assert len(font.getGlyphOrder()) == 65535
+        # Latin glyphs are replaced via cmap and keep their outlines.
+        cmap = font.getBestCmap()
+        assert 0x0041 in cmap, "U+0041 (A) not in merged cmap"
+        gs = font.getGlyphSet()
+        bp = BoundsPen(gs)
+        gs[cmap[0x0041]].draw(bp)
+        assert bp.bounds is not None, "Latin A has no outline in merged font"
+        # Large fonts use post format 3.0.
+        assert font["post"].formatType == 3.0
 
 
 # ---------------------------------------------------------------------------
 # Utility helpers (detect_sfnt_ext, compute_style_name, prepare_output_dir)
 # ---------------------------------------------------------------------------
+
+class TestAdobeKernCompatSave:
+    """The final save probes hb.repack on GPOS alone and writes the font once."""
+
+    @pytest.mark.parametrize("hides_kern", [False, True])
+    def test_single_save_and_repacker_choice(self, tmp_path, monkeypatch, hides_kern):
+        from fontTools.ttLib.tables.otBase import USE_HARFBUZZ_REPACKER
+        font = _merge()
+        assert "GPOS" in font
+        probed = []
+        monkeypatch.setattr(mf, "_has_extension_non_latin_kern",
+                            lambda f, names: probed.append(f["GPOS"]) or hides_kern)
+        saves = []
+        real_save = font.save
+        monkeypatch.setattr(font, "save", lambda path: saves.append(path) or real_save(path))
+
+        out = str(tmp_path / "out.ttf")
+        mf._save_with_adobe_kern_compat(font, out, set())
+
+        assert len(probed) == 1 and probed[0] is not font["GPOS"]
+        assert saves == [out]
+        assert font.cfg.get(USE_HARFBUZZ_REPACKER, True) is (not hides_kern)
+        assert "GPOS" in TTFont(out)
+
 
 class TestDetectSfntExt:
 
