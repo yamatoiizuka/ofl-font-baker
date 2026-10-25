@@ -193,13 +193,10 @@ const NO_START = new Set(
     .split('')
     .concat([',', '.', '!', '?', ')', ']', '}', '>', ';', ':']),
 );
-// Characters that cannot end a line (opening brackets, etc.)
-const NO_END = new Set('（「『【〔｛〈《≪'.split('').concat(['(', '[', '{', '<']));
 
 /**
- * Shape text and cache the results, with optional line wrapping.
- * maxWidth: available width in normalized units (pixels / fontSize).
- * If 0 or not given, no wrapping.
+ * Shape text line by line and cache the positioned glyph paths.
+ * Wrapping happens at draw time (see drawCached), so the cache is width-independent.
  */
 export async function shapeText(
   text: string,
@@ -217,10 +214,7 @@ export async function shapeText(
       charCounts: [],
     };
 
-  const extents = baseHandle.hbFont.hExtents;
-  const ascender = extents?.ascender ?? baseHandle.upem * 0.88;
-  const descender = extents?.descender ?? -(baseHandle.upem * 0.12);
-  const lineGap = extents?.lineGap ?? baseHandle.upem * 0.1;
+  const ascender = baseHandle.hbFont.hExtents?.ascender ?? baseHandle.upem * 0.88;
   const lineHeight = baseHandle.upem * 1.6;
 
   const pathCache = new Map<string, Path2D>();
@@ -291,7 +285,7 @@ export async function shapeText(
     });
   }
 
-  const charCounts = text.split('\n').map((l) => l.length);
+  const charCounts = inputLines.map((l) => l.length);
   return { lines, lineHeight, ascender, baseUpem: baseHandle.upem, charCounts };
 }
 
@@ -346,8 +340,12 @@ export function drawCached(
   const selMin = hasSelection ? Math.min(selStart!, selEnd!) : -1;
   const selMax = hasSelection ? Math.max(selStart!, selEnd!) : -1;
 
+  // Resolve theme colors once per draw rather than once per glyph.
+  const rootStyle = getComputedStyle(document.documentElement);
+  const baselineColor = rootStyle.getPropertyValue('--color-border').trim() || 'rgba(0, 0, 0, 0.2)';
+  const highlightColor = rootStyle.getPropertyValue('--color-highlight').trim();
+
   const edges: CharEdge[] = [];
-  let absIdx = 0;
   let visualLine = 0;
   // Running start offset (in source characters) of the current source line
   // within the full text. Used to translate per-glyph cluster indices into
@@ -360,9 +358,7 @@ export function drawCached(
   function drawBaseline() {
     if (showBaseline) {
       ctx.save();
-      ctx.strokeStyle =
-        getComputedStyle(document.documentElement).getPropertyValue('--color-border').trim() ||
-        'rgba(0, 0, 0, 0.2)';
+      ctx.strokeStyle = baselineColor;
       ctx.lineWidth = 0.5;
       ctx.beginPath();
       ctx.moveTo(0, y);
@@ -428,7 +424,6 @@ export function drawCached(
         }
         // If the current glyph is a half-width space at the wrap point, skip it
         if (ch === ' ') {
-          absIdx++;
           edges.push({ x, y, lineIndex: visualLine, charIndex: lineCharOffset + (ci ?? gi) + 1 });
           drawCursor();
           y += lineHeightPx;
@@ -442,14 +437,6 @@ export function drawCached(
             charIndex: lineCharOffset + (charIndices?.[gi + 1] ?? srcText.length),
           });
           continue;
-        }
-        // Kinsoku: check if previous char can't end a line
-        if (gi > 0) {
-          const prevCi = charIndices?.[gi - 1];
-          const prevCh = prevCi != null ? srcText[prevCi] : '';
-          if (prevCh && NO_END.has(prevCh)) {
-            // Just break here
-          }
         }
         drawCursor();
         y += lineHeightPx;
@@ -470,7 +457,7 @@ export function drawCached(
     /**
      * Renders a single glyph onto the canvas with selection highlighting and transforms.
      * @param g - The cached glyph data to draw.
-     * @param _gi - The glyph index within the line (unused).
+     * @param gi - The glyph index within the line.
      */
     function drawGlyph(g: CachedGlyph, gi: number) {
       const scale = g.isLatin ? latScale : jpScale;
@@ -513,11 +500,8 @@ export function drawCached(
       ctx.save();
       if (g.glyphId === 0) {
         ctx.globalAlpha = 0.1;
-      } else if (isHighlighted) {
-        const hl = getComputedStyle(document.documentElement)
-          .getPropertyValue('--color-highlight')
-          .trim();
-        if (hl) ctx.fillStyle = hl;
+      } else if (isHighlighted && highlightColor) {
+        ctx.fillStyle = highlightColor;
       }
       ctx.translate(gx, gy);
       ctx.scale(glyphScale, -glyphScale);
@@ -525,7 +509,6 @@ export function drawCached(
       ctx.restore();
 
       x += advancePx;
-      absIdx++;
       edges.push({
         x,
         y,
@@ -535,7 +518,6 @@ export function drawCached(
     }
 
     drawCursor();
-    absIdx++; // \n
     lineCharOffset += srcText.length + 1; // source chars in line + the newline
     y += lineHeightPx;
     visualLine++;

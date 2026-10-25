@@ -18,14 +18,13 @@
 ## 検証コマンド
 
 ```sh
-node --test scripts/tests/file-authority.cjs scripts/tests/external-links.cjs
+npm run test:js
 .venv/bin/python -m pytest python/tests/test_export_safety.py -q
 npx tsc --noEmit
 npm run build
-node_modules/.bin/electron scripts/tests/ipc-security.cjs
-node_modules/.bin/electron scripts/tests/external-window-security.cjs
+node_modules/.bin/electron scripts/tests/electron-security.cjs
 PATH="$PWD/.venv/bin:$PATH" npm run python:build
-TEST_TRANSACTIONAL_EXPORT=1 node_modules/.bin/electron scripts/tests/ipc-security.cjs
+TEST_TRANSACTIONAL_EXPORT=1 node_modules/.bin/electron scripts/tests/electron-security.cjs
 ```
 
 統合テストは隔離プロファイル・一時ファイルを使い、ネイティブダイアログとOSの外部URL起動をスタブする。通常のファイル選択経路、未認可読取り、偽のFileオブジェクト、保存先未承認、別ウィンドウからのIPC、外部リンクの子ウィンドウ拒否を確認する。最後のコマンドは更新済みPython実行ファイルが必要で、失敗したexportが旧出力を保持することをElectronから確認する。

@@ -5,13 +5,13 @@ import tempfile
 
 import pytest
 
-from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 
 from conftest import (
     EN_CFF, EN_FULL, EN_VAR, JP_FULL_VAR, JP_OTF, JP_OTF_FULL,
     JP_STATIC, JP_VAR, KAISEI, PLAYWRITE, TIKTOK_SANS,
     _cid_glyph_for_codepoint, _get_bounds, _merge, _merge_cff_to_cff,
+    _merge_full, _run_merge, _source,
 )
 
 import merge_fonts as mf
@@ -2746,17 +2746,11 @@ class TestLatinCmapVariantCollision:
 
     @staticmethod
     def _merge_playwrite_kaisei():
-        out = tempfile.mktemp(suffix=".ttf")
-        config = {
-            "subFont": {"path": PLAYWRITE, "scale": 1.0, "baselineOffset": 0,
-                       "axes": [{"tag": "wght", "currentValue": 400}]},
-            "baseFont": {"path": KAISEI, "scale": 1.0, "baselineOffset": 0, "axes": []},
-            "output": {"familyName": "Test"}, "export": {"path": {"font": out}},
-        }
-        mf.merge_fonts(config)
-        font = TTFont(out)
-        os.remove(out)
-        return font
+        return _run_merge({
+            "subFont": _source(PLAYWRITE, axes=[("wght", 400)]),
+            "baseFont": _source(KAISEI),
+            "output": {"familyName": "Test"},
+        }, ".ttf")
 
     def test_cmap_variant_and_base_are_distinct(self):
         m = self._merge_playwrite_kaisei()
@@ -2796,22 +2790,7 @@ class TestSharedGlyphCollateral:
 
     @staticmethod
     def _merge():
-        if not os.path.exists(EN_FULL) or not os.path.exists(JP_STATIC):
-            pytest.skip("Full Inter / Noto Sans JP fonts not found")
-        out = tempfile.mktemp(suffix=".ttf")
-        config = {
-            "subFont": {"path": EN_FULL, "scale": 1.0, "baselineOffset": 0,
-                       "axes": [{"tag": "opsz", "currentValue": 14},
-                                {"tag": "wght", "currentValue": 400}]},
-            "baseFont": {"path": JP_STATIC, "scale": 1.0, "baselineOffset": 0,
-                         "axes": []},
-            "output": {"familyName": "TestMiddleDot"},
-            "export": {"path": {"font": out}},
-        }
-        mf.merge_fonts(config)
-        font = TTFont(out)
-        os.remove(out)
-        return font
+        return _merge_full()
 
     def test_katakana_middle_dot_preserves_width(self):
         """U+30FB must keep its full-width advance (1000) after merge."""

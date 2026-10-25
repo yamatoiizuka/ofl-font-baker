@@ -22,8 +22,6 @@ hold a colliding nameID at one of Inter's ssXX UINameIDs so the bug
 is reachable from the bundled fixtures.
 """
 
-import os
-import tempfile
 
 import pytest
 
@@ -507,7 +505,6 @@ class TestOverlappingCvRangesRelocateTogether:
 
     @pytest.fixture(scope="class")
     def merged_path(self, tmp_path_factory):
-        from fontTools.ttLib.tables import otTables
 
         inter = TTFont(EN_VAR)
         existing = sorted(_all_lat_feat_label_nameids(inter))
@@ -629,7 +626,6 @@ class TestCvParameterLabelRangeAtomic:
 
     @pytest.fixture(scope="class")
     def merged_path(self, tmp_path_factory):
-        from fontTools.ttLib.tables import otTables
 
         # Pick a fresh nameID range outside Inter's existing
         # FeatureParams namespace so we don't accidentally clash with

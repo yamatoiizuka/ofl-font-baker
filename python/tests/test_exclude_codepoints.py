@@ -22,7 +22,8 @@ from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._g_l_y_f import Glyph as TTGlyph
 
 from conftest import (EN_CFF, EN_FULL, EN_VAR,
-                      JP_OTF, JP_STATIC, JP_VAR, TIKTOK_SANS, _get_bounds)
+                      JP_OTF, JP_STATIC, JP_VAR, TIKTOK_SANS, _get_bounds,
+                      _merge_full)
 
 import merge_fonts as mf
 
@@ -90,33 +91,7 @@ class TestParseCodepointList:
 
 def _merge_with_exclude(exclude_codepoints):
     """Run a TTF Inter + TTF Noto merge with exclude_codepoints applied."""
-    if not os.path.exists(EN_FULL) or not os.path.exists(JP_STATIC):
-        pytest.skip("Full Inter / Noto Sans JP fonts not found")
-    out = tempfile.mktemp(suffix=".ttf")
-    config = {
-        "subFont": {
-            "path": EN_FULL,
-            "scale": 1.0,
-            "baselineOffset": 0,
-            "axes": [
-                {"tag": "opsz", "currentValue": 14},
-                {"tag": "wght", "currentValue": 400},
-            ],
-            "excludeCodepoints": exclude_codepoints,
-        },
-        "baseFont": {
-            "path": JP_STATIC,
-            "scale": 1.0,
-            "baselineOffset": 0,
-            "axes": [],
-        },
-        "output": {"familyName": "TestExclude"},
-        "export": {"path": {"font": out}},
-    }
-    mf.merge_fonts(config)
-    font = TTFont(out)
-    os.remove(out)
-    return font
+    return _merge_full(exclude_codepoints)
 
 
 def _base_advance(codepoint):
@@ -246,32 +221,7 @@ class TestGlyphNameCollisionRename:
 
     @staticmethod
     def _merge():
-        if not os.path.exists(EN_FULL) or not os.path.exists(JP_STATIC):
-            pytest.skip("Full Inter / Noto Sans JP fonts not found")
-        out = tempfile.mktemp(suffix=".ttf")
-        config = {
-            "subFont": {
-                "path": EN_FULL,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [
-                    {"tag": "opsz", "currentValue": 14},
-                    {"tag": "wght", "currentValue": 400},
-                ],
-            },
-            "baseFont": {
-                "path": JP_STATIC,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [],
-            },
-            "output": {"familyName": "TestCollision"},
-            "export": {"path": {"font": out}},
-        }
-        mf.merge_fonts(config)
-        font = TTFont(out)
-        os.remove(out)
-        return font
+        return _merge_full()
 
     def test_disjoint_codepoints_preserve_base_outline(self):
         """U+25CE (Noto's ◎ bullseye) keeps a near-em-square width even
@@ -384,34 +334,9 @@ class TestExcludeAndCollisionInteraction:
         """Exclude U+0298 (integer form) — Inter no longer cmaps it, so
         the cross-codepoint collision for ``uni25CE`` disappears AND the
         base bullseye at U+25CE stays intact regardless."""
-        if not os.path.exists(EN_FULL) or not os.path.exists(JP_STATIC):
-            pytest.skip("Full Inter / Noto Sans JP fonts not found")
-        out = tempfile.mktemp(suffix=".ttf")
-        config = {
-            "subFont": {
-                "path": EN_FULL,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [
-                    {"tag": "opsz", "currentValue": 14},
-                    {"tag": "wght", "currentValue": 400},
-                ],
-                # Mix integer + range to confirm both forms feed the
-                # collision-detection pass after filtering.
-                "excludeCodepoints": [0x0298, "U+2460-U+2462"],
-            },
-            "baseFont": {
-                "path": JP_STATIC,
-                "scale": 1.0,
-                "baselineOffset": 0,
-                "axes": [],
-            },
-            "output": {"familyName": "TestExcludeCollision"},
-            "export": {"path": {"font": out}},
-        }
-        mf.merge_fonts(config)
-        merged = TTFont(out)
-        os.remove(out)
+        # Mix integer + range to confirm both forms feed the
+        # collision-detection pass after filtering.
+        merged = _merge_full([0x0298, "U+2460-U+2462"])
         cmap = merged.getBestCmap()
 
         # Excluded integer codepoint: U+0298 must point at the base font's

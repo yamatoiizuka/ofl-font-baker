@@ -18,10 +18,11 @@ import { openExternalWebURL } from './external-links';
 export function registerIpcHandlers(getWindow: () => BrowserWindow | null) {
   const files = new FileAuthority(path.join(app.getPath('userData'), 'authorized-fonts.json'));
   const trustedURL = process.env.VITE_DEV_SERVER_URL || pathToFileURL(path.join(__dirname, '../renderer/index.html')).href;
+  const trustedHref = new URL(trustedURL).href.split('#')[0];
   function trusted(event: IpcMainInvokeEvent) {
     const win = getWindow();
     if (!win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame ||
-        event.senderFrame.url.split('#')[0] !== new URL(trustedURL).href.split('#')[0]) {
+        event.senderFrame.url.split('#')[0] !== trustedHref) {
       throw new Error('Untrusted IPC sender');
     }
   }
@@ -77,7 +78,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null) {
     return result.response === 0 ? 'select' : 'clear';
   });
 
-  // Read font file as ArrayBuffer (for opentype.js parsing in renderer)
+  // Read font file as ArrayBuffer (parsed by the renderer for metadata and HarfBuzz shaping)
   handle(IPC.READ_FONT_FILE, async (_event, fontPath: string) => {
     const buffer = files.readInput(fontPath);
     return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
